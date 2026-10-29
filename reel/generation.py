@@ -10,8 +10,20 @@ import time
 import uuid
 from collections import deque
 
-from . import config, history, procs, recipes
+from . import config, history, procs, recipes, system
 from .installer import installed_info, installs, model_dir
+
+
+def child_env() -> dict:
+    """Environment for the model process: offline, quiet, and pinned to the GPU chosen in Settings."""
+    env = {
+        "HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1", "TOKENIZERS_PARALLELISM": "false",
+        "HF_HUB_DISABLE_TELEMETRY": "1", "TQDM_DISABLE": "1",
+        **system.gpu_env(),
+    }
+    if not procs.IS_WINDOWS:
+        env["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+    return env
 
 
 class GenerationError(Exception):
@@ -176,12 +188,7 @@ class GenerationManager:
             "weights_dir": str(mdir / "weights"), "output_path": str(out_path),
         }
         req_path.write_text(json.dumps(request), encoding="utf-8")
-        env = {
-            "HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1", "TOKENIZERS_PARALLELISM": "false",
-            "HF_HUB_DISABLE_TELEMETRY": "1", "TQDM_DISABLE": "1",
-        }
-        if not procs.IS_WINDOWS:
-            env["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+        env = child_env()
         done_evt: dict | None = None
         try:
             py = procs.venv_python(mdir / "venv")
@@ -228,7 +235,7 @@ class GenerationManager:
                     "model_id": recipe["id"], "model_name": recipe["name"],
                     "prompt": params["prompt"], "params": params, "file": out_name,
                     "seconds": done_evt.get("seconds"), "peak_vram_gb": done_evt.get("peak_vram_gb"),
-                    "device": done_evt.get("device"),
+                    "device": done_evt.get("device_name") or done_evt.get("device"),
                 })
                 job.clip, job.status, job.phase, job.message = clip, "done", "done", "Done"
                 job.step = job.total

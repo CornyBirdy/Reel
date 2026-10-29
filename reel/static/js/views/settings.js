@@ -10,7 +10,7 @@ export async function mount(root) {
   async function load() {
     const [s, stored] = await Promise.all([api.get("/api/settings"), api.get("/api/settings/stored-models")]);
     clear(body);
-    body.append(updatesCard(s), storageCard(s, stored), tokenCard(s), systemCard(s));
+    body.append(updatesCard(s), gpuCard(s), windowCard(s), storageCard(s, stored), tokenCard(s), systemCard(s));
     refreshUpdates(false);
   }
 
@@ -78,7 +78,7 @@ export async function mount(root) {
   }
 
   function updatesCard(s) {
-    const tok = h("input", { id: "gh-token", class: "input input-mono", type: "password", autocomplete: "off", spellcheck: "false",
+    const tok = h("input", { id: "gh-token", class: "input input-mono secret", type: "text", name: "reel-gh-pat", autocomplete: "off", spellcheck: "false", "data-lpignore": "true", "data-1p-ignore": "",
       placeholder: s.github_token_set ? "Token saved - enter a new one to replace it" : "github_pat_..." });
     const saveTok = async (value) => {
       try { await api.put("/api/settings", { set_github_token: true, github_token: value }); toast(value ? "Token saved." : "Token cleared.", "success"); await load(); }
@@ -95,6 +95,42 @@ export async function mount(root) {
           h("div", { class: "row-8" },
             h("button", { class: "btn", type: "button", onclick: () => tok.value.trim() ? saveTok(tok.value.trim()) : toast("Enter a token first.", "warning") }, "Save token"),
             h("button", { class: "btn", type: "button", disabled: !s.github_token_set, onclick: () => saveTok("") }, "Clear token")))));
+  }
+
+  function gpuCard(s) {
+    const gpus = s.gpu.gpus;
+    const gb = (mb) => `${(mb / 1024).toFixed(0)} GB`;
+    const sel = h("select", { id: "gpu-pick", class: "select", disabled: gpus.length < 2 || undefined },
+      h("option", { value: "auto", selected: s.gpu.auto }, `Automatic - the one with the most VRAM${gpus.length ? ` (${[...gpus].sort((a, b) => b.vram_total_mb - a.vram_total_mb || a.index - b.index)[0].name})` : ""}`),
+      gpus.map((g) => h("option", { value: g.uuid, selected: !s.gpu.auto && g.uuid === s.gpu.selected }, `GPU ${g.index}: ${g.name} · ${gb(g.vram_total_mb)}`)));
+    return h("section", { class: "card stack-16" },
+      h("h3", {}, "Graphics card"),
+      !gpus.length ? h("div", { class: "notice notice-warning" }, icon("alert"), s.gpu.note || "No NVIDIA GPU was found, so generation would run on the CPU.")
+        : h("p", { class: "muted" }, "Reel runs each model on one GPU. Automatic picks the card with the most VRAM; choose another here if you want it. Every model process is pinned to your choice, so it cannot wander onto a different card."),
+      gpus.length ? h("dl", { class: "kv" }, ...gpus.flatMap((g) => [
+        h("dt", {}, `GPU ${g.index}`),
+        h("dd", {}, `${g.name} · ${gb(g.vram_total_mb)}`, g.uuid === s.gpu.selected ? " " : "", g.uuid === s.gpu.selected ? statusBadge("success", "In use", "check") : null)])) : null,
+      gpus.length ? h("div", { class: "field" }, h("label", { for: "gpu-pick" }, "GPU to use"), sel) : null,
+      gpus.length > 1 ? h("div", { class: "row-8" }, h("button", { class: "btn btn-primary", type: "button", onclick: async () => {
+        try { await api.put("/api/settings", { set_gpu: true, gpu: sel.value === "auto" ? "" : sel.value }); toast("GPU saved. It applies to the next generation.", "success"); await load(); }
+        catch (e) { toast(e.message, "danger"); }
+      } }, "Save")) : null);
+  }
+
+  function windowCard(s) {
+    const sel = h("select", { id: "win-mode", class: "select" },
+      [["auto", "Automatic (native window if possible)"], ["native", "Native window"], ["app", "Browser app window"], ["browser", "Default browser tab"]]
+        .map(([v, label]) => h("option", { value: v, selected: v === s.window_mode }, label)));
+    return h("section", { class: "card stack-16" },
+      h("div", { class: "row-between" }, h("h3", {}, "Window"),
+        s.native_window.available ? statusBadge("success", "Native window ready", "check") : statusBadge("warning", "Native window unavailable", "alert")),
+      h("p", { class: "muted" }, "A native window has no tabs, address bar, password prompts or browser shortcuts. If it can't start, Reel falls back to a browser window."),
+      !s.native_window.available ? h("div", { class: "notice notice-warning" }, icon("alert"), s.native_window.note) : null,
+      h("div", { class: "field" }, h("label", { for: "win-mode" }, "Open Reel in"), sel),
+      h("div", { class: "row-8" }, h("button", { class: "btn btn-primary", type: "button", onclick: async () => {
+        try { await api.put("/api/settings", { set_window_mode: true, window_mode: sel.value }); toast("Saved. It applies the next time you start Reel.", "success"); }
+        catch (e) { toast(e.message, "danger"); }
+      } }, "Save")));
   }
 
   function storageCard(s, stored) {
@@ -130,7 +166,7 @@ export async function mount(root) {
   }
 
   function tokenCard(s) {
-    const input = h("input", { id: "hf-token", class: "input input-mono", type: "password", placeholder: s.hf_token_set ? "Token saved - enter a new one to replace it" : "hf_...", autocomplete: "off", spellcheck: "false" });
+    const input = h("input", { id: "hf-token", class: "input input-mono secret", type: "text", name: "reel-hf-pat", autocomplete: "off", spellcheck: "false", "data-lpignore": "true", "data-1p-ignore": "", placeholder: s.hf_token_set ? "Token saved - enter a new one to replace it" : "hf_...", autocomplete: "off", spellcheck: "false" });
     const save = async (value) => {
       try { await api.put("/api/settings", { set_hf_token: true, hf_token: value }); toast(value ? "Token saved." : "Token cleared.", "success"); await load(); }
       catch (e) { toast(e.message, "danger"); }

@@ -26,12 +26,22 @@ if errorlevel 1 goto :fail
 
 :have_venv
 fc /b "%~dp0requirements.txt" "%STAMP%" >nul 2>&1
-if not errorlevel 1 goto :launch
+if not errorlevel 1 goto :native_deps
 
 echo [Reel] Installing app dependencies ...
 "%VENV_PY%" -m pip install -r "%~dp0requirements.txt"
 if errorlevel 1 goto :fail
 copy /y "%~dp0requirements.txt" "%STAMP%" >nul
+
+:native_deps
+rem Optional: the native window component. If it cannot be installed Reel simply uses a browser window.
+set "NATIVE_STAMP=%VENV_DIR%\requirements-native.attempted"
+fc /b "%~dp0requirements-native.txt" "%NATIVE_STAMP%" >nul 2>&1
+if not errorlevel 1 goto :launch
+echo [Reel] Installing the native window component ^(optional^) ...
+"%VENV_PY%" -m pip install -r "%~dp0requirements-native.txt"
+if errorlevel 1 echo [Reel] Could not install it - Reel will open in a browser window instead.
+copy /y "%~dp0requirements-native.txt" "%NATIVE_STAMP%" >nul
 
 :launch
 set "REEL_LAUNCHER=bat"

@@ -11,7 +11,9 @@ Part of the Rack Suite family (Rack, MC Hoster, Shelf), so it uses the neutral a
 3. **Library tab:** press **Install** on a model. A first install downloads PyTorch plus the model, so expect 10-30 minutes and 15-40 GB of disk per model. Good first tries: **SDXL 1.0** for images (about 15 GB total) or **LTX-Video** for video (about 20 GB total).
 4. **Generate tab:** pick Image or Video, write a prompt, press **Generate**.
 
-Reel opens in its own app-style window using Edge, Chrome, Brave or Vivaldi, whichever you have. If none is installed (for example Edge was removed) it uses your default browser, and if that fails it prints the address to open by hand.
+Reel opens in its **own native window** (no tabs, address bar, password prompts or browser shortcuts), using Microsoft's WebView2 runtime, which comes with Windows 11. If that is missing or the window component can't start, Reel falls back to an app-style window from Edge, Chrome, Brave or Vivaldi, then your default browser, and finally prints the address. Change this under **Settings > Window** (or set `REEL_WINDOW` to `native`, `app` or `browser`).
+
+If you removed WebView2 (debloated Windows), restore the native window with: `winget install -e --id Microsoft.EdgeWebView2Runtime`.
 
 Needs: an NVIDIA GPU with driver **570 or newer** (RTX 50-series needs this for CUDA 12.8), and an internet connection for the downloads. Everything stays inside the Reel folder (`data/`); delete the folder to remove it completely.
 
@@ -21,6 +23,8 @@ If something goes wrong:
 | --- | --- |
 | "Windows protected your PC" when opening `start.bat` | Click **More info > Run anyway**. It is a plain text script you can read. |
 | "Python 3.10 - 3.13 was not found" | Press Y to let `start.bat` install it with winget, then run `start.bat` again. |
+| Opens in a browser window instead of a native one | The WebView2 runtime is missing: `winget install -e --id Microsoft.EdgeWebView2Runtime`, then start Reel again. Settings > Window shows the reason. |
+| Wrong GPU is used | Settings > Graphics card (or the picker in the sidebar). Automatic uses the card with the most VRAM; each model process is pinned to your choice. |
 | No window opens | Open the address printed in the console (http://127.0.0.1:8765) in any browser. Set `REEL_BROWSER` to a browser's `.exe` path to choose one. |
 | Library warns the driver is too old | Update the NVIDIA driver, then restart Reel. |
 | "Port 8765 is in use" | Close the other Reel window, or set `REEL_PORT` to another number. |

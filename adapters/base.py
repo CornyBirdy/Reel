@@ -148,5 +148,6 @@ class BaseAdapter:
         peak = None
         if self.device == "cuda":
             peak = round(torch.cuda.max_memory_allocated() / 1024**3, 2)
+        name = torch.cuda.get_device_name(0) if self.device == "cuda" else None
         emit(event="done", output=str(self.output_path), seconds=round(time.time() - t0, 1),
-             peak_vram_gb=peak, device=self.device, frames=len(frames))
+             peak_vram_gb=peak, device=self.device, device_name=name, frames=len(frames))

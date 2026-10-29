@@ -1,4 +1,4 @@
-import { h, icon, clear } from "./ui.js";
+import { h, icon, clear, toast } from "./ui.js";
 import { getTheme, setTheme, applyTheme } from "./theme.js";
 import { api } from "./api.js";
 
@@ -72,19 +72,47 @@ async function checkForUpdate() {
 }
 document.addEventListener("reel:update-state", (e) => showUpdate(e.detail));
 
+const shortGpu = (name) => name.replace(/^NVIDIA\s+/, "").replace(/^GeForce\s+/, "");
+// What "Automatic" resolves to: the GPU with the most VRAM (same rule as the server).
+const autoGpu = (gpus) => [...gpus].sort((a, b) => b.vram_total_mb - a.vram_total_mb || a.index - b.index)[0];
+let gpuKey = "";
+let gpuLine = null;
+
 async function refreshGpuChip() {
   const chip = document.getElementById("gpu-chip");
-  try {
-    const sys = await api.get("/api/system");
-    const gpu = sys.gpu.gpus[0];
+  let sys;
+  try { sys = await api.get("/api/system"); } catch { return; }
+  const gpus = sys.gpu.gpus, sel = sys.gpu.selected_gpu;
+  const gb = (mb) => (mb / 1024).toFixed(0);
+  // Rebuild only when the GPU list or the choice changes: replacing an open <select> would close its menu.
+  const key = JSON.stringify([gpus.map((g) => g.uuid), sys.gpu.selected, sys.gpu.auto]);
+  if (key !== gpuKey) {
+    gpuKey = key;
     clear(chip);
-    if (!gpu) {
+    if (!sel) {
       chip.append(icon("chip"), h("div", {}, h("strong", {}, "No NVIDIA GPU"), "CPU only"));
+      gpuLine = null;
     } else {
-      const gb = (mb) => (mb / 1024).toFixed(0);
-      chip.append(icon("chip"), h("div", {}, h("strong", {}, gpu.name.replace("NVIDIA GeForce ", "")), `${gb(gpu.vram_used_mb)} / ${gb(gpu.vram_total_mb)} GB VRAM`));
+      gpuLine = h("span");
+      const body = h("div", { class: "grow" });
+      if (gpus.length > 1) {
+        const pick = h("select", { class: "select gpu-select", "aria-label": "GPU to use", onchange: async () => {
+          try {
+            await api.put("/api/settings", { set_gpu: true, gpu: pick.value === "auto" ? "" : pick.value });
+            toast("GPU changed. It applies to the next generation.", "success", 4000);
+          } catch (e) { toast(e.message, "danger", 8000); }
+          refreshGpuChip();
+        } },
+          h("option", { value: "auto", selected: sys.gpu.auto }, `Automatic (${shortGpu(autoGpu(gpus).name)})`),
+          gpus.map((g) => h("option", { value: g.uuid, selected: !sys.gpu.auto && g.uuid === sys.gpu.selected }, `${shortGpu(g.name)} · ${gb(g.vram_total_mb)} GB`)));
+        body.append(pick, h("div", {}, gpuLine));
+      } else {
+        body.append(h("strong", {}, shortGpu(sel.name)), gpuLine);
+      }
+      chip.append(icon("chip"), body);
     }
-  } catch { /* backend unreachable: leave chip empty */ }
+  }
+  if (gpuLine && sel) gpuLine.textContent = `${gb(sel.vram_used_mb)} / ${gb(sel.vram_total_mb)} GB VRAM`;
 }
 
 applyTheme(getTheme());

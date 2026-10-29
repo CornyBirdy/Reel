@@ -23,6 +23,8 @@ DEFAULTS = {
     "models_dir": None,  # None -> DEFAULT_MODELS_DIR
     "hf_token": None,
     "github_token": None,  # only needed to update from a private GitHub repo without git
+    "window_mode": None,   # None/"auto" | "native" | "app" | "browser"
+    "gpu": None,           # None = automatic (most VRAM); else an NVIDIA GPU uuid
 }
 
 

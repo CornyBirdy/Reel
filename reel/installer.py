@@ -278,7 +278,7 @@ class InstallManager:
 
             def do_verify():
                 lines: list[str] = []
-                self._run_cmd(job, log, [str(py), str(config.ADAPTERS_DIR / "verify_env.py")], capture=lines)
+                self._run_cmd(job, log, [str(py), str(config.ADAPTERS_DIR / "verify_env.py")], capture=lines, env=system.gpu_env())
                 for line in reversed(lines):
                     if line.startswith("{"):
                         verify_result.update(json.loads(line))

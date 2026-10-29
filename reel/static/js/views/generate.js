@@ -302,6 +302,7 @@ export async function mount(root) {
         stat("Model", clip.model_name), stat("Size", `${p.width} × ${p.height}`),
         image ? null : stat("Frames", `${p.frames} @ ${p.fps} fps`),
         stat("Seed", String(p.seed)), stat("Time", fmtDuration(clip.seconds)),
+        clip.device && clip.device !== "cpu" && clip.device !== "cuda" ? stat("GPU", clip.device.replace(/^NVIDIA\s+/, "").replace(/^GeForce\s+/, "")) : null,
         clip.peak_vram_gb ? stat("Peak VRAM", `${clip.peak_vram_gb} GB`) : null),
       h("div", { class: "row-8" },
         h("a", { class: "btn", href: clip.url, download: `reel-${clip.id}.${image ? "png" : "mp4"}` }, icon("download"), "Download"),

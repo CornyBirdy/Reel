@@ -9,7 +9,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from . import config, recipes, system
+from . import config, recipes, system, window
 from .installer import installs
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
@@ -19,6 +19,10 @@ class SettingsUpdate(BaseModel):
     models_dir: str | None = None       # "" or None resets to the default
     hf_token: str | None = None         # "" clears
     github_token: str | None = None     # "" clears
+    gpu: str | None = None              # an NVIDIA GPU uuid; "" = automatic
+    set_gpu: bool = False
+    window_mode: str | None = None      # auto | native | app | browser
+    set_window_mode: bool = False
     set_models_dir: bool = False
     set_hf_token: bool = False
     set_github_token: bool = False
@@ -34,8 +38,10 @@ def _view() -> dict:
         "outputs_dir": str(config.OUTPUTS_DIR),
         "hf_token_set": bool(s.get("hf_token")),
         "github_token_set": bool(s.get("github_token")),
+        "window_mode": s.get("window_mode") or "auto",
+        "native_window": window.status(),
         "disk_free": system.disk_free(root),
-        "gpu": system.gpu_info(),
+        "gpu": system.gpu_info(refresh=True),
         "python": sys.version.split()[0],
     }
 
@@ -67,6 +73,16 @@ def update_settings(body: SettingsUpdate) -> dict:
         else:
             config.save_settings(models_dir=None)
             config.models_root().mkdir(parents=True, exist_ok=True)
+    if body.set_gpu:
+        wanted = (body.gpu or "").strip()
+        if wanted and wanted not in {g["uuid"] for g in system.gpu_info(refresh=True)["gpus"]}:
+            raise HTTPException(400, "That GPU was not found. Is the NVIDIA driver running?")
+        config.save_settings(gpu=wanted or None)
+        system.gpu_info(refresh=True)
+    if body.set_window_mode:
+        if (body.window_mode or "auto") not in ("auto", "native", "app", "browser"):
+            raise HTTPException(400, "Unknown window mode.")
+        config.save_settings(window_mode=None if body.window_mode in (None, "", "auto") else body.window_mode)
     if body.set_github_token:
         config.save_settings(github_token=(body.github_token or "").strip() or None)
     if body.set_hf_token:

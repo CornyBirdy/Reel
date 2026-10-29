@@ -1,0 +1,3 @@
+# Optional: lets Reel open in its own native window instead of a browser window.
+# start.bat installs this separately and carries on without it if it fails.
+pywebview>=5.3; sys_platform == "win32"
