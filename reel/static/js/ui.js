@@ -55,6 +55,7 @@ const ICONS = {
   plus: '<path d="M12 5v14M5 12h14"/>',
   search: '<circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/>',
   back: '<path d="M10 6l-6 6 6 6M4 12h16"/>',
+  eject: '<path d="M12 5.5 20 14H4zM5 18.5h14"/>',
   log: '<path d="M6 3.5h8.5L19 8v12.5H6z"/><path d="M14 3.5V8.5h5M9.5 12.5h6M9.5 16h6"/>',
   box: '<path d="M12 3 20.5 7.5v9L12 21l-8.5-4.5v-9z"/><path d="M3.5 7.5 12 12l8.5-4.5M12 12v9"/>',
 };

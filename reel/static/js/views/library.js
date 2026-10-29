@@ -1,6 +1,7 @@
 import { h, icon, clear, toast, confirmDialog, fmtBytes, fmtDuration, progressBar, statusBadge, kindBadge } from "../ui.js";
 import { api } from "../api.js";
 import { openAddFromHF } from "./hf_dialog.js";
+import { KEEPS_MEMORY, crashNotice, holdsText, holdsTitle, idleText, loadButton, stateChip, stateOf } from "../worker.js";
 
 const FILTER_KEY = "reel.library.filter";
 const loadFilter = () => { try { return localStorage.getItem(FILTER_KEY) || "all"; } catch { return "all"; } };
@@ -45,6 +46,7 @@ function ModelCard(initial, ctx) {
   const metaEl = h("div", { class: "progress-meta" }, metaLeft, metaMid, metaRight);
   const msgEl = h("div", { class: "muted mono install-msg" });
   const noticeSlot = h("div", { class: "stack-8" });
+  const memSlot = h("div", { class: "stack-8" });
   const logEl = h("pre", { class: "log mono" });
   const logDetails = h("details", {}, h("summary", {}, "Install log"), logEl);
   const panel = h("div", { class: "stack-12 install-panel", hidden: true }, stepsEl, barSlot, metaEl, msgEl, noticeSlot, logDetails);
@@ -61,10 +63,10 @@ function ModelCard(initial, ctx) {
     h("div", { class: "stats" },
       stat("Download", `${m0.download_gb} GB`),
       stat("VRAM needed", `~${m0.vram_gb} GB`),
-      stat("Max resolution", `${m0.limits.max_width} × ${m0.limits.max_height}`),
-      m0.kind === "video" ? stat("Max frames", String(m0.limits.frames.max)) : null,
+      stat("Safe max size", `${m0.limits.max_width} × ${m0.limits.max_height}`),
+      m0.kind === "video" ? stat("Safe frames", String(m0.limits.frames.max)) : null,
       m0.kind === "video" ? stat("Frame rate", `${m0.limits.fps} fps`) : null),
-    fitSlot, diskSlot, panel, actions);
+    memSlot, fitSlot, diskSlot, panel, actions);
 
   let lastActionsKey = "";
 
@@ -76,7 +78,8 @@ function ModelCard(initial, ctx) {
 
   function renderActions(m) {
     const job = m.install;
-    const key = [m.state, m.status, !!m.blocked_reason, job && job.status, m.source].join("|");
+    const w = ctx.worker;
+    const key = [m.state, m.status, !!m.blocked_reason, job && job.status, m.source, stateOf(w, m.id), w && w.state, w && w.model_id].join("|");
     if (key === lastActionsKey) return;
     lastActionsKey = key;
     clear(actions);
@@ -112,6 +115,7 @@ function ModelCard(initial, ctx) {
       case "installed":
         actions.append(
           h("a", { class: "btn btn-primary", href: `#/generate?model=${encodeURIComponent(m.id)}` }, icon("generate"), "Generate"),
+          loadButton(m, ctx.worker, { onDone: ctx.refresh }),
           ...[remove("Uninstall", "This deletes only this model's folder: its environment and weights."), refresh()].filter(Boolean));
         break;
       case "partial":
@@ -194,6 +198,17 @@ function ModelCard(initial, ctx) {
       badgeSlot.append(statusBadge(kind, text, ic));
     });
 
+    // What is in memory: the state chip, what it holds, and when it unloads itself.
+    const w = ctx.worker, ws = stateOf(w, m.id);
+    const holds = ws === "unloaded" ? null : holdsText(w);
+    memSlot.hidden = m.state !== "installed";
+    once(memSlot, [m.state, ws, holds, w && w.idle_unload_minutes].join("|"), () => {
+      if (m.state !== "installed") return;
+      memSlot.append(h("div", { class: "row-8" }, stateChip(ws, ws === "loading" ? w.message : undefined),
+        holds ? h("span", { class: "muted mono", title: holdsTitle }, holds) : null));
+      if (ws === "ready" || ws === "generating") memSlot.append(h("div", { class: "field-hint" }, `${KEEPS_MEMORY} ${idleText(w) || ""}`.trim()));
+    });
+
     const gpu = ctx.gpu;
     once(fitSlot, [gpu && gpu.vram_total_mb, gpu && gpu.name, m.vram_gb].join("|"), () => {
       if (!gpu) return;
@@ -236,7 +251,7 @@ export async function mount(root) {
   let timer = null;
   let alive = true;
   let lastData = null;
-  const ctx = { gpu: null, hfTokenSet: false, refresh };
+  const ctx = { gpu: null, hfTokenSet: false, worker: null, refresh };
 
   function drawFilter() {
     clear(filterSeg);
@@ -267,10 +282,13 @@ export async function mount(root) {
     lastData = data;
     ctx.gpu = sys.gpu.selected_gpu || null;
     ctx.hfTokenSet = settings.hf_token_set;
+    ctx.worker = data.worker;
     const installed = data.models.filter((m) => m.state === "installed");
     const used = data.models.reduce((a, m) => a + m.disk.total, 0);
     setText(summary, `${installed.length} of ${data.models.length} installed · ${fmtBytes(used)} used · ${fmtBytes(data.disk_free)} free in ${data.models_dir}`);
-    once(notices, JSON.stringify([sys.gpu.cuda_12_8_ok, sys.gpu.driver, data.recipe_problems]), () => {
+    once(notices, JSON.stringify([sys.gpu.cuda_12_8_ok, sys.gpu.driver, data.recipe_problems, data.worker.last_crash]), () => {
+      const crash = crashNotice(data.worker, refresh);
+      if (crash) notices.append(crash);
       if (sys.gpu.cuda_12_8_ok === false) {
         notices.append(h("div", { class: "notice notice-warning" }, icon("alert"),
           `NVIDIA driver ${sys.gpu.driver} is too old for CUDA 12.8 (RTX 50-series needs 570 or newer). Update the driver before generating.`));
@@ -294,7 +312,8 @@ export async function mount(root) {
     const want = ordered.map((m) => cards.get(m.id).el);
     if (want.some((el, i) => grid.children[i] !== el) || grid.children.length !== want.length) grid.append(...want);
     applyFilter();
-    schedule(data.models.some((m) => m.state === "installing" || m.state === "uninstalling") ? 1000 : 5000);
+    const moving = ["loading", "generating", "unloading"].includes(data.worker.state);
+    schedule(moving || data.models.some((m) => m.state === "installing" || m.state === "uninstalling") ? 1000 : 5000);
   }
 
   function schedule(ms) { clearTimeout(timer); if (alive) timer = setTimeout(refresh, ms); }

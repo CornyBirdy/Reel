@@ -1,5 +1,6 @@
 import { h, icon, clear, toast, fmtDuration, fmtDate, progressBar, statusBadge, viewLog } from "../ui.js";
 import { api } from "../api.js";
+import { KEEPS_MEMORY, crashNotice, holdsText, holdsTitle, idleText, loadButton, stateChip, stateOf, watchWorker } from "../worker.js";
 
 const FORM_KEY = "reel.generate.form";
 const PHASES = {
@@ -43,6 +44,8 @@ export async function mount(root) {
   const saved = loadForm();
   const unlockMap = loadUnlock();
   let estTimer = null, estSeq = 0;
+  let worker = null;     // what is loaded right now (GET /api/worker)
+  let watcher = null;
   const q = new URLSearchParams(location.hash.split("?")[1] || "");
 
   // ---- layout ----
@@ -88,7 +91,8 @@ export async function mount(root) {
     }
     model = list.find((m) => m.id === wantedModel) || list[0];
 
-    f.model = h("select", { id: "g-model", class: "select", onchange: () => { model = modelById(f.model.value); applyModel(model, true); persist(); } },
+    f.worker = h("div", { class: "stack-8 worker-row" });
+    f.model = h("select", { id: "g-model", class: "select", onchange: () => { model = modelById(f.model.value); applyModel(model, true); persist(); renderWorker(); } },
       list.map((m) => h("option", { value: m.id, selected: m.id === model.id },
         `${m.name} ${m.version || ""}`.trim() + (m.native_label ? ` · native ${m.native_label}` : ""))));
     f.prompt = h("textarea", { id: "g-prompt", class: "textarea", rows: 4, maxlength: 4000, oninput: persist,
@@ -112,10 +116,10 @@ export async function mount(root) {
     f.seed = h("input", { id: "g-seed", class: "input input-mono", type: "number", min: 0, max: 4294967295, placeholder: "Random", oninput: persist });
     f.steps = h("input", { id: "g-steps", class: "input", type: "number", oninput: persist });
     f.guidance = h("input", { id: "g-guidance", class: "input", type: "number", step: 0.1, min: 0, max: 20, oninput: persist });
-    f.offload = h("select", { id: "g-offload", class: "select", onchange: () => { persist(); refreshEstimate(); } });
-    f.quant = h("select", { id: "g-quant", class: "select", onchange: () => { persist(); refreshEstimate(); } });
-    f.tiling = h("input", { id: "g-tiling", type: "checkbox", onchange: () => { persist(); refreshEstimate(); } });
-    f.attn = h("select", { id: "g-attn", class: "select", onchange: persist });
+    f.offload = h("select", { id: "g-offload", class: "select", onchange: () => { persist(); refreshEstimate(); renderWorker(); } });
+    f.quant = h("select", { id: "g-quant", class: "select", onchange: () => { persist(); refreshEstimate(); renderWorker(); } });
+    f.tiling = h("input", { id: "g-tiling", type: "checkbox", onchange: () => { persist(); refreshEstimate(); renderWorker(); } });
+    f.attn = h("select", { id: "g-attn", class: "select", onchange: () => { persist(); renderWorker(); } });
     f.attnHint = h("span", { class: "field-hint" });
     f.attnField = h("div", { class: "field" }, h("label", { for: "g-attn" }, "Attention backend"), f.attn, f.attnHint);
     f.caps = h("div", { class: "field-hint" });
@@ -127,6 +131,7 @@ export async function mount(root) {
 
     formCard.append(
       field("Model", f.model, null, "g-model"),
+      f.worker,
       field("Prompt", f.prompt, "Describe subject, action, camera and lighting. Longer, concrete prompts work best.", "g-prompt"),
       field("Negative prompt", f.negative, null, "g-neg"),
       h("div", { class: kind === "video" ? "grid-2" : "" },
@@ -173,7 +178,41 @@ export async function mount(root) {
       else if (k === "attention_backend" && [...f.attn.options].some((o) => o.value === v)) f.attn.value = v;
       else if (k === "count") fillCount(v);
     }
-    syncCustom(); syncFrames(); validate(); refreshEstimate();
+    syncCustom(); syncFrames(); validate(); refreshEstimate(); renderWorker();
+  }
+
+  // The loaded model: state chip, what it holds, Load / Unload, and a heads-up when the form's memory options would force a reload.
+  function memorySettings() {
+    return { quantization: f.quant.value, offload: f.offload.value, vae_tiling: f.tiling.checked,
+             attention_backend: f.attnField.hidden ? undefined : f.attn.value };
+  }
+
+  function renderWorker() {
+    if (!f.worker || !model) return;
+    clear(f.worker);
+    const w = worker, st = stateOf(w, model.id);
+    const holds = st === "unloaded" ? null : holdsText(w);
+    const other = w && w.state !== "unloaded" && w.model_id && w.model_id !== model.id ? modelById(w.model_id) : null;
+    f.worker.append(h("div", { class: "row-8" },
+      stateChip(st, st === "loading" ? w.message : undefined),
+      holds ? h("span", { class: "muted mono", title: holdsTitle }, holds) : null,
+      h("span", { class: "grow" }),
+      loadButton(model, w, { onDone: () => watcher && watcher.poke(), memory: memorySettings, compact: true })));
+    const notes = [];
+    if (st === "unloaded" && !other) notes.push("Generate loads it automatically. Loading takes a while the first time; later runs reuse it.");
+    if (other) notes.push(`${other.name} is loaded. Loading or generating with this model unloads it first: only one model fits on the GPU at a time.`);
+    if (st === "ready" || st === "generating") {
+      notes.push(`${KEEPS_MEMORY} ${idleText(w) || ""}`.trim());
+      const cur = w.settings || {}, want = memorySettings();
+      if (st === "ready" && Object.keys(want).some((k) => want[k] !== undefined && cur[k] !== undefined && cur[k] !== want[k])) {
+        notes.push("Your memory options differ from what is loaded, so the next Generate reloads the model.");
+      }
+    }
+    for (const n of notes) f.worker.append(h("div", { class: "field-hint" }, n));
+    // A crash of the request that is on screen is already explained in the output panel.
+    const explained = activeJob && w && w.last_crash && activeJob.id === w.last_crash.request;
+    const crash = explained ? null : crashNotice(w, () => watcher && watcher.poke());
+    if (crash && w.last_crash.model_id === model.id) f.worker.append(crash);
   }
 
   function applyModel(m, reset) {
@@ -461,6 +500,7 @@ export async function mount(root) {
         h("div", { class: "progress-meta" },
           h("span", {}, job.phase === "denoising" ? `${of}Step ${job.step} of ${job.total}` : `${of}${job.message}`),
           h("span", {}, [`${fmtDuration(job.elapsed)} elapsed`, job.eta ? `~${fmtDuration(job.eta)} left` : null].filter(Boolean).join(" · "))),
+        job.reused ? h("div", { class: "field-hint" }, "The model was already loaded, so this run skipped loading.") : null,
         h("p", { class: "muted" }, job.params.prompt),
         job.clips.length ? h("div", { class: "stack-8" }, h("h4", {}, `Finished so far (${job.clips.length})`), batchStrip(job, false)) : null);
       return;
@@ -598,6 +638,7 @@ export async function mount(root) {
       || (models.length ? models[0].kind : "image");
     if (!models.some((m) => m.kind === kind) && models.length) kind = models[0].kind;
   }
+  watcher = watchWorker((w) => { worker = w; renderWorker(); });
   buildForm();
   await loadHistory();
   const { job } = await api.get("/api/generate/current").catch(() => ({ job: null }));
@@ -606,5 +647,5 @@ export async function mount(root) {
   else if (history.clips.length) shownClipId = history.clips[0].id;
   renderOutput();
   if (activeRunning()) poll();
-  return { unmount() { alive = false; clearTimeout(timer); } };
+  return { unmount() { alive = false; clearTimeout(timer); clearTimeout(estTimer); if (watcher) watcher.stop(); } };
 }

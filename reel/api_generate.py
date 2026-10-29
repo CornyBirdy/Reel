@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
-from . import diagnostics, estimate, history, recipes, system
+from . import diagnostics, estimate, history, recipes, system, workers
 from .generation import GenerationError, generation
 
 router = APIRouter(prefix="/api", tags=["generate"])
@@ -63,7 +63,7 @@ def estimate_memory(body: EstimateRequest) -> dict:
               "vae_tiling": d["vae_tiling"] if body.vae_tiling is None else body.vae_tiling}
     gpu = system.gpu_info().get("selected_gpu")
     gpu_gb = {"total_gb": gpu["vram_total_mb"] / 1024, "free_gb": (gpu["vram_total_mb"] - gpu["vram_used_mb"]) / 1024} if gpu else None
-    return estimate.estimate(recipe, params, gpu_gb, system.ram_info() or None)
+    return estimate.estimate(recipe, params, gpu_gb, system.ram_info() or None, worker=workers.manager.held_memory())
 
 
 @router.get("/generate/current")

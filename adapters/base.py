@@ -1,25 +1,32 @@
 """Common adapter interface. Runs inside a model's own venv (torch + diffusers live there).
 
-Contract
---------
-Input  : a JSON request file (see REQUEST below).
-Output : an H.264 mp4 (video) or a PNG (image) at request["output_path"].
-Events : one JSON object per stdout line - phase / progress / item_start / item_done / done / error.
+An adapter lives in a long-lived worker process (worker.py): it is created and loaded once, then asked to generate
+as many times as the app likes.
+
+    adapter = Adapter(load_request)     # LOAD REQUEST: what fixes how the model is loaded
+    adapter.load()                      # prepare(): read the weights, apply offloading / quantization / attention
+    adapter.generate(request)           # GENERATE REQUEST: one or more items, many times, without reloading
+    adapter.free_run_memory()           # between runs: gc + empty the CUDA cache, pipeline stays
+
+Events: one JSON object per stdout line - phase / progress / item_start / item_done / done / error / cancelled.
 
 To add a model: write a recipe in recipes/, then a module here that defines
-`class Adapter(BaseAdapter)` implementing `prepare()` (load the model once)
-and `sample()` (one item, using self.seed, returns a list of PIL images) and name it in the
-recipe's "adapter" field. Everything else (seed, memory options, progress,
+`class Adapter(BaseAdapter)` implementing `prepare()` (load the model once; nothing prompt-specific)
+and `sample()` (one item, using self.seed and self.req, returns a list of PIL images) and name it in the
+recipe's "adapter" field. Everything else (seed, memory options, progress, cancel,
 mp4 export, OOM reporting) is shared.
 
-REQUEST = {
-  "model_id", "adapter", "kind": "image|video", "weights_dir",
-  "outputs": [{"path": ..., "seed": ...}, ...],      # one entry per item; the model is loaded once for all of them
-  "prompt", "negative_prompt", "width", "height", "frames", "fps",   # frames/fps: video only
-  "steps", "guidance",
-  "offload": "none|model|sequential", "vae_tiling": bool,
-  "quantization": "none|int8|nf4", "adapter_config": {...}
+LOAD REQUEST = {
+  "model_id", "adapter", "kind": "image|video", "weights_dir", "adapter_config": {...},
+  "dtype": "bfloat16|float16", "quantization": "none|int8|nf4", "offload": "none|model|sequential",
+  "vae_tiling": bool, "attention_backend": "native|auto|sage_hub|..."
 }
+GENERATE REQUEST = {
+  "outputs": [{"path": ..., "seed": ...}, ...],      # one entry per item
+  "prompt", "negative_prompt", "width", "height", "frames", "fps",   # frames/fps: video only
+  "steps", "guidance"
+}
+During generate(), self.req is the load request overlaid with the generate request.
 """
 from __future__ import annotations
 
@@ -27,6 +34,7 @@ import contextlib
 import importlib
 import json
 import os
+import threading
 import time
 import warnings
 from pathlib import Path
@@ -38,8 +46,25 @@ import sysinfo
 warnings.filterwarnings("ignore", message=".*MatMul8bitLt.*")
 
 
+_emit_lock = threading.Lock()
+CURRENT_ID: str | None = None   # the request the events belong to (set by worker.py around each command)
+CANCEL = threading.Event()      # set by worker.py when the app asks to stop the current generation
+
+
+class Cancelled(Exception):
+    """Raised inside a run when the app asked to stop it. The worker keeps the loaded pipeline."""
+
+
+def check_cancel() -> None:
+    if CANCEL.is_set():
+        raise Cancelled()
+
+
 def emit(**event) -> None:
-    print(json.dumps(event), flush=True)
+    if CURRENT_ID and "id" not in event:
+        event["id"] = CURRENT_ID
+    with _emit_lock:
+        print(json.dumps(event), flush=True)
 
 
 def auto_attention_backend(gpu_name: str, capability: tuple[int, int] | None = None) -> str:
@@ -76,20 +101,21 @@ def online_for_kernels():
 
 class BaseAdapter:
     def __init__(self, request: dict):
+        self.load_req = request
         self.req = request
         self.cfg = request.get("adapter_config") or {}
         self.weights_dir = Path(request["weights_dir"])
-        self.items = request["outputs"]
-        self.n_items = len(self.items)
+        self.items: list = []
+        self.n_items = 0
         self.item = 0
-        self.seed = int(self.items[0]["seed"])
-        self.output_path = Path(self.items[0]["path"])
+        self.seed = 0
+        self.output_path = Path(".")
         import torch  # noqa: F401  (fail early if the env is broken)
         self.torch = torch
         forced = os.environ.get("REEL_DEVICE")
         self.device = forced or ("cuda" if torch.cuda.is_available() else "cpu")
-        self.dtype = torch.bfloat16
-        self.total_steps = int(request["steps"])
+        self.dtype = getattr(torch, request.get("dtype") or "bfloat16")
+        self.total_steps = 0
         self.kind = request.get("kind", "video")
         self.attention_active = "native"   # what is really in use after apply_attention_backend()
         self.steps_done = 0
@@ -193,6 +219,7 @@ class BaseAdapter:
         original, adapter = sched.step, self
 
         def step(*args, **kwargs):
+            check_cancel()
             out = original(*args, **kwargs)
             adapter.steps_done += 1
             emit(event="progress", step=adapter.steps_done, total=adapter.total_steps, item=adapter.item, items=adapter.n_items)
@@ -241,6 +268,7 @@ class BaseAdapter:
         emit(event="log", message="Memory before run: " + self.memory_line())
 
     def step_callback(self, pipe, step, timestep, kwargs):
+        check_cancel()
         done = step + 1
         self.steps_done = done
         emit(event="progress", step=done, total=self.total_steps, item=self.item, items=self.n_items)
@@ -282,32 +310,66 @@ class BaseAdapter:
             self.export_mp4(frames)
 
     # -- driver ---------------------------------------------------------------
-    def run(self) -> None:
-        """Load once, then generate every item. Each finished item is reported straight away, so it is kept
-        even if a later one fails or the batch is cancelled."""
-        t_start = time.time()
-        torch = self.torch
+    def load(self) -> float:
+        """Read the weights once. Returns the seconds it took."""
+        t0 = time.time()
         if self.device == "cuda":
-            torch.cuda.reset_peak_memory_stats()
+            self.torch.cuda.reset_peak_memory_stats()
         self.phase("loading", "Loading model")
         emit(event="log", message="Loading model. " + self.memory_line())
         self.prepare()
-        emit(event="log", message="Model loaded. " + self.memory_line())
+        seconds = round(time.time() - t0, 1)
+        emit(event="log", message=f"Model loaded in {seconds}s. " + self.memory_line())
+        return seconds
+
+    def begin(self, request: dict) -> None:
+        """Take a generate request: its settings overlay the load request."""
+        self.req = {**self.load_req, **request}
+        self.items = request["outputs"]
+        self.n_items = len(self.items)
+        self.item = 0
+        self.seed = int(self.items[0]["seed"])
+        self.output_path = Path(self.items[0]["path"])
+        self.total_steps = int(request["steps"])
+        self.kind = request.get("kind", self.load_req.get("kind", "video"))
+        self.steps_done = 0
+
+    def generate(self, request: dict) -> None:
+        """Generate every item of the request with the already-loaded model. Each finished item is reported straight
+        away, so it is kept even if a later one fails or the batch is cancelled."""
+        self.begin(request)
+        torch = self.torch
+        if self.device == "cuda":
+            torch.cuda.reset_peak_memory_stats()
         name = torch.cuda.get_device_name(0) if self.device == "cuda" else None
-        total = 0.0
+        t_start = time.time()
         peak = None
         for i, item in enumerate(self.items):
+            check_cancel()
             self.item, self.seed, self.output_path = i, int(item["seed"]), Path(item["path"])
-            t_item = t_start if i == 0 else time.time()   # the first item includes the model load
+            self.steps_done = 0
+            t_item = time.time()
             emit(event="item_start", index=i, items=self.n_items, seed=self.seed)
             frames = self.sample()
+            check_cancel()
             self.phase("encoding", "Saving image" if self.kind == "image" else "Encoding mp4")
             self.export(frames)
             if self.device == "cuda":
                 peak = round(torch.cuda.max_memory_allocated() / 1024**3, 2)
-            seconds = round(time.time() - t_item, 1)
-            total += seconds
             emit(event="item_done", index=i, items=self.n_items, output=str(self.output_path), seed=self.seed,
-                 seconds=seconds, peak_vram_gb=peak, device=self.device, device_name=name, frames=len(frames))
+                 seconds=round(time.time() - t_item, 1), peak_vram_gb=peak, device=self.device, device_name=name, frames=len(frames))
         emit(event="done", items=self.n_items, seconds=round(time.time() - t_start, 1), peak_vram_gb=peak,
              device=self.device, device_name=name)
+
+    def free_run_memory(self) -> None:
+        """Between runs: drop temporary memory but keep the pipeline loaded."""
+        import gc
+        pipe = getattr(self, "pipe", None)
+        if pipe is not None and hasattr(pipe, "maybe_free_model_hooks"):
+            try:
+                pipe.maybe_free_model_hooks()    # a cancelled or failed run can leave a component on the GPU
+            except Exception:  # noqa: BLE001
+                pass
+        gc.collect()
+        if self.device == "cuda":
+            self.torch.cuda.empty_cache()

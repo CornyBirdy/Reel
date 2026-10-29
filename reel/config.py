@@ -26,6 +26,7 @@ DEFAULTS = {
     "github_token": None,  # only needed to update from a private GitHub repo without git
     "window_mode": None,   # None/"auto" | "native" | "app" | "browser"
     "gpu": None,           # None = automatic (most VRAM); else an NVIDIA GPU uuid
+    "idle_unload_minutes": 30,   # unload the loaded model after this long without use; 0 = never
 }
 
 

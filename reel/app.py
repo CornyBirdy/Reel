@@ -8,19 +8,22 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import __version__, api_generate, api_hf, api_models, api_settings, api_update, config, generation, system  # noqa: F401
+from . import __version__, api_generate, api_hf, api_models, api_settings, api_update, api_worker, config, generation, system, workers  # noqa: F401
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     config.ensure_dirs()
+    workers.manager.start_background()
     yield
+    workers.manager.shutdown()      # a loaded model never outlives Reel
 
 
 app = FastAPI(title="Reel", version=__version__, lifespan=lifespan)
 app.include_router(api_models.router)
 app.include_router(api_settings.router)
 app.include_router(api_generate.router)
+app.include_router(api_worker.router)
 app.include_router(api_hf.router)
 app.include_router(api_update.router)
 
