@@ -41,7 +41,7 @@ export async function mount(root) {
       h("dl", { class: "kv" }, h("dt", {}, "Version"), h("dd", { class: "mono" }, ver),
         h("dt", {}, "Installed as"), h("dd", {}, where),
         h("dt", {}, "Updates from"), h("dd", { class: "mono" }, `${u.repo} (${u.branch})`)));
-    if (u.state === "up_to_date") upd.append(h("div", { class: "notice notice-success" }, icon("check"), "You're on the latest version."));
+    if (u.state === "up_to_date" && !applied) upd.append(h("div", { class: "notice notice-success" }, icon("check"), "You're on the latest version."));
     if (u.state === "error") upd.append(h("div", { class: "notice notice-danger", role: "alert" }, icon("error"), u.error));
     if (u.state === "unknown") upd.append(h("div", { class: "notice notice-warning" }, icon("alert"),
       `Reel can't tell which version this copy is. Updating installs the latest (${u.remote ? u.remote.short : "?"}) so it can track versions from then on.`));
