@@ -4,6 +4,26 @@ Local AI image and video generation for Windows, in the spirit of LM Studio: pic
 
 Part of the Rack Suite family (Rack, MC Hoster, Shelf), so it uses the neutral accent.
 
+## Quick start (Windows 11)
+
+1. **Get the files.** On the GitHub page click **Code > Download ZIP** and extract it somewhere simple such as `C:\Reel` or `D:\Reel` (not inside Program Files, and not left inside the ZIP). Or `git clone` the repo.
+2. **Double-click `start.bat`.** The first run sets itself up (a few minutes) and opens Reel in its own window. If Python is missing it offers to install it for you.
+3. **Library tab:** press **Install** on a model. A first install downloads PyTorch plus the model, so expect 10-30 minutes and 15-40 GB of disk per model. Good first tries: **SDXL 1.0** for images (about 15 GB total) or **LTX-Video** for video (about 20 GB total).
+4. **Generate tab:** pick Image or Video, write a prompt, press **Generate**.
+
+Needs: an NVIDIA GPU with driver **570 or newer** (RTX 50-series needs this for CUDA 12.8), and an internet connection for the downloads. Everything stays inside the Reel folder (`data/`); delete the folder to remove it completely.
+
+If something goes wrong:
+
+| Problem | Fix |
+| --- | --- |
+| "Windows protected your PC" when opening `start.bat` | Click **More info > Run anyway**. It is a plain text script you can read. |
+| "Python 3.10 - 3.13 was not found" | Press Y to let `start.bat` install it with winget, then run `start.bat` again. |
+| Library warns the driver is too old | Update the NVIDIA driver, then restart Reel. |
+| "Port 8765 is in use" | Close the other Reel window, or set `REEL_PORT` to another number. |
+| An install fails or stalls | Press Install again: finished downloads are kept. The full log is in `data/models/<model>/install.log`. |
+| Out of VRAM while generating | Lower the resolution, set Offloading to Sequential, or use NF4 quantization (Memory options). |
+
 ## Run it
 
 Double-click **`start.bat`**.
