@@ -155,6 +155,11 @@ class InstallManager:
             raise InstallError("Unknown model.")
         if recipe["status"] != "ready":
             raise InstallError(f"{recipe['name']} is a placeholder recipe: its adapter has not been written yet.")
+        if recipe.get("gated") and not config.load_settings().get("hf_token"):
+            repo = recipe.get("hf_repo") or recipe["weights"][0]["repo_id"]
+            raise InstallError(
+                f"{recipe['name']} is a gated model. Accept its terms at https://huggingface.co/{repo}, then save a "
+                "Hugging Face access token in Settings and try again.")
         if not recipes.adapter_exists(recipe):
             raise InstallError(f"Adapter adapters/{recipe['adapter']}.py is missing, so {recipe['name']} could not run.")
         with self._lock:
@@ -246,6 +251,14 @@ class InstallManager:
                 cmd = [str(py), "-m", "pip", "install", "--no-cache-dir", "--progress-bar", "off",
                        "--disable-pip-version-check", *pyc["packages"]]
                 self._run_cmd(job, log, cmd, env=pip_env)
+                # Fail now, not after a 30 GB download, if this diffusers has no such pipeline class.
+                cls = (recipe.get("adapter_config") or {}).get("pipeline")
+                if cls:
+                    lines: list[str] = []
+                    self._run_cmd(job, log, [str(py), str(config.ADAPTERS_DIR / "check_pipeline.py"), cls], capture=lines)
+                    res = next((json.loads(l) for l in reversed(lines) if l.startswith("{")), {"ok": False, "error": "check failed"})
+                    if not res.get("ok"):
+                        raise InstallError(res["error"])
 
             def do_weights():
                 spec = mdir / "download_spec.json"

@@ -3,7 +3,7 @@
 Contract
 --------
 Input  : a JSON request file (see REQUEST below).
-Output : an H.264 mp4 at request["output_path"].
+Output : an H.264 mp4 (video) or a PNG (image) at request["output_path"].
 Events : one JSON object per stdout line - phase / progress / done / error.
 
 To add a model: write a recipe in recipes/, then a module here that defines
@@ -12,8 +12,8 @@ recipe's "adapter" field. Everything else (seed, memory options, progress,
 mp4 export, OOM reporting) is shared.
 
 REQUEST = {
-  "model_id", "adapter", "weights_dir", "output_path",
-  "prompt", "negative_prompt", "width", "height", "frames", "fps",
+  "model_id", "adapter", "kind": "image|video", "weights_dir", "output_path",
+  "prompt", "negative_prompt", "width", "height", "frames", "fps",   # frames/fps: video only
   "steps", "guidance", "seed",
   "offload": "none|model|sequential", "vae_tiling": bool,
   "quantization": "none|int8|nf4", "adapter_config": {...}
@@ -48,10 +48,11 @@ class BaseAdapter:
         self.device = forced or ("cuda" if torch.cuda.is_available() else "cpu")
         self.dtype = torch.bfloat16
         self.total_steps = int(request["steps"])
+        self.kind = request.get("kind", "video")
 
     # -- to implement --------------------------------------------------------
     def generate(self):
-        """Return a list of PIL images (the frames)."""
+        """Return a list of PIL images: the frames of a video, or the single image."""
         raise NotImplementedError
 
     # -- shared helpers -----------------------------------------------------
@@ -87,10 +88,11 @@ class BaseAdapter:
                 pipe.to("cuda")
         else:
             pipe.to(self.device)
-        if self.req.get("vae_tiling", True):
+        vae = getattr(pipe, "vae", None)
+        if self.req.get("vae_tiling", True) and vae is not None:
             for fn in ("enable_tiling", "enable_slicing"):
                 try:
-                    getattr(pipe.vae, fn)()
+                    getattr(vae, fn)()
                 except Exception:  # noqa: BLE001 - not every VAE has both
                     pass
 
@@ -117,6 +119,22 @@ class BaseAdapter:
         finally:
             writer.close()
 
+    def export_png(self, image) -> None:
+        """Save the image losslessly, with the prompt and settings embedded so the file documents itself."""
+        from PIL import PngImagePlugin
+        meta = PngImagePlugin.PngInfo()
+        for key in ("prompt", "negative_prompt", "seed", "steps", "guidance", "width", "height", "model_id"):
+            meta.add_text(key, str(self.req.get(key, "")))
+        meta.add_text("software", "Reel")
+        self.output_path.parent.mkdir(parents=True, exist_ok=True)
+        image.save(self.output_path, format="PNG", pnginfo=meta)
+
+    def export(self, frames) -> None:
+        if self.kind == "image":
+            self.export_png(frames[0])
+        else:
+            self.export_mp4(frames)
+
     # -- driver ---------------------------------------------------------------
     def run(self) -> None:
         t0 = time.time()
@@ -125,8 +143,8 @@ class BaseAdapter:
             torch.cuda.reset_peak_memory_stats()
         self.phase("loading", "Loading model")
         frames = self.generate()
-        self.phase("encoding", "Encoding mp4")
-        self.export_mp4(frames)
+        self.phase("encoding", "Saving image" if self.kind == "image" else "Encoding mp4")
+        self.export(frames)
         peak = None
         if self.device == "cuda":
             peak = round(torch.cuda.max_memory_allocated() / 1024**3, 2)

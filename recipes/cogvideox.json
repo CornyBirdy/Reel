@@ -4,17 +4,19 @@
   "name": "CogVideoX",
   "family": "THUDM",
   "version": "5B",
-  "status": "placeholder",
-  "summary": "Placeholder recipe. Needs an adapter (adapters/cogvideox.py) before it can be installed.",
+  "status": "ready",
+  "kind": "video",
+  "verified": false,
+  "summary": "THUDM's 5B text-to-video model. Runs through the generic diffusers adapter; not yet tested by Reel.",
   "license": "CogVideoX License",
   "license_url": "https://huggingface.co/THUDM/CogVideoX-5b",
   "tasks": [
     "text-to-video"
   ],
-  "adapter": "cogvideox",
+  "adapter": "diffusers_auto",
   "download_gb": 21.5,
-  "vram_gb": 12,
-  "vram_note": "Approximate, from the upstream model card.",
+  "vram_gb": 9,
+  "vram_note": "Estimate with NF4 transformer + model offload, not measured.",
   "python": {
     "torch_index": "https://download.pytorch.org/whl/cu128",
     "torch": [
@@ -80,7 +82,7 @@
     "negative_prompt": "",
     "offload": "model",
     "vae_tiling": true,
-    "quantization": "none"
+    "quantization": "nf4"
   },
   "memory": {
     "offload_options": [
@@ -94,5 +96,9 @@
       "nf4"
     ],
     "notes": ""
+  },
+  "adapter_config": {
+    "pipeline": "CogVideoXPipeline",
+    "variant": null
   }
 }

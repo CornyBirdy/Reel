@@ -5,6 +5,8 @@
   "family": "Lightricks",
   "version": "0.9.5 (2B)",
   "status": "ready",
+  "kind": "video",
+  "verified": true,
   "summary": "Fast DiT video model. 2B transformer with an 8-bit T5 text encoder: small download, quick iterations, comfortable on 16 GB.",
   "license": "LTX-Video Open Weights License",
   "license_url": "https://huggingface.co/Lightricks/LTX-Video/blob/main/ltx-video-2b-v0.9.5.license.txt",

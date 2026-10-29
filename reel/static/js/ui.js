@@ -51,6 +51,10 @@ const ICONS = {
   disk: '<rect x="3" y="13" width="18" height="7" rx="2"/><path d="M3 13l2.5-7a2 2 0 0 1 1.9-1.3h9.2A2 2 0 0 1 18.5 6L21 13M7 16.5v.01"/>',
   copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/>',
   load: '<path d="M4 12h12M11 7l5 5-5 5M20 4v16"/>',
+  image: '<rect x="3.5" y="4.5" width="17" height="15" rx="3"/><circle cx="9" cy="10" r="1.6"/><path d="M4 17l5-4.5 4 3.5 3-2.5 4 3.5"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  search: '<circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/>',
+  back: '<path d="M10 6l-6 6 6 6M4 12h16"/>',
   box: '<path d="M12 3 20.5 7.5v9L12 21l-8.5-4.5v-9z"/><path d="M3.5 7.5 12 12l8.5-4.5M12 12v9"/>',
 };
 
@@ -120,6 +124,16 @@ export function progressBar(fraction, { indeterminate = false, label = "Progress
   return el;
 }
 
-export function statusBadge(kind, text, iconName) {
-  return h("span", { class: `badge badge-${kind}` }, icon(iconName || { success: "check", danger: "error", warning: "alert", info: "info", neutral: "box" }[kind] || "info"), text);
+export function statusBadge(kind, text, iconName, title) {
+  return h("span", { class: `badge badge-${kind}`, title }, icon(iconName || { success: "check", danger: "error", warning: "alert", info: "info", neutral: "box" }[kind] || "info"), text);
+}
+
+export function kindBadge(kind) {
+  return statusBadge("neutral", kind === "image" ? "Image" : "Video", kind === "image" ? "image" : "generate");
+}
+
+export function fmtCount(n) {
+  if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
+  if (n >= 1e3) return `${Math.round(n / 1e3)}K`;
+  return String(n || 0);
 }

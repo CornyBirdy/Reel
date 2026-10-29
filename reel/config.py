@@ -10,6 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = ROOT / "data"
 RECIPES_DIR = ROOT / "recipes"
+USER_RECIPES_DIR = DATA_DIR / "recipes"  # models added from Hugging Face live here, not in the repo
 ADAPTERS_DIR = ROOT / "adapters"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 OUTPUTS_DIR = DATA_DIR / "outputs"

@@ -63,6 +63,8 @@ def describe(recipe: dict) -> dict:
     return {
         "id": mid, "name": recipe["name"], "family": recipe.get("family"), "version": recipe.get("version"),
         "status": recipe["status"], "summary": recipe.get("summary"),
+        "kind": recipe.get("kind", "video"), "source": recipe.get("source", "builtin"),
+        "verified": recipe.get("verified", True), "gated": bool(recipe.get("gated")), "hf_repo": recipe.get("hf_repo"),
         "license": recipe.get("license"), "license_url": recipe.get("license_url"),
         "tasks": recipe.get("tasks", []),
         "download_gb": recipe["download_gb"], "vram_gb": recipe["vram_gb"], "vram_note": recipe.get("vram_note"),
@@ -106,6 +108,18 @@ def install(model_id: str) -> dict:
 def cancel(model_id: str) -> dict:
     _recipe_or_404(model_id)
     installs.cancel(model_id)
+    return {"ok": True}
+
+
+@router.delete("/{model_id}/recipe")
+def remove_recipe(model_id: str) -> dict:
+    """Remove a model that was added from Hugging Face (built-in recipes cannot be removed)."""
+    recipe = _recipe_or_404(model_id)
+    if recipe.get("source") != "user":
+        raise HTTPException(409, "Built-in models cannot be removed from the Library.")
+    if model_dir(model_id).exists():
+        raise HTTPException(409, "Uninstall the model's files first.")
+    recipes.delete_user(model_id)
     return {"ok": True}
 
 

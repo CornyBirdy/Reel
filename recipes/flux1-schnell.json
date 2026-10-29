@@ -1,0 +1,152 @@
+{
+  "schema": 1,
+  "id": "flux1-schnell",
+  "name": "FLUX.1 schnell",
+  "family": "Black Forest Labs",
+  "version": "4-step",
+  "status": "ready",
+  "kind": "image",
+  "verified": false,
+  "hf_repo": "black-forest-labs/FLUX.1-schnell",
+  "gated": true,
+  "summary": "High-quality 12B image model distilled to 4 steps. Gated on Hugging Face: accept the terms and save an access token in Settings first. NF4 by default to fit 16 GB.",
+  "license": "Apache-2.0",
+  "license_url": "https://huggingface.co/black-forest-labs/FLUX.1-schnell",
+  "tasks": [
+    "text-to-image"
+  ],
+  "adapter": "diffusers_auto",
+  "adapter_config": {
+    "pipeline": "FluxPipeline",
+    "variant": null
+  },
+  "download_gb": 33.7,
+  "vram_gb": 11,
+  "vram_note": "Estimate from the weights' real tensor sizes; not measured. Reel shows the true peak per clip in History.",
+  "python": {
+    "torch_index": "https://download.pytorch.org/whl/cu128",
+    "torch": [
+      "torch>=2.7",
+      "torchvision"
+    ],
+    "packages": [
+      "diffusers>=0.35",
+      "transformers>=4.49",
+      "accelerate>=1.4",
+      "bitsandbytes>=0.46",
+      "sentencepiece",
+      "protobuf",
+      "ftfy",
+      "tiktoken",
+      "safetensors",
+      "huggingface_hub",
+      "imageio",
+      "imageio-ffmpeg",
+      "numpy",
+      "Pillow"
+    ]
+  },
+  "weights": [
+    {
+      "repo_id": "black-forest-labs/FLUX.1-schnell",
+      "revision": "741f7c3ce8b383c54771c7003378a50191e9efe9",
+      "dest": ".",
+      "allow_patterns": [
+        "model_index.json",
+        "scheduler/scheduler_config.json",
+        "text_encoder/config.json",
+        "text_encoder/model.safetensors",
+        "text_encoder_2/config.json",
+        "text_encoder_2/model-00001-of-00002.safetensors",
+        "text_encoder_2/model-00002-of-00002.safetensors",
+        "text_encoder_2/model.safetensors.index.json",
+        "tokenizer/merges.txt",
+        "tokenizer/special_tokens_map.json",
+        "tokenizer/tokenizer_config.json",
+        "tokenizer/vocab.json",
+        "tokenizer_2/special_tokens_map.json",
+        "tokenizer_2/spiece.model",
+        "tokenizer_2/tokenizer.json",
+        "tokenizer_2/tokenizer_config.json",
+        "transformer/config.json",
+        "transformer/diffusion_pytorch_model-00001-of-00003.safetensors",
+        "transformer/diffusion_pytorch_model-00002-of-00003.safetensors",
+        "transformer/diffusion_pytorch_model-00003-of-00003.safetensors",
+        "transformer/diffusion_pytorch_model.safetensors.index.json",
+        "vae/config.json",
+        "vae/diffusion_pytorch_model.safetensors"
+      ]
+    }
+  ],
+  "limits": {
+    "max_width": 1536,
+    "max_height": 1536,
+    "max_area": 2359296,
+    "size_multiple": 16,
+    "steps": {
+      "min": 1,
+      "max": 100
+    },
+    "presets": [
+      {
+        "w": 512,
+        "h": 512
+      },
+      {
+        "w": 768,
+        "h": 768
+      },
+      {
+        "w": 1024,
+        "h": 1024
+      },
+      {
+        "w": 832,
+        "h": 1216
+      },
+      {
+        "w": 1216,
+        "h": 832
+      },
+      {
+        "w": 896,
+        "h": 1152
+      },
+      {
+        "w": 1152,
+        "h": 896
+      },
+      {
+        "w": 1344,
+        "h": 768
+      },
+      {
+        "w": 768,
+        "h": 1344
+      }
+    ]
+  },
+  "defaults": {
+    "width": 1024,
+    "height": 1024,
+    "steps": 4,
+    "guidance": 0.0,
+    "negative_prompt": "",
+    "offload": "model",
+    "vae_tiling": true,
+    "quantization": "nf4"
+  },
+  "memory": {
+    "offload_options": [
+      "none",
+      "model",
+      "sequential"
+    ],
+    "quantization_options": [
+      "none",
+      "int8",
+      "nf4"
+    ],
+    "notes": "Quantization applies to the transformer/UNet and any T5-class text encoder."
+  }
+}

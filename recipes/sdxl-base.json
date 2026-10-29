@@ -1,0 +1,147 @@
+{
+  "schema": 1,
+  "id": "sdxl-base",
+  "name": "SDXL 1.0",
+  "family": "Stability AI",
+  "version": "Base",
+  "status": "ready",
+  "kind": "image",
+  "verified": false,
+  "hf_repo": "stabilityai/stable-diffusion-xl-base-1.0",
+  "gated": false,
+  "summary": "The classic open image model: sharp 1024×1024 images, wide ecosystem, small download and light on VRAM. Runs through the generic diffusers adapter.",
+  "license": "CreativeML Open RAIL++-M",
+  "license_url": "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/blob/main/LICENSE.md",
+  "tasks": [
+    "text-to-image"
+  ],
+  "adapter": "diffusers_auto",
+  "adapter_config": {
+    "pipeline": "StableDiffusionXLPipeline",
+    "variant": "fp16"
+  },
+  "download_gb": 6.9,
+  "vram_gb": 9,
+  "vram_note": "Estimate from the weights' real tensor sizes; not measured. Reel shows the true peak per clip in History.",
+  "python": {
+    "torch_index": "https://download.pytorch.org/whl/cu128",
+    "torch": [
+      "torch>=2.7",
+      "torchvision"
+    ],
+    "packages": [
+      "diffusers>=0.35",
+      "transformers>=4.49",
+      "accelerate>=1.4",
+      "bitsandbytes>=0.46",
+      "sentencepiece",
+      "protobuf",
+      "ftfy",
+      "tiktoken",
+      "safetensors",
+      "huggingface_hub",
+      "imageio",
+      "imageio-ffmpeg",
+      "numpy",
+      "Pillow"
+    ]
+  },
+  "weights": [
+    {
+      "repo_id": "stabilityai/stable-diffusion-xl-base-1.0",
+      "revision": "462165984030d82259a11f4367a4eed129e94a7b",
+      "dest": ".",
+      "allow_patterns": [
+        "model_index.json",
+        "scheduler/scheduler_config.json",
+        "text_encoder/config.json",
+        "text_encoder/model.fp16.safetensors",
+        "text_encoder_2/config.json",
+        "text_encoder_2/model.fp16.safetensors",
+        "tokenizer/merges.txt",
+        "tokenizer/special_tokens_map.json",
+        "tokenizer/tokenizer_config.json",
+        "tokenizer/vocab.json",
+        "tokenizer_2/merges.txt",
+        "tokenizer_2/special_tokens_map.json",
+        "tokenizer_2/tokenizer_config.json",
+        "tokenizer_2/vocab.json",
+        "unet/config.json",
+        "unet/diffusion_pytorch_model.fp16.safetensors",
+        "vae/config.json",
+        "vae/diffusion_pytorch_model.fp16.safetensors"
+      ]
+    }
+  ],
+  "limits": {
+    "max_width": 1536,
+    "max_height": 1536,
+    "max_area": 2359296,
+    "size_multiple": 8,
+    "steps": {
+      "min": 1,
+      "max": 100
+    },
+    "presets": [
+      {
+        "w": 512,
+        "h": 512
+      },
+      {
+        "w": 768,
+        "h": 768
+      },
+      {
+        "w": 1024,
+        "h": 1024
+      },
+      {
+        "w": 832,
+        "h": 1216
+      },
+      {
+        "w": 1216,
+        "h": 832
+      },
+      {
+        "w": 896,
+        "h": 1152
+      },
+      {
+        "w": 1152,
+        "h": 896
+      },
+      {
+        "w": 1344,
+        "h": 768
+      },
+      {
+        "w": 768,
+        "h": 1344
+      }
+    ]
+  },
+  "defaults": {
+    "width": 1024,
+    "height": 1024,
+    "steps": 30,
+    "guidance": 5.0,
+    "negative_prompt": "low quality, blurry, distorted, watermark",
+    "offload": "model",
+    "vae_tiling": true,
+    "quantization": "none"
+  },
+  "memory": {
+    "offload_options": [
+      "none",
+      "model",
+      "sequential"
+    ],
+    "quantization_options": [
+      "none",
+      "int8",
+      "nf4"
+    ],
+    "notes": "Quantization applies to the transformer/UNet and any T5-class text encoder."
+  }
+}

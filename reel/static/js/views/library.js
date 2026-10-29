@@ -1,5 +1,9 @@
-import { h, icon, clear, toast, confirmDialog, fmtBytes, fmtDuration, progressBar, statusBadge } from "../ui.js";
+import { h, icon, clear, toast, confirmDialog, fmtBytes, fmtDuration, progressBar, statusBadge, kindBadge } from "../ui.js";
 import { api } from "../api.js";
+import { openAddFromHF } from "./hf_dialog.js";
+
+const FILTER_KEY = "reel.library.filter";
+const loadFilter = () => { try { return localStorage.getItem(FILTER_KEY) || "all"; } catch { return "all"; } };
 
 const STATE_BADGE = {
   installed:    ["success", "Installed", "check"],
@@ -19,7 +23,7 @@ function stepIcon(state) {
 
 function ModelCard(initial, ctx) {
   const m0 = initial;
-  const badgeSlot = h("span");
+  const badgeSlot = h("div", { class: "row-8 badges" });
   const fitSlot = h("div", { class: "row-8" });
   const diskSlot = h("div", { class: "muted icon-line" });
   const stepsEl = h("ol", { class: "steps", "aria-label": "Install steps" });
@@ -33,7 +37,7 @@ function ModelCard(initial, ctx) {
   const actions = h("div", { class: "row-8 card-actions" });
 
   const el = h("article", { class: "card model-card stack-16", "data-model": m0.id },
-    h("div", { class: "row-between" },
+    h("div", { class: "stack-8" },
       h("div", {},
         h("h3", {}, m0.name, " ", h("span", { class: "muted model-version" }, m0.version || "")),
         h("div", { class: "muted", style: { fontSize: "var(--text-sm)" } }, m0.family || "",
@@ -44,8 +48,8 @@ function ModelCard(initial, ctx) {
       stat("Download", `${m0.download_gb} GB`),
       stat("VRAM needed", `~${m0.vram_gb} GB`),
       stat("Max resolution", `${m0.limits.max_width} × ${m0.limits.max_height}`),
-      stat("Max frames", String(m0.limits.frames.max)),
-      stat("Frame rate", `${m0.limits.fps} fps`)),
+      m0.kind === "video" ? stat("Max frames", String(m0.limits.frames.max)) : null,
+      m0.kind === "video" ? stat("Frame rate", `${m0.limits.fps} fps`) : null),
     fitSlot, diskSlot, panel, actions);
 
   let lastActionsKey = "";
@@ -59,7 +63,7 @@ function ModelCard(initial, ctx) {
 
   function renderActions(m) {
     const job = m.install;
-    const key = [m.state, m.status, !!m.blocked_reason, job && job.status].join("|");
+    const key = [m.state, m.status, !!m.blocked_reason, job && job.status, m.source].join("|");
     if (key === lastActionsKey) return;
     lastActionsKey = key;
     clear(actions);
@@ -101,8 +105,17 @@ function ModelCard(initial, ctx) {
       case "uninstalling":
         actions.append(h("button", { class: "btn", disabled: true }, "Removing…"));
         break;
-      default:
-        actions.append(...[install("Install"), blockedNote()].filter(Boolean));
+      default: {
+        const items = [install("Install"), blockedNote()];
+        if (m.source === "user") {
+          items.push(h("button", { class: "btn btn-ghost", type: "button", onclick: async () => {
+            const ok = await confirmDialog({ title: `Remove ${m.name} from the Library?`, confirmLabel: "Remove",
+              body: "This only removes the entry. You can add it again from Hugging Face." });
+            if (ok) act(() => api.del(`/api/models/${m.id}/recipe`), `${m.name} removed.`);
+          } }, "Remove from Library"));
+        }
+        actions.append(...items.filter(Boolean));
+      }
     }
   }
 
@@ -151,6 +164,10 @@ function ModelCard(initial, ctx) {
     let [kind, text, ic] = m.status === "placeholder" ? ["neutral", "Placeholder", "box"] : STATE_BADGE[m.state];
     if (m.state === "partial" && job && job.status === "failed") [kind, text, ic] = ["danger", "Install failed", "error"];
     clear(badgeSlot);
+    badgeSlot.append(kindBadge(m.kind));
+    if (m.verified === false) badgeSlot.append(statusBadge("neutral", "Unverified", "info", "Reel has not run this model itself yet. It should work, but you may be the first to try it."));
+    if (m.gated) badgeSlot.append(ctx.hfTokenSet ? statusBadge("info", "Gated", "info", "Needs accepted terms on Hugging Face (token saved)")
+                                                 : statusBadge("warning", "Needs HF token", "alert", "Gated model: accept its terms on Hugging Face and save a token in Settings"));
     badgeSlot.append(statusBadge(kind, text, ic));
 
     clear(fitSlot);
@@ -180,21 +197,52 @@ export async function mount(root) {
   const grid = h("div", { class: "model-grid" });
   const summary = h("p", {});
   const notices = h("div", { class: "stack-8" });
+  const empty = h("div", { class: "empty", hidden: true }, icon("box"), h("div", {}, "No models of this type yet. Use Add from Hugging Face to get one."));
+  let filter = loadFilter();
+  const filterSeg = h("div", { class: "seg", role: "group", "aria-label": "Show models" });
+  const addBtn = h("button", { class: "btn btn-primary", type: "button", onclick: () => openAddFromHF({ onAdded: () => refresh() }) },
+    icon("plus"), "Add from Hugging Face");
   root.append(h("div", { class: "view" },
-    h("div", { class: "page-head" }, h("h1", {}, "Library"), summary),
-    notices, grid));
+    h("div", { class: "row-between" },
+      h("div", { class: "page-head" }, h("h1", {}, "Library"), summary),
+      h("div", { class: "row-8" }, filterSeg, addBtn)),
+    notices, grid, empty));
 
   const cards = new Map();
   let timer = null;
   let alive = true;
-  const ctx = { gpu: null, refresh };
+  let lastData = null;
+  const ctx = { gpu: null, hfTokenSet: false, refresh };
+
+  function drawFilter() {
+    clear(filterSeg);
+    for (const [v, label, ic] of [["all", "All", null], ["image", "Image", "image"], ["video", "Video", "generate"]]) {
+      filterSeg.append(h("button", { type: "button", "aria-pressed": String(filter === v), onclick: () => {
+        filter = v; try { localStorage.setItem(FILTER_KEY, v); } catch { /* ignore */ }
+        drawFilter(); applyFilter();
+      } }, ic ? icon(ic) : null, label));
+    }
+  }
+
+  function applyFilter() {
+    let shown = 0;
+    for (const [id, c] of cards) {
+      const m = lastData && lastData.models.find((x) => x.id === id);
+      const visible = !m || filter === "all" || m.kind === filter;
+      c.el.hidden = !visible;
+      if (visible) shown++;
+    }
+    empty.hidden = shown > 0 || !lastData;
+  }
 
   async function refresh() {
-    let data, sys;
-    try { [data, sys] = await Promise.all([api.get("/api/models"), api.get("/api/system")]); }
+    let data, sys, settings;
+    try { [data, sys, settings] = await Promise.all([api.get("/api/models"), api.get("/api/system"), api.get("/api/settings")]); }
     catch (e) { clear(notices); notices.append(h("div", { class: "notice notice-danger" }, icon("error"), `Cannot reach Reel: ${e.message}`)); schedule(5000); return; }
     if (!alive) return;
+    lastData = data;
     ctx.gpu = sys.gpu.gpus[0] || null;
+    ctx.hfTokenSet = settings.hf_token_set;
     const installed = data.models.filter((m) => m.state === "installed");
     const used = data.models.reduce((a, m) => a + m.disk.total, 0);
     summary.textContent = `${installed.length} of ${data.models.length} installed · ${fmtBytes(used)} used · ${fmtBytes(data.disk_free)} free in ${data.models_dir}`;
@@ -206,18 +254,24 @@ export async function mount(root) {
     for (const [file, errs] of Object.entries(data.recipe_problems || {})) {
       notices.append(h("div", { class: "notice notice-danger" }, icon("error"), `Recipe ${file} was skipped: ${errs.join("; ")}`));
     }
-    // Installable models first, placeholders last (stable within each group).
-    const ordered = [...data.models].sort((a, b) => (a.status === "placeholder") - (b.status === "placeholder"));
+    // Drop cards for models that no longer exist (e.g. an imported model that was removed).
+    const ids = new Set(data.models.map((m) => m.id));
+    for (const [id, c] of cards) if (!ids.has(id)) { c.el.remove(); cards.delete(id); }
+    // Order: placeholders last; then built-in before imported; otherwise as listed.
+    const rank = (m) => (m.status === "placeholder" ? 2 : m.source === "user" ? 1 : 0);
+    const ordered = [...data.models].sort((a, b) => rank(a) - rank(b));
     for (const m of ordered) {
       let c = cards.get(m.id);
       if (!c) { c = ModelCard(m, ctx); cards.set(m.id, c); }
       c.update(m);
       grid.append(c.el); // re-appending an existing node only reorders it
     }
+    applyFilter();
     schedule(data.models.some((m) => m.state === "installing" || m.state === "uninstalling") ? 1000 : 5000);
   }
 
   function schedule(ms) { clearTimeout(timer); if (alive) timer = setTimeout(refresh, ms); }
+  drawFilter();
   await refresh();
   return { unmount() { alive = false; clearTimeout(timer); } };
 }

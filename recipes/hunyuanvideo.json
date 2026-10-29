@@ -4,17 +4,19 @@
   "name": "HunyuanVideo",
   "family": "Tencent",
   "version": "13B",
-  "status": "placeholder",
-  "summary": "Placeholder recipe. 13B model: needs quantization and an adapter (adapters/hunyuanvideo.py) before it can be installed.",
+  "status": "ready",
+  "kind": "video",
+  "verified": false,
+  "summary": "Tencent's 13B text-to-video model. Large: NF4 quantization is required on a 16 GB card. Runs through the generic diffusers adapter; not yet tested by Reel.",
   "license": "Tencent Hunyuan Community License",
   "license_url": "https://huggingface.co/tencent/HunyuanVideo",
   "tasks": [
     "text-to-video"
   ],
-  "adapter": "hunyuanvideo",
+  "adapter": "diffusers_auto",
   "download_gb": 41.9,
-  "vram_gb": 16,
-  "vram_note": "Approximate; expect to need NF4 quantization on a 16 GB card.",
+  "vram_gb": 14,
+  "vram_note": "Estimate with NF4 transformer and text encoder + model offload, not measured. Tight on 16 GB.",
   "python": {
     "torch_index": "https://download.pytorch.org/whl/cu128",
     "torch": [
@@ -61,7 +63,7 @@
       "max": 61,
       "default": 33
     },
-    "fps": 24,
+    "fps": 15,
     "steps": {
       "min": 1,
       "max": 100
@@ -99,5 +101,9 @@
       "nf4"
     ],
     "notes": ""
+  },
+  "adapter_config": {
+    "pipeline": "HunyuanVideoPipeline",
+    "variant": null
   }
 }

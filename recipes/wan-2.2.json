@@ -5,6 +5,8 @@
   "family": "Wan-AI",
   "version": "TI2V-5B",
   "status": "ready",
+  "kind": "video",
+  "verified": false,
   "summary": "Higher-fidelity 5B model with a high-compression VAE. Best quality in the library; slower than LTX-Video. The 14B A14B variants do not fit 16 GB, so this recipe uses the 5B.",
   "license": "Apache-2.0",
   "license_url": "https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B-Diffusers",

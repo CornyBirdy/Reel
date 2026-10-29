@@ -1,7 +1,7 @@
 {
   "name": "Reel",
   "short_name": "Reel",
-  "description": "Local AI video generation.",
+  "description": "Local AI image and video generation.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

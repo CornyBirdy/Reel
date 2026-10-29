@@ -21,7 +21,8 @@ class GenerationError(Exception):
 def validate(recipe: dict, req: dict) -> dict:
     """Check a request against the recipe's caps and return the normalised parameters."""
     lim, dflt, mem = recipe["limits"], recipe["defaults"], recipe.get("memory", {})
-    out: dict = {}
+    kind = recipe.get("kind", "video")
+    out: dict = {"kind": kind}
 
     prompt = (req.get("prompt") or "").strip()
     if not prompt:
@@ -41,19 +42,24 @@ def validate(recipe: dict, req: dict) -> dict:
             raise ValueError(f"{key} must be between 64 and {cap} for {recipe['name']} on a 16 GB GPU.")
         out[key] = v
 
-    fr = lim["frames"]
-    frames = int(req.get("frames", fr["default"]))
-    if (frames - fr["offset"]) % fr["step"]:
-        raise ValueError(f"Frame count must be {fr['step']}n+{fr['offset']} (e.g. {fr['default']}).")
-    if not fr["min"] <= frames <= fr["max"]:
-        raise ValueError(f"Frame count must be between {fr['min']} and {fr['max']}.")
-    out["frames"] = frames
-    budget = lim.get("max_area_frames")
-    if budget and out["width"] * out["height"] * frames > budget:
-        raise ValueError(
-            f"{out['width']}×{out['height']} with {frames} frames is over {recipe['name']}'s 16 GB budget. "
-            "Lower the resolution or the frame count.")
-    out["fps"] = lim["fps"]
+    if kind == "video":
+        fr = lim["frames"]
+        frames = int(req.get("frames", fr["default"]))
+        if (frames - fr["offset"]) % fr["step"]:
+            raise ValueError(f"Frame count must be {fr['step']}n+{fr['offset']} (e.g. {fr['default']}).")
+        if not fr["min"] <= frames <= fr["max"]:
+            raise ValueError(f"Frame count must be between {fr['min']} and {fr['max']}.")
+        out["frames"] = frames
+        budget = lim.get("max_area_frames")
+        if budget and out["width"] * out["height"] * frames > budget:
+            raise ValueError(
+                f"{out['width']}×{out['height']} with {frames} frames is over {recipe['name']}'s 16 GB budget. "
+                "Lower the resolution or the frame count.")
+        out["fps"] = lim["fps"]
+    else:
+        budget = lim.get("max_area")
+        if budget and out["width"] * out["height"] > budget:
+            raise ValueError(f"{out['width']}×{out['height']} is over {recipe['name']}'s 16 GB size budget. Lower the resolution.")
 
     steps = int(req.get("steps", dflt["steps"]))
     sl = lim.get("steps", {"min": 1, "max": 100})
@@ -111,7 +117,7 @@ class GenJob:
             per = (time.time() - self.denoise_started) / self.step
             eta = per * (self.total - self.step)
         return {
-            "id": self.id, "model_id": self.recipe["id"], "model_name": self.recipe["name"],
+            "id": self.id, "model_id": self.recipe["id"], "model_name": self.recipe["name"], "kind": self.params["kind"],
             "status": self.status, "phase": self.phase, "message": self.message,
             "step": self.step, "total": self.total, "elapsed": now - self.started, "eta": eta,
             "params": self.params, "error": self.error, "error_kind": self.error_kind,
@@ -161,11 +167,11 @@ class GenerationManager:
         config.OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
         tmp = config.DATA_DIR / "tmp"
         tmp.mkdir(parents=True, exist_ok=True)
-        out_name = f"{time.strftime('%Y%m%d-%H%M%S')}-{job.id}.mp4"
+        out_name = f"{time.strftime('%Y%m%d-%H%M%S')}-{job.id}.{'png' if params['kind'] == 'image' else 'mp4'}"
         out_path = config.OUTPUTS_DIR / out_name
         req_path = tmp / f"{job.id}.json"
         request = {
-            **params, "model_id": recipe["id"], "adapter": recipe["adapter"],
+            **params, "model_id": recipe["id"], "adapter": recipe["adapter"], "kind": params["kind"],
             "adapter_config": recipe.get("adapter_config", {}),
             "weights_dir": str(mdir / "weights"), "output_path": str(out_path),
         }
@@ -218,7 +224,8 @@ class GenerationManager:
                 job.status, job.message = "cancelled", "Cancelled"
             elif code == 0 and done_evt and out_path.exists() and out_path.stat().st_size > 0:
                 clip = history.add({
-                    "id": job.id, "created": time.time(), "model_id": recipe["id"], "model_name": recipe["name"],
+                    "id": job.id, "created": time.time(), "kind": params["kind"],
+                    "model_id": recipe["id"], "model_name": recipe["name"],
                     "prompt": params["prompt"], "params": params, "file": out_name,
                     "seconds": done_evt.get("seconds"), "peak_vram_gb": done_evt.get("peak_vram_gb"),
                     "device": done_evt.get("device"),

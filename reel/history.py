@@ -16,6 +16,7 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS clips (
     id TEXT PRIMARY KEY,
     created REAL NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'video',
     model_id TEXT NOT NULL,
     model_name TEXT NOT NULL,
     prompt TEXT NOT NULL,
@@ -36,6 +37,10 @@ def _db() -> sqlite3.Connection:
         _conn = sqlite3.connect(config.DATA_DIR / "history.db", check_same_thread=False)
         _conn.row_factory = sqlite3.Row
         _conn.executescript(SCHEMA)
+        cols = {r["name"] for r in _conn.execute("PRAGMA table_info(clips)")}
+        if "kind" not in cols:  # databases created before image support
+            _conn.execute("ALTER TABLE clips ADD COLUMN kind TEXT NOT NULL DEFAULT 'video'")
+            _conn.commit()
     return _conn
 
 
@@ -50,8 +55,8 @@ def add(clip: dict) -> dict:
     with _lock:
         db = _db()
         db.execute(
-            "INSERT INTO clips (id, created, model_id, model_name, prompt, params, file, seconds, peak_vram_gb, device) "
-            "VALUES (:id, :created, :model_id, :model_name, :prompt, :params, :file, :seconds, :peak_vram_gb, :device)",
+            "INSERT INTO clips (id, created, kind, model_id, model_name, prompt, params, file, seconds, peak_vram_gb, device) "
+            "VALUES (:id, :created, :kind, :model_id, :model_name, :prompt, :params, :file, :seconds, :peak_vram_gb, :device)",
             {**clip, "params": json.dumps(clip["params"])})
         db.commit()
     return get(clip["id"])
@@ -63,11 +68,12 @@ def get(clip_id: str) -> dict | None:
     return _row(r) if r else None
 
 
-def list_clips(limit: int = 50, offset: int = 0) -> tuple[list[dict], int]:
+def list_clips(limit: int = 50, offset: int = 0, kind: str | None = None) -> tuple[list[dict], int]:
+    where, args = ("WHERE kind = ?", (kind,)) if kind in ("image", "video") else ("", ())
     with _lock:
         db = _db()
-        rows = db.execute("SELECT * FROM clips ORDER BY created DESC LIMIT ? OFFSET ?", (limit, offset)).fetchall()
-        total = db.execute("SELECT COUNT(*) FROM clips").fetchone()[0]
+        rows = db.execute(f"SELECT * FROM clips {where} ORDER BY created DESC LIMIT ? OFFSET ?", (*args, limit, offset)).fetchall()
+        total = db.execute(f"SELECT COUNT(*) FROM clips {where}", args).fetchone()[0]
     return [_row(r) for r in rows], total
 
 

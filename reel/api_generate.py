@@ -48,8 +48,8 @@ def cancel() -> dict:
 
 
 @router.get("/history")
-def list_history(limit: int = 50, offset: int = 0) -> dict:
-    clips, total = history.list_clips(max(1, min(limit, 200)), max(0, offset))
+def list_history(limit: int = 50, offset: int = 0, kind: str | None = None) -> dict:
+    clips, total = history.list_clips(max(1, min(limit, 200)), max(0, offset), kind)
     return {"clips": clips, "total": total}
 
 

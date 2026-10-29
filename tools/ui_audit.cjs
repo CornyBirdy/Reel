@@ -10,7 +10,7 @@
  *   - raw colour values outside tokens.css
  * It reports; it never changes styles.
  *
- * Usage: node tools/ui_audit.cjs [--url http://127.0.0.1:8765] [--routes generate,library,settings,styleguide]
+ * Usage: node tools/ui_audit.cjs [--url http://127.0.0.1:8765] [--routes generate,library,library-dialog,settings,styleguide]
  *                                [--shots DIR] [--json FILE]
  * Needs: npm i playwright (and a Chromium it can launch).
  */
@@ -23,7 +23,7 @@ const args = Object.fromEntries(process.argv.slice(2).reduce((acc, a, i, arr) =>
   return acc;
 }, []));
 const URL = args.url || "http://127.0.0.1:8765";
-const ROUTES = (args.routes || "generate,library,settings,styleguide").split(",");
+const ROUTES = (args.routes || "generate,library,library-dialog,settings,styleguide").split(",");
 const SHOTS = args.shots || null;
 if (SHOTS) fs.mkdirSync(SHOTS, { recursive: true });
 
@@ -132,8 +132,16 @@ const THR = { text: 4.5, icon: 3, control: 3 };
 const results = { runs: [], toggle: {}, selected_vs_hover: {}, failures: [] };
 
 async function gotoRoute(page, route) {
-  await page.goto(`${URL}/#/${route}`, { waitUntil: "networkidle" });
+  // "library-dialog" = the Library with the Add from Hugging Face dialog open (and its first search done).
+  const base = route === "library-dialog" ? "library" : route;
+  await page.evaluate(() => document.querySelectorAll("dialog[open]").forEach((d) => d.close())).catch(() => {});
+  await page.goto(`${URL}/#/${base}`, { waitUntil: "networkidle" });
   await page.waitForTimeout(1500);
+  if (route === "library-dialog") {
+    await page.click("button:has-text('Add from Hugging Face')");
+    await page.waitForSelector("dialog[open] .hf-row, dialog[open] .notice", { timeout: 30000 });
+    await page.waitForTimeout(300);
+  }
 }
 
 (async () => {

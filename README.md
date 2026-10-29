@@ -1,6 +1,6 @@
 # Reel
 
-Local AI video generation for Windows, in the spirit of LM Studio: install a model from a library, type a prompt, get an mp4. Everything runs on your PC and lives in this one folder.
+Local AI image and video generation for Windows, in the spirit of LM Studio: pick a model from a library (or add one from Hugging Face), type a prompt, get a PNG or an mp4. Everything runs on your PC and lives in this one folder.
 
 Part of the Rack Suite family (Rack, MC Hoster, Shelf), so it uses the neutral accent.
 
@@ -20,8 +20,8 @@ Environment variables: `REEL_PORT` (default 8765), `REEL_HOST` (default 127.0.0.
 
 | Tab | What it does |
 | --- | --- |
-| **Library** | One card per model recipe, with download size and VRAM need. **Install** builds an isolated venv for that model, installs PyTorch for CUDA 12.8 (needed by Blackwell / RTX 50-series), installs the diffusers stack, then downloads the weights from Hugging Face with a progress bar. **Uninstall** deletes only that model's folder. Cancelling or a dropped connection keeps every finished file and **Resume** continues with the rest (a file that was mid-download starts over). |
-| **Generate** | Prompt, negative prompt, resolution, frames, seed, steps, guidance and memory options for any installed model. Progress while it runs, an inline player, and a saved history with prompts so any clip can be reused or re-run (same seed = same clip). |
+| **Library** | One card per model (image or video), with download size and VRAM need, a filter, and **Add from Hugging Face**. **Install** builds an isolated venv for that model, installs PyTorch for CUDA 12.8 (needed by Blackwell / RTX 50-series), installs the diffusers stack, then downloads the weights from Hugging Face with a progress bar. **Uninstall** deletes only that model's folder. Cancelling or a dropped connection keeps every finished file and **Resume** continues with the rest (a file that was mid-download starts over). |
+| **Generate** | An Image / Video switch, then prompt, negative prompt, resolution, (frames,) seed, steps, guidance and memory options for any installed model of that type. Progress while it runs, an inline viewer, and a saved history with prompts so anything can be reused or re-run (same seed = same output). Images are saved as PNGs with the prompt and seed embedded. |
 | **Settings** | Model storage folder (with a folder picker), optional Hugging Face token, and what Reel found on this PC. |
 
 Disk layout:
@@ -31,7 +31,8 @@ Reel/
   start.bat  recipes/  adapters/  reel/  tools/
   data/                      (git-ignored, created on first run)
     models/<model-id>/       venv/  weights/  install.json  install.log
-    outputs/                 finished mp4s
+    outputs/                 finished PNGs and mp4s
+    recipes/                 models you added from Hugging Face
     history.db  settings.json
 ```
 
@@ -42,18 +43,43 @@ The storage folder in Settings can point the `models/` part elsewhere (for examp
 Every recipe defaults to the memory-saving options and caps resolution, frame count and (for Wan) width x height x frames so a clip should fit a 16 GB card:
 
 - **Offloading**: model offload by default (sequential available).
-- **Quantization**: NF4 transformer for Wan 2.2; LTX-Video's 2B transformer is small enough to stay bf16, and its T5 text encoder is the official 8-bit one, encoded first and freed before denoising.
+- **Quantization**: NF4 for Wan 2.2 and for any imported model that is too big otherwise (denoiser plus large text encoders); LTX-Video's 2B transformer stays bf16 and its T5 text encoder is the official 8-bit one, encoded first and freed before denoising.
 - **Tiled VAE decode** on by default.
 
 The figures in the recipes are estimates from upstream guidance. After each clip Reel records the real peak VRAM and shows it in History, so you can see how much headroom you actually have.
 
-## Adding a model
+## How models work
+
+A model in Reel is two things:
+
+- a **recipe** (a JSON file): which Hugging Face repos and files to download, which Python packages it needs, its resolution/frame caps for a 16 GB card, and sensible defaults;
+- an **adapter** (a small Python class): how to actually run it. Reel ships dedicated adapters for LTX-Video and Wan 2.2, and a **generic diffusers adapter** that runs any diffusers-format text-to-image or text-to-video repo.
+
+So the set of models is not fixed: it is whatever recipes exist. Built in: SDXL 1.0 and FLUX.1 schnell (image), LTX-Video, Wan 2.2, CogVideoX and HunyuanVideo (video). Everything else comes from **Library > Add from Hugging Face**.
+
+Only LTX-Video has been run end to end by the Reel author; the other built-ins and anything you import are marked **Unverified** until they have been.
+
+## Add from Hugging Face
+
+Paste a model link or `org/name`, or search. Reel reads the repo, then shows what it would download before you add it.
+
+- It reads `model_index.json` to find the pipeline and its parts, and picks **one weight format per part** (fp16 over fp32, safetensors over pickle, no ONNX / Flax / OpenVINO / single-file duplicates). SDXL goes from a 77 GB repo to a 6.9 GB download.
+- It estimates VRAM from the real tensor sizes in the weights (not from file names) and turns on NF4 quantization by default when the model is too big for 16 GB otherwise.
+- Gated models (FLUX, SD3, ...) work once you accept the terms on the model's page and save an access token in Settings.
+- Imported recipes live in `data/recipes/` and can be removed from the Library again. You can also build one on the command line: `python tools/make_recipe.py org/name --user`.
+
+What it can run: diffusers-format repos for text-to-image and text-to-video. What it cannot (it tells you why in the dialog): single-file checkpoints and GGUF, pipelines that need an input image (img2img, inpainting, image-to-video, editing models), ControlNet, LoRA-only repos, models that need custom code (`trust_remote_code` is never used), and architectures newer than the latest diffusers release.
+
+## Adding a model by hand
 
 1. Write `recipes/<id>.json` (copy `ltx-video.json`): Hugging Face repos and file patterns, Python packages, caps, defaults.
 2. Write `adapters/<name>.py` defining `class Adapter(BaseAdapter)` with a `generate()` method that returns a list of PIL frames. `adapters/base.py` documents the request JSON and handles seeds, memory options, progress events and mp4 export.
+   (Or skip the adapter: set `"adapter": "diffusers_auto"` and `"adapter_config": {"pipeline": "<DiffusersPipelineClass>"}` to use the generic one.)
 3. Set `"status": "ready"` and name the adapter in the recipe. Run `python tools/recipe_sizes.py` to fill in the exact download size from the Hugging Face API.
 
-Each generation runs `adapters/runner.py` as a subprocess in that model's venv: JSON request in, mp4 out, one JSON event per line on stdout.
+Each generation runs `adapters/runner.py` as a subprocess in that model's venv: JSON request in, mp4 (video) or PNG (image) out, one JSON event per line on stdout.
+
+Tests (offline, no GPU): `python -m unittest discover tests`.
 
 ## Design system
 
