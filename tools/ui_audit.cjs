@@ -133,7 +133,7 @@ const results = { runs: [], toggle: {}, selected_vs_hover: {}, failures: [] };
 
 async function gotoRoute(page, route) {
   await page.goto(`${URL}/#/${route}`, { waitUntil: "networkidle" });
-  await page.waitForTimeout(400);
+  await page.waitForTimeout(1500);
 }
 
 (async () => {

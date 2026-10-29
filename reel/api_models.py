@@ -12,16 +12,19 @@ from .installer import InstallError, installs, installed_info, model_dir
 
 router = APIRouter(prefix="/api/models", tags=["models"])
 
-_disk_cache: dict[str, tuple[float, dict]] = {}
+_disk_cache: dict[str, tuple[float, dict, bool]] = {}
 _disk_lock = threading.Lock()
-DISK_TTL = 4.0
+DISK_TTL_ACTIVE = 3.0   # while installing, the folder grows
+DISK_TTL_IDLE = 120.0   # walking a venv (tens of thousands of files) is not free; idle models don't change
 
 
 def disk_usage(model_id: str) -> dict:
     now = time.time()
+    active = installs.is_installing(model_id) or installs.is_uninstalling(model_id)
     with _disk_lock:
         hit = _disk_cache.get(model_id)
-        if hit and now - hit[0] < DISK_TTL:
+        # A value measured mid-install is never reused once the install has finished.
+        if hit and not (hit[2] and not active) and now - hit[0] < (DISK_TTL_ACTIVE if active else DISK_TTL_IDLE):
             return hit[1]
     d = model_dir(model_id)
     usage = {"total": 0, "weights": 0, "venv": 0, "other": 0}
@@ -31,7 +34,7 @@ def disk_usage(model_id: str) -> dict:
         usage["total"] = system.dir_size(d)
         usage["other"] = usage["total"] - usage["weights"] - usage["venv"]
     with _disk_lock:
-        _disk_cache[model_id] = (now, usage)
+        _disk_cache[model_id] = (now, usage, active)
     return usage
 
 

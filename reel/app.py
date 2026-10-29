@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import __version__, api_models, api_settings, config, system
+from . import __version__, api_generate, api_models, api_settings, config, generation, system  # noqa: F401
 
 
 @asynccontextmanager
@@ -20,6 +20,7 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title="Reel", version=__version__, lifespan=lifespan)
 app.include_router(api_models.router)
 app.include_router(api_settings.router)
+app.include_router(api_generate.router)
 
 
 @app.get("/api/health")
@@ -43,4 +44,6 @@ def index() -> FileResponse:
     return FileResponse(config.STATIC_DIR / "index.html", headers={"Cache-Control": "no-cache"})
 
 
+config.OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/outputs", StaticFiles(directory=config.OUTPUTS_DIR), name="outputs")
 app.mount("/static", StaticFiles(directory=config.STATIC_DIR), name="static")

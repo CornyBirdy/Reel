@@ -16,6 +16,7 @@
   font-weight: var(--weight-medium);
   line-height: 1;
   white-space: nowrap;
+  text-decoration: none;
   cursor: pointer;
   transition: background-color var(--dur-fast) var(--ease);
 }
@@ -268,7 +269,18 @@ input[type="range"] { width: 100%; accent-color: var(--accent); min-height: var(
   word-break: break-all;
 }
 
-details > summary { cursor: pointer; font-weight: var(--weight-medium); min-height: var(--control-h); display: flex; align-items: center; }
+details > summary { cursor: pointer; font-weight: var(--weight-medium); min-height: var(--control-h); display: flex; align-items: center; gap: var(--sp-8); list-style: none; }
+details > summary::-webkit-details-marker { display: none; }
+details > summary::before {
+  content: "";
+  width: var(--sp-8);
+  height: var(--sp-8);
+  border-right: var(--indicator-w) solid currentColor;
+  border-bottom: var(--indicator-w) solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform var(--dur-fast) var(--ease);
+}
+details[open] > summary::before { transform: rotate(45deg); }
 
 /* -- Dialog ------------------------------------------------------------------ */
 dialog.dialog {

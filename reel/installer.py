@@ -251,7 +251,8 @@ class InstallManager:
                 spec = mdir / "download_spec.json"
                 spec.write_text(json.dumps({"weights_dir": str(mdir / "weights"), "weights": recipe["weights"]}),
                                 encoding="utf-8")
-                env = {"HF_HUB_DISABLE_TELEMETRY": "1", "HF_HUB_DISABLE_SYMLINKS_WARNING": "1"}
+                env = {"HF_HUB_DISABLE_TELEMETRY": "1", "HF_HUB_DISABLE_SYMLINKS_WARNING": "1",
+                       "HF_HUB_DISABLE_PROGRESS_BARS": "1"}
                 token = config.load_settings().get("hf_token")
                 if token:
                     env["HF_TOKEN"] = token
@@ -294,7 +295,7 @@ class InstallManager:
             log("=== Install complete ===")
         except Cancelled:
             job.status = "cancelled"
-            job.message = "Cancelled. Downloaded files are kept; Install resumes where it stopped."
+            job.message = "Cancelled. Finished files are kept; Install continues with the rest (a file that was mid-download starts over)."
             log(job.message)
         except Exception as exc:  # noqa: BLE001
             job.status = "failed"
@@ -320,9 +321,10 @@ class InstallManager:
                 line = raw.rstrip()
                 if capture is not None:
                     capture.append(line)
-                if json_lines and line.startswith("{"):
+                at = line.find('{"event"') if json_lines else -1
+                if at >= 0:
                     try:
-                        evt = json.loads(line)
+                        evt = json.loads(line[at:])
                     except json.JSONDecodeError:
                         evt = None
                     if evt:

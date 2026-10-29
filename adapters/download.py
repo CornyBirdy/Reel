@@ -4,8 +4,8 @@ Usage: python download.py SPEC.json
 SPEC: {"weights_dir": str, "weights": [recipe weights entries]}
 Prints one JSON object per line: files / progress / done / error.
 Progress is the number of bytes on disk under weights_dir (completed files plus
-partial downloads), against the total taken from the Hub API. Interrupted
-downloads resume.
+partial downloads), against the total taken from the Hub API. Finished files are kept if a download
+is interrupted; a partly downloaded file starts over.
 """
 import fnmatch
 import json
@@ -33,6 +33,22 @@ def bytes_on_disk(root: Path) -> int:
     return total
 
 
+def drop_partials(root: Path) -> int:
+    """Delete half-downloaded files. Finished files are kept and skipped by the Hub client.
+
+    hf_xet starts a fresh .incomplete file instead of continuing an old one, so
+    stale partials would only waste disk and inflate the progress counter.
+    """
+    n = 0
+    for path in root.glob(".cache/huggingface/download/**/*.incomplete"):
+        try:
+            path.unlink()
+            n += 1
+        except OSError:
+            pass
+    return n
+
+
 def selected(api, entry):
     info = api.model_info(entry["repo_id"], revision=entry.get("revision"), files_metadata=True)
     allow = entry.get("allow_patterns") or ["*"]
@@ -47,6 +63,9 @@ def main(spec_path):
     weights_dir = Path(spec["weights_dir"])
     weights_dir.mkdir(parents=True, exist_ok=True)
     token = os.environ.get("HF_TOKEN") or None
+    for entry in spec["weights"]:
+        drop_partials(weights_dir / entry.get("dest", "."))
+    drop_partials(weights_dir)
 
     from huggingface_hub import HfApi, snapshot_download
     api = HfApi(token=token)
@@ -98,6 +117,7 @@ def main(spec_path):
     finally:
         stop.set()
         thread.join(timeout=2)
+    drop_partials(weights_dir)
     emit(event="progress", done=total, total=total, speed=0.0)
     emit(event="done", bytes=bytes_on_disk(weights_dir))
     return 0

@@ -1,0 +1,244 @@
+"""Run one generation at a time, in a subprocess inside the chosen model's venv."""
+
+from __future__ import annotations
+
+import json
+import os
+import random
+import threading
+import time
+import uuid
+from collections import deque
+
+from . import config, history, procs, recipes
+from .installer import installed_info, installs, model_dir
+
+
+class GenerationError(Exception):
+    pass
+
+
+def validate(recipe: dict, req: dict) -> dict:
+    """Check a request against the recipe's caps and return the normalised parameters."""
+    lim, dflt, mem = recipe["limits"], recipe["defaults"], recipe.get("memory", {})
+    out: dict = {}
+
+    prompt = (req.get("prompt") or "").strip()
+    if not prompt:
+        raise ValueError("Write a prompt first.")
+    if len(prompt) > 4000:
+        raise ValueError("Prompt is too long (4000 characters max).")
+    out["prompt"] = prompt
+    out["negative_prompt"] = (req.get("negative_prompt") or "").strip()
+
+    mult = lim["size_multiple"]
+    for key in ("width", "height"):
+        v = int(req.get(key, dflt[key]))
+        cap = lim[f"max_{key}"]
+        if v % mult:
+            raise ValueError(f"{key} must be a multiple of {mult}.")
+        if not 64 <= v <= cap:
+            raise ValueError(f"{key} must be between 64 and {cap} for {recipe['name']} on a 16 GB GPU.")
+        out[key] = v
+
+    fr = lim["frames"]
+    frames = int(req.get("frames", fr["default"]))
+    if (frames - fr["offset"]) % fr["step"]:
+        raise ValueError(f"Frame count must be {fr['step']}n+{fr['offset']} (e.g. {fr['default']}).")
+    if not fr["min"] <= frames <= fr["max"]:
+        raise ValueError(f"Frame count must be between {fr['min']} and {fr['max']}.")
+    out["frames"] = frames
+    budget = lim.get("max_area_frames")
+    if budget and out["width"] * out["height"] * frames > budget:
+        raise ValueError(
+            f"{out['width']}×{out['height']} with {frames} frames is over {recipe['name']}'s 16 GB budget. "
+            "Lower the resolution or the frame count.")
+    out["fps"] = lim["fps"]
+
+    steps = int(req.get("steps", dflt["steps"]))
+    sl = lim.get("steps", {"min": 1, "max": 100})
+    if not sl["min"] <= steps <= sl["max"]:
+        raise ValueError(f"Steps must be between {sl['min']} and {sl['max']}.")
+    out["steps"] = steps
+
+    guidance = float(req.get("guidance", dflt["guidance"]))
+    if not 0 <= guidance <= 20:
+        raise ValueError("Guidance must be between 0 and 20.")
+    out["guidance"] = guidance
+
+    seed = req.get("seed")
+    seed = None if seed in (None, "", -1) else int(seed)
+    if seed is None:
+        seed = random.randint(0, 2**32 - 1)
+    if not 0 <= seed < 2**32:
+        raise ValueError("Seed must be between 0 and 4294967295.")
+    out["seed"] = seed
+
+    offload = req.get("offload", dflt["offload"])
+    if offload not in mem.get("offload_options", ["none", "model", "sequential"]):
+        raise ValueError("Unsupported offload mode.")
+    quant = req.get("quantization", dflt["quantization"])
+    if quant not in mem.get("quantization_options", ["none"]):
+        raise ValueError("Unsupported quantization.")
+    out.update(offload=offload, quantization=quant, vae_tiling=bool(req.get("vae_tiling", dflt["vae_tiling"])))
+    return out
+
+
+class GenJob:
+    def __init__(self, recipe: dict, params: dict):
+        self.id = uuid.uuid4().hex[:12]
+        self.recipe = recipe
+        self.params = params
+        self.status = "running"  # running | done | failed | cancelled
+        self.phase = "loading"
+        self.message = "Starting"
+        self.step = 0
+        self.total = params["steps"]
+        self.started = time.time()
+        self.denoise_started: float | None = None
+        self.finished: float | None = None
+        self.error: str | None = None
+        self.error_kind: str | None = None
+        self.clip: dict | None = None
+        self.log: deque[str] = deque(maxlen=200)
+        self.cancel = threading.Event()
+        self.proc = None
+
+    def to_dict(self) -> dict:
+        now = self.finished or time.time()
+        eta = None
+        if self.denoise_started and self.step > 0 and self.status == "running":
+            per = (time.time() - self.denoise_started) / self.step
+            eta = per * (self.total - self.step)
+        return {
+            "id": self.id, "model_id": self.recipe["id"], "model_name": self.recipe["name"],
+            "status": self.status, "phase": self.phase, "message": self.message,
+            "step": self.step, "total": self.total, "elapsed": now - self.started, "eta": eta,
+            "params": self.params, "error": self.error, "error_kind": self.error_kind,
+            "clip": self.clip, "log": list(self.log)[-40:],
+        }
+
+
+class GenerationManager:
+    def __init__(self):
+        self._lock = threading.Lock()
+        self.current: GenJob | None = None
+
+    def is_model_busy(self, model_id: str) -> bool:
+        j = self.current
+        return bool(j and j.status == "running" and j.recipe["id"] == model_id)
+
+    def start(self, model_id: str, req: dict) -> GenJob:
+        recipe = recipes.get(model_id)
+        if not recipe:
+            raise GenerationError("Unknown model.")
+        if installs.is_installing(model_id) or installs.is_uninstalling(model_id):
+            raise GenerationError(f"{recipe['name']} is being installed or removed.")
+        if not installed_info(model_id):
+            raise GenerationError(f"{recipe['name']} is not installed. Install it from the Library first.")
+        try:
+            params = validate(recipe, req)
+        except (ValueError, TypeError) as exc:
+            raise GenerationError(str(exc))
+        with self._lock:
+            if self.current and self.current.status == "running":
+                raise GenerationError("A clip is already generating. Wait for it or cancel it.")
+            job = GenJob(recipe, params)
+            self.current = job
+        threading.Thread(target=self._run, args=(job,), daemon=True, name=f"gen-{job.id}").start()
+        return job
+
+    def cancel(self) -> None:
+        j = self.current
+        if j and j.status == "running":
+            j.cancel.set()
+            if j.proc:
+                procs.kill_tree(j.proc)
+
+    def _run(self, job: GenJob) -> None:
+        recipe, params = job.recipe, job.params
+        mdir = model_dir(recipe["id"])
+        config.OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = config.DATA_DIR / "tmp"
+        tmp.mkdir(parents=True, exist_ok=True)
+        out_name = f"{time.strftime('%Y%m%d-%H%M%S')}-{job.id}.mp4"
+        out_path = config.OUTPUTS_DIR / out_name
+        req_path = tmp / f"{job.id}.json"
+        request = {
+            **params, "model_id": recipe["id"], "adapter": recipe["adapter"],
+            "adapter_config": recipe.get("adapter_config", {}),
+            "weights_dir": str(mdir / "weights"), "output_path": str(out_path),
+        }
+        req_path.write_text(json.dumps(request), encoding="utf-8")
+        env = {
+            "HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1", "TOKENIZERS_PARALLELISM": "false",
+            "HF_HUB_DISABLE_TELEMETRY": "1", "TQDM_DISABLE": "1",
+        }
+        if not procs.IS_WINDOWS:
+            env["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+        done_evt: dict | None = None
+        try:
+            py = procs.venv_python(mdir / "venv")
+            proc = procs.popen([str(py), str(config.ADAPTERS_DIR / "runner.py"), str(req_path)],
+                               env=env, cwd=config.ADAPTERS_DIR)
+            job.proc = proc
+            assert proc.stdout is not None
+            for raw in proc.stdout:
+                line = raw.rstrip()
+                if not line:
+                    continue
+                evt = None
+                at = line.find('{"event"')  # a stray tqdm bar can precede the JSON on the same line
+                if at >= 0:
+                    try:
+                        evt = json.loads(line[at:])
+                    except json.JSONDecodeError:
+                        pass
+                if evt is None:
+                    if not job.log or job.log[-1] != line:  # collapse repeated library warnings
+                        job.log.append(line)
+                    continue
+                kind = evt.get("event")
+                if kind == "phase":
+                    job.phase, job.message = evt["phase"], evt.get("message") or evt["phase"]
+                elif kind == "progress":
+                    job.step, job.total = evt["step"], evt.get("total", job.total)
+                    if evt["step"] == 0 or job.denoise_started is None:
+                        job.denoise_started = time.time()
+                    job.phase, job.message = "denoising", f"Step {job.step} of {job.total}"
+                elif kind == "log":
+                    job.log.append(evt["message"])
+                elif kind == "error":
+                    job.error, job.error_kind = evt["message"], evt.get("kind")
+                    job.log.append(evt.get("trace", ""))
+                elif kind == "done":
+                    done_evt = evt
+            code = proc.wait()
+            if job.cancel.is_set():
+                job.status, job.message = "cancelled", "Cancelled"
+            elif code == 0 and done_evt and out_path.exists() and out_path.stat().st_size > 0:
+                clip = history.add({
+                    "id": job.id, "created": time.time(), "model_id": recipe["id"], "model_name": recipe["name"],
+                    "prompt": params["prompt"], "params": params, "file": out_name,
+                    "seconds": done_evt.get("seconds"), "peak_vram_gb": done_evt.get("peak_vram_gb"),
+                    "device": done_evt.get("device"),
+                })
+                job.clip, job.status, job.phase, job.message = clip, "done", "done", "Done"
+                job.step = job.total
+            else:
+                job.status = "failed"
+                if not job.error:
+                    tail = " | ".join(list(job.log)[-3:])
+                    job.error = f"The model process exited with code {code}. {tail}"
+        except Exception as exc:  # noqa: BLE001
+            job.status, job.error = "failed", f"{type(exc).__name__}: {exc}"
+        finally:
+            job.proc = None
+            job.finished = time.time()
+            if job.status != "done":
+                out_path.unlink(missing_ok=True)
+            req_path.unlink(missing_ok=True)
+
+
+generation = GenerationManager()
+installs.is_model_busy = generation.is_model_busy

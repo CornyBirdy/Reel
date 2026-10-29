@@ -20,7 +20,7 @@ Environment variables: `REEL_PORT` (default 8765), `REEL_HOST` (default 127.0.0.
 
 | Tab | What it does |
 | --- | --- |
-| **Library** | One card per model recipe, with download size and VRAM need. **Install** builds an isolated venv for that model, installs PyTorch for CUDA 12.8 (needed by Blackwell / RTX 50-series), installs the diffusers stack, then downloads the weights from Hugging Face with a progress bar. **Uninstall** deletes only that model's folder. Cancelling or a dropped connection keeps what was downloaded and **Resume** continues. |
+| **Library** | One card per model recipe, with download size and VRAM need. **Install** builds an isolated venv for that model, installs PyTorch for CUDA 12.8 (needed by Blackwell / RTX 50-series), installs the diffusers stack, then downloads the weights from Hugging Face with a progress bar. **Uninstall** deletes only that model's folder. Cancelling or a dropped connection keeps every finished file and **Resume** continues with the rest (a file that was mid-download starts over). |
 | **Generate** | Prompt, negative prompt, resolution, frames, seed, steps, guidance and memory options for any installed model. Progress while it runs, an inline player, and a saved history with prompts so any clip can be reused or re-run (same seed = same clip). |
 | **Settings** | Model storage folder (with a folder picker), optional Hugging Face token, and what Reel found on this PC. |
 
