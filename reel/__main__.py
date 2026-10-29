@@ -5,14 +5,14 @@ from __future__ import annotations
 import json
 import os
 import socket
-import subprocess
 import sys
 import threading
 import time
 import urllib.request
-import webbrowser
 
 import uvicorn
+
+from .browser import open_ui as _open_browser
 
 HOST = os.environ.get("REEL_HOST", "127.0.0.1")
 PORT = int(os.environ.get("REEL_PORT", "8765"))
@@ -33,17 +33,7 @@ def _port_free() -> bool:
 
 
 def open_ui() -> None:
-    """Open Reel in its own Edge app window on Windows, else the default browser."""
-    if os.environ.get("REEL_NO_BROWSER") == "1":
-        return
-    if sys.platform == "win32" and os.environ.get("REEL_APP_WINDOW", "1") != "0":
-        try:
-            subprocess.Popen(["cmd", "/c", "start", "", "msedge", f"--app={URL}"],
-                             creationflags=0x08000000)  # CREATE_NO_WINDOW
-            return
-        except OSError:
-            pass
-    webbrowser.open(URL)
+    _open_browser(URL)
 
 
 def _open_when_ready() -> None:
