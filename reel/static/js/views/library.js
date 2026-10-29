@@ -13,6 +13,17 @@ const STATE_BADGE = {
   not_installed: ["neutral", "Not installed", "box"],
 };
 
+// The Library is re-polled every second while installing. Writing the same DOM again each time makes the
+// page jump (it can briefly collapse and clamp the scroll position), so every section only writes when its
+// content actually changed.
+function setText(el, text) { if (el.textContent !== text) el.textContent = text; }
+function once(slot, key, build) {
+  if (slot.__key === key) return;
+  slot.__key = key;
+  clear(slot);
+  build(slot);
+}
+
 function stat(label, value) {
   return h("div", { class: "stat" }, h("span", { class: "stat-label" }, label), h("span", { class: "stat-value" }, value));
 }
@@ -27,8 +38,11 @@ function ModelCard(initial, ctx) {
   const fitSlot = h("div", { class: "row-8" });
   const diskSlot = h("div", { class: "muted icon-line" });
   const stepsEl = h("ol", { class: "steps", "aria-label": "Install steps" });
-  const barSlot = h("div");
-  const metaEl = h("div", { class: "progress-meta" });
+  const bar = progressBar(0, { label: `${m0.name} install progress` });
+  const barFill = bar.querySelector(".bar");
+  const barSlot = h("div", {}, bar);
+  const metaLeft = h("span"), metaMid = h("span"), metaRight = h("span");
+  const metaEl = h("div", { class: "progress-meta" }, metaLeft, metaMid, metaRight);
   const msgEl = h("div", { class: "muted mono install-msg" });
   const noticeSlot = h("div", { class: "stack-8" });
   const logEl = h("pre", { class: "log mono" });
@@ -53,7 +67,6 @@ function ModelCard(initial, ctx) {
     fitSlot, diskSlot, panel, actions);
 
   let lastActionsKey = "";
-  let lastStepsKey = "";
 
   async function act(fn, okMsg) {
     try { await fn(); if (okMsg) toast(okMsg, "success"); }
@@ -123,68 +136,74 @@ function ModelCard(initial, ctx) {
     const job = m.install;
     const show = m.state === "installing" || (job && (job.status === "failed" || job.status === "cancelled") && m.state !== "installed");
     panel.hidden = !show;
-    if (!show) { lastStepsKey = ""; return; }
-    const stepsKey = job.phases.map((p) => p.state).join();
-    if (stepsKey !== lastStepsKey) {
-      lastStepsKey = stepsKey;
-      clear(stepsEl);
+    if (!show) return;
+    if (!stepsEl.children.length) {  // built once; later polls only flip each step's state
       for (const p of job.phases) {
-        stepsEl.append(h("li", { class: "step", "data-state": p.state, "aria-current": p.state === "active" ? "step" : undefined },
-          icon(stepIcon(p.state)), h("span", {}, p.label), h("span", { class: "sr-only" }, ` - ${p.state}`)));
+        stepsEl.append(h("li", { class: "step", "data-id": p.id }, h("span", { "data-icon": "" }), h("span", {}, p.label), h("span", { class: "sr-only" })));
       }
     }
+    job.phases.forEach((p, i) => {
+      const li = stepsEl.children[i];
+      if (li.dataset.state === p.state) return;
+      li.dataset.state = p.state;
+      if (p.state === "active") li.setAttribute("aria-current", "step"); else li.removeAttribute("aria-current");
+      li.firstChild.replaceWith(icon(stepIcon(p.state)));
+      setText(li.lastChild, ` - ${p.state}`);
+    });
     const weights = job.phase === "weights" && job.bytes_total > 0;
-    clear(barSlot);
-    barSlot.append(progressBar(job.progress, {
-      indeterminate: job.status === "running" && !weights,
-      label: `${m.name} install progress`,
-    }));
-    clear(metaEl);
+    const indeterminate = job.status === "running" && !weights;
+    bar.classList.toggle("indeterminate", indeterminate);
+    if (indeterminate) { bar.removeAttribute("aria-valuenow"); barFill.style.width = ""; }
+    else { bar.setAttribute("aria-valuenow", String(Math.round(job.progress * 100))); barFill.style.width = `${Math.max(0, Math.min(1, job.progress)) * 100}%`; }
     if (job.status === "running" && weights) {
-      metaEl.append(
-        h("span", {}, `${fmtBytes(job.bytes_done)} of ${fmtBytes(job.bytes_total)}`),
-        h("span", {}, [job.speed > 0 ? `${fmtBytes(job.speed)}/s` : null, job.eta ? `${fmtDuration(job.eta)} left` : null].filter(Boolean).join(" · ")),
-        h("span", {}, `${Math.round(job.progress * 100)}% overall`));
+      setText(metaLeft, `${fmtBytes(job.bytes_done)} of ${fmtBytes(job.bytes_total)}`);
+      setText(metaMid, [job.speed > 0 ? `${fmtBytes(job.speed)}/s` : null, job.eta ? `${fmtDuration(job.eta)} left` : null].filter(Boolean).join(" · "));
     } else {
-      metaEl.append(h("span", {}, job.status === "running" ? job.phases.find((p) => p.state === "active")?.label ?? "" : ""),
-        h("span", {}, `${Math.round(job.progress * 100)}% overall`));
+      setText(metaLeft, job.status === "running" ? job.phases.find((p) => p.state === "active")?.label ?? "" : "");
+      setText(metaMid, "");
     }
-    msgEl.textContent = job.status === "running" ? job.message : "";
-    clear(noticeSlot);
-    for (const w of job.warnings || []) noticeSlot.append(h("div", { class: "notice notice-warning" }, icon("alert"), w));
-    if (job.status === "failed") noticeSlot.append(h("div", { class: "notice notice-danger", role: "alert" }, icon("error"), job.error || "Install failed."));
-    if (job.status === "cancelled") noticeSlot.append(h("div", { class: "notice notice-info" }, icon("info"), job.message));
-    const atBottom = logEl.scrollTop + logEl.clientHeight >= logEl.scrollHeight - 8;
-    logEl.textContent = job.log.join("\n");
-    if (atBottom) logEl.scrollTop = logEl.scrollHeight;
+    setText(metaRight, `${Math.round(job.progress * 100)}% overall`);
+    setText(msgEl, job.status === "running" ? job.message : "");
+    once(noticeSlot, JSON.stringify([job.status, job.error, job.message, job.warnings]), () => {
+      for (const w of job.warnings || []) noticeSlot.append(h("div", { class: "notice notice-warning" }, icon("alert"), w));
+      if (job.status === "failed") noticeSlot.append(h("div", { class: "notice notice-danger", role: "alert" }, icon("error"), job.error || "Install failed."));
+      if (job.status === "cancelled") noticeSlot.append(h("div", { class: "notice notice-info" }, icon("info"), job.message));
+    });
+    const logText = job.log.join("\n");
+    if (logEl.textContent !== logText) {
+      const atBottom = logEl.scrollTop + logEl.clientHeight >= logEl.scrollHeight - 8;
+      logEl.textContent = logText;
+      if (atBottom) logEl.scrollTop = logEl.scrollHeight;
+    }
   }
 
   function update(m) {
     const job = m.install;
     let [kind, text, ic] = m.status === "placeholder" ? ["neutral", "Placeholder", "box"] : STATE_BADGE[m.state];
     if (m.state === "partial" && job && job.status === "failed") [kind, text, ic] = ["danger", "Install failed", "error"];
-    clear(badgeSlot);
-    badgeSlot.append(kindBadge(m.kind));
-    if (m.verified === false) badgeSlot.append(statusBadge("neutral", "Unverified", "info", "Reel has not run this model itself yet. It should work, but you may be the first to try it."));
-    if (m.gated) badgeSlot.append(ctx.hfTokenSet ? statusBadge("info", "Gated", "info", "Needs accepted terms on Hugging Face (token saved)")
-                                                 : statusBadge("warning", "Needs HF token", "alert", "Gated model: accept its terms on Hugging Face and save a token in Settings"));
-    badgeSlot.append(statusBadge(kind, text, ic));
+    once(badgeSlot, [m.kind, m.verified, m.gated, ctx.hfTokenSet, kind, text].join("|"), () => {
+      badgeSlot.append(kindBadge(m.kind));
+      if (m.verified === false) badgeSlot.append(statusBadge("neutral", "Unverified", "info", "Reel has not run this model itself yet. It should work, but you may be the first to try it."));
+      if (m.gated) badgeSlot.append(ctx.hfTokenSet ? statusBadge("info", "Gated", "info", "Needs accepted terms on Hugging Face (token saved)")
+                                                   : statusBadge("warning", "Needs HF token", "alert", "Gated model: accept its terms on Hugging Face and save a token in Settings"));
+      badgeSlot.append(statusBadge(kind, text, ic));
+    });
 
-    clear(fitSlot);
     const gpu = ctx.gpu;
-    if (gpu) {
+    once(fitSlot, [gpu && gpu.vram_total_mb, gpu && gpu.name, m.vram_gb].join("|"), () => {
+      if (!gpu) return;
       const totalGb = gpu.vram_total_mb / 1024;
       if (m.vram_gb > totalGb) fitSlot.append(statusBadge("warning", `Needs ~${m.vram_gb} GB; your GPU has ${totalGb.toFixed(0)} GB`, "alert"));
       else fitSlot.append(statusBadge("success", `Should fit your ${totalGb.toFixed(0)} GB GPU (estimate)`, "check"));
       if (m.vram_note) fitSlot.append(h("span", { class: "muted", style: { fontSize: "var(--text-xs)" } }, m.vram_note));
-    }
+    });
 
     diskSlot.hidden = m.disk.total === 0;
-    clear(diskSlot);
-    if (m.disk.total) {
+    once(diskSlot, `${m.disk.total}|${m.disk.weights}|${m.disk.venv}`, () => {
+      if (!m.disk.total) return;
       diskSlot.append(icon("disk"), " On disk: ", h("strong", {}, fmtBytes(m.disk.total)),
         ` (weights ${fmtBytes(m.disk.weights)} · environment ${fmtBytes(m.disk.venv)})`);
-    }
+    });
     renderInstall(m);
     renderActions(m);
   }
@@ -241,19 +260,20 @@ export async function mount(root) {
     catch (e) { clear(notices); notices.append(h("div", { class: "notice notice-danger" }, icon("error"), `Cannot reach Reel: ${e.message}`)); schedule(5000); return; }
     if (!alive) return;
     lastData = data;
-    ctx.gpu = sys.gpu.gpus[0] || null;
+    ctx.gpu = sys.gpu.selected_gpu || null;
     ctx.hfTokenSet = settings.hf_token_set;
     const installed = data.models.filter((m) => m.state === "installed");
     const used = data.models.reduce((a, m) => a + m.disk.total, 0);
-    summary.textContent = `${installed.length} of ${data.models.length} installed · ${fmtBytes(used)} used · ${fmtBytes(data.disk_free)} free in ${data.models_dir}`;
-    clear(notices);
-    if (sys.gpu.cuda_12_8_ok === false) {
-      notices.append(h("div", { class: "notice notice-warning" }, icon("alert"),
-        `NVIDIA driver ${sys.gpu.driver} is too old for CUDA 12.8 (RTX 50-series needs 570 or newer). Update the driver before generating.`));
-    }
-    for (const [file, errs] of Object.entries(data.recipe_problems || {})) {
-      notices.append(h("div", { class: "notice notice-danger" }, icon("error"), `Recipe ${file} was skipped: ${errs.join("; ")}`));
-    }
+    setText(summary, `${installed.length} of ${data.models.length} installed · ${fmtBytes(used)} used · ${fmtBytes(data.disk_free)} free in ${data.models_dir}`);
+    once(notices, JSON.stringify([sys.gpu.cuda_12_8_ok, sys.gpu.driver, data.recipe_problems]), () => {
+      if (sys.gpu.cuda_12_8_ok === false) {
+        notices.append(h("div", { class: "notice notice-warning" }, icon("alert"),
+          `NVIDIA driver ${sys.gpu.driver} is too old for CUDA 12.8 (RTX 50-series needs 570 or newer). Update the driver before generating.`));
+      }
+      for (const [file, errs] of Object.entries(data.recipe_problems || {})) {
+        notices.append(h("div", { class: "notice notice-danger" }, icon("error"), `Recipe ${file} was skipped: ${errs.join("; ")}`));
+      }
+    });
     // Drop cards for models that no longer exist (e.g. an imported model that was removed).
     const ids = new Set(data.models.map((m) => m.id));
     for (const [id, c] of cards) if (!ids.has(id)) { c.el.remove(); cards.delete(id); }
@@ -264,8 +284,10 @@ export async function mount(root) {
       let c = cards.get(m.id);
       if (!c) { c = ModelCard(m, ctx); cards.set(m.id, c); }
       c.update(m);
-      grid.append(c.el); // re-appending an existing node only reorders it
     }
+    // Only touch the DOM order if it actually differs (moving every card each poll makes the page jump).
+    const want = ordered.map((m) => cards.get(m.id).el);
+    if (want.some((el, i) => grid.children[i] !== el) || grid.children.length !== want.length) grid.append(...want);
     applyFilter();
     schedule(data.models.some((m) => m.state === "installing" || m.state === "uninstalling") ? 1000 : 5000);
   }
