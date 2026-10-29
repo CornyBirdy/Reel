@@ -11,6 +11,8 @@ Part of the Rack Suite family (Rack, MC Hoster, Shelf), so it uses the neutral a
 3. **Library tab:** press **Install** on a model. A first install downloads PyTorch plus the model, so expect 10-30 minutes and 15-40 GB of disk per model. Good first tries: **SDXL 1.0** for images (about 15 GB total) or **LTX-Video** for video (about 20 GB total).
 4. **Generate tab:** pick Image or Video, write a prompt, press **Generate**.
 
+Reel opens in its own app-style window using Edge, Chrome, Brave or Vivaldi, whichever you have. If none is installed (for example Edge was removed) it uses your default browser, and if that fails it prints the address to open by hand.
+
 Needs: an NVIDIA GPU with driver **570 or newer** (RTX 50-series needs this for CUDA 12.8), and an internet connection for the downloads. Everything stays inside the Reel folder (`data/`); delete the folder to remove it completely.
 
 If something goes wrong:
@@ -19,10 +21,20 @@ If something goes wrong:
 | --- | --- |
 | "Windows protected your PC" when opening `start.bat` | Click **More info > Run anyway**. It is a plain text script you can read. |
 | "Python 3.10 - 3.13 was not found" | Press Y to let `start.bat` install it with winget, then run `start.bat` again. |
+| No window opens | Open the address printed in the console (http://127.0.0.1:8765) in any browser. Set `REEL_BROWSER` to a browser's `.exe` path to choose one. |
 | Library warns the driver is too old | Update the NVIDIA driver, then restart Reel. |
 | "Port 8765 is in use" | Close the other Reel window, or set `REEL_PORT` to another number. |
 | An install fails or stalls | Press Install again: finished downloads are kept. The full log is in `data/models/<model>/install.log`. |
 | Out of VRAM while generating | Lower the resolution, set Offloading to Sequential, or use NF4 quantization (Memory options). |
+
+## Updating
+
+**Settings > Updates > Update now.** Reel checks GitHub, lists what changed, downloads the new version, and replaces its program files. Your models, clips, history and settings live in `data/` and are never touched. Then press **Restart Reel** and it comes back on the new version by itself (when started with `start.bat`). A small "Update available" badge appears in the sidebar when there is something new.
+
+- A **git clone** updates with `git fetch` + a fast-forward. If you edited tracked files it stops and tells you which.
+- A **ZIP download** updates by downloading the latest snapshot from GitHub and overlaying it. Files that were deleted upstream are removed too.
+- While the GitHub repository is **private**, a ZIP copy needs a GitHub access token (Settings > Updates > Private repository?). Making the repository public removes that need.
+- Updates are refused while a model is installing or a generation is running.
 
 ## Run it
 
