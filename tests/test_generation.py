@@ -44,6 +44,14 @@ class Validate(unittest.TestCase):
         self.bad("ltx-video", frames=96)
         self.bad("wan-2.2", width=1280, height=704, frames=81)
 
+    def test_count_defaults_to_one_and_is_capped_per_kind(self):
+        self.assertEqual(self.ok("sdxl-base")["count"], 1)
+        self.assertEqual(self.ok("sdxl-base", count=8)["count"], 8)
+        self.bad("sdxl-base", count=9)
+        self.assertEqual(self.ok("ltx-video", count=4)["count"], 4)
+        self.bad("ltx-video", count=5)
+        self.bad("sdxl-base", count=-1)
+
     def test_blank_prompt_and_bad_seed_are_rejected(self):
         self.bad("sdxl-base", prompt="   ")
         self.bad("sdxl-base", seed=2**33)

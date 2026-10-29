@@ -93,7 +93,9 @@ export async function mount(root) {
     f.tiling = h("input", { id: "g-tiling", type: "checkbox", onchange: persist });
     f.caps = h("div", { class: "field-hint" });
     f.warn = h("div", { class: "stack-8" });
-    f.go = h("button", { class: "btn btn-primary grow", type: "button", onclick: () => start() }, icon("play"), "Generate");
+    f.count = h("select", { id: "g-count", class: "select count-select", "aria-label": "How many to generate", onchange: () => { syncGoLabel(); persist(); } });
+    f.goLabel = h("span", {}, "Generate");
+    f.go = h("button", { class: "btn btn-primary grow", type: "button", onclick: () => start() }, icon("play"), f.goLabel);
     f.stop = h("button", { class: "btn", type: "button", hidden: true, onclick: () => api.post("/api/generate/cancel").catch((e) => toast(e.message, "danger")) }, icon("stop"), "Cancel");
 
     formCard.append(
@@ -118,7 +120,9 @@ export async function mount(root) {
           h("label", { class: "check" }, f.tiling, "Tiled VAE decode"),
           h("div", { class: "field-hint", id: "mem-note" }))),
       f.caps, f.warn,
-      h("div", { class: "row-8" }, f.go, f.stop));
+      h("div", { class: "row-8 action-row" },
+        h("div", { class: "count-pick" }, h("label", { for: "g-count", class: "count-label" }, "Count"), f.count), f.go, f.stop),
+      h("div", { class: "field-hint" }, "Several at once: the model loads once, then each one uses its own seed (seed, seed+1, …). Every finished one is saved as it completes."));
 
     applyModel(model, false);
     for (const [k, v] of Object.entries(saved)) {
@@ -133,6 +137,7 @@ export async function mount(root) {
       else if (k === "offload" && [...f.offload.options].some((o) => o.value === v)) f.offload.value = v;
       else if (k === "quantization" && [...f.quant.options].some((o) => o.value === v)) f.quant.value = v;
       else if (k === "vae_tiling") f.tiling.checked = !!v;
+      else if (k === "count") fillCount(v);
     }
     syncFrames(); validate();
   }
@@ -156,6 +161,7 @@ export async function mount(root) {
     for (const o of mem.quantization_options || ["none"]) f.quant.append(h("option", { value: o }, { none: "Off (bf16)", int8: "8-bit", nf4: "4-bit NF4" }[o] || o));
     f.quant.value = d.quantization;
     f.tiling.checked = d.vae_tiling;
+    fillCount(f.count.value);
     const note = document.getElementById("mem-note");
     if (note) note.textContent = mem.notes || "";
     if (kind === "video") {
@@ -165,6 +171,19 @@ export async function mount(root) {
       f.caps.textContent = `${m.name} is capped at ${lim.max_width} × ${lim.max_height} (and ${((lim.max_area || lim.max_width * lim.max_height) / 1e6).toFixed(1)} megapixels) to fit a 16 GB GPU.`;
     }
     syncFrames(); validate();
+  }
+
+  function fillCount(keep) {
+    const max = (model.limits.max_count ?? (kind === "image" ? 8 : 4));
+    clear(f.count);
+    for (let n = 1; n <= max; n++) f.count.append(h("option", { value: n }, String(n)));
+    f.count.value = String(Math.min(Math.max(Number(keep) || 1, 1), max));
+    syncGoLabel();
+  }
+
+  function syncGoLabel() {
+    const n = Number(f.count.value) || 1;
+    f.goLabel.textContent = n > 1 ? `Generate ${n} ${kind === "image" ? "images" : "clips"}` : "Generate";
   }
 
   function syncFrames() {
@@ -202,6 +221,7 @@ export async function mount(root) {
       width: w, height: hgt, frames: kind === "video" ? Number(f.frames.value) : undefined, steps: Number(f.steps.value),
       guidance: Number(f.guidance.value), seed: f.seed.value === "" ? null : Number(f.seed.value),
       offload: f.offload.value, quantization: f.quant.value, vae_tiling: f.tiling.checked,
+      count: Number(f.count.value) || 1,
     };
   }
 
@@ -210,7 +230,7 @@ export async function mount(root) {
     saveForm({
       kind, model_id: model.id, prompt: f.prompt.value, negative_prompt: f.negative.value, seed: f.seed.value,
       res: f.res.value, frames: f.frames.value, steps: f.steps.value, guidance: f.guidance.value,
-      offload: f.offload.value, quantization: f.quant.value, vae_tiling: f.tiling.checked,
+      offload: f.offload.value, quantization: f.quant.value, vae_tiling: f.tiling.checked, count: f.count.value,
     });
   }
 
@@ -223,6 +243,7 @@ export async function mount(root) {
     f.res.value = `${p.width}x${p.height}`; if (kind === "video") f.frames.value = p.frames; f.steps.value = p.steps;
     f.guidance.value = p.guidance; f.seed.value = p.seed;
     f.offload.value = p.offload; f.quant.value = p.quantization; f.tiling.checked = p.vae_tiling;
+    fillCount(1);
     syncFrames(); validate(); persist();
     formCard.scrollIntoView({ behavior: "smooth", block: "start" });
     toast("Settings loaded into the form.", "info", 2500);
@@ -259,19 +280,22 @@ export async function mount(root) {
       const phases = PHASES[job.kind || "video"];
       const order = phases.map((p) => p[0]);
       const idx = Math.max(0, order.indexOf(job.phase === "encoding-prompt" ? "loading" : job.phase));
-      const frac = job.phase === "denoising" || job.phase === "decoding"
+      const inner = job.phase === "denoising" || job.phase === "decoding"
         ? 0.1 + 0.8 * (job.step / Math.max(job.total, 1)) + (job.phase === "decoding" ? 0.05 : 0)
         : job.phase === "encoding" ? 0.97 : 0.05;
+      const frac = ((job.item - 1) + inner) / Math.max(job.items, 1);
+      const of = job.items > 1 ? `${job.kind === "image" ? "Image" : "Clip"} ${job.item} of ${job.items} · ` : "";
       outputCard.append(
-        h("div", { class: "row-between" }, h("h3", {}, `Generating with ${job.model_name}`), statusBadge("info", "Running", "play")),
+        h("div", { class: "row-between" }, h("h3", {}, job.items > 1 ? `Generating ${job.items} with ${job.model_name}` : `Generating with ${job.model_name}`), statusBadge("info", "Running", "play")),
         h("ol", { class: "steps", "aria-label": "Generation steps" },
           phases.map(([id, label], i) => h("li", { class: "step", "data-state": i < idx ? "done" : i === idx ? "active" : "pending", "aria-current": i === idx ? "step" : undefined },
             icon(i < idx ? "check" : i === idx ? "play" : "clock"), h("span", {}, label)))),
         progressBar(frac, { indeterminate: job.phase === "loading" && job.step === 0, label: "Generation progress" }),
         h("div", { class: "progress-meta" },
-          h("span", {}, job.phase === "denoising" ? `Step ${job.step} of ${job.total}` : job.message),
+          h("span", {}, job.phase === "denoising" ? `${of}Step ${job.step} of ${job.total}` : `${of}${job.message}`),
           h("span", {}, [`${fmtDuration(job.elapsed)} elapsed`, job.eta ? `~${fmtDuration(job.eta)} left` : null].filter(Boolean).join(" · "))),
-        h("p", { class: "muted" }, job.params.prompt));
+        h("p", { class: "muted" }, job.params.prompt),
+        job.clips.length ? h("div", { class: "stack-8" }, h("h4", {}, `Finished so far (${job.clips.length})`), batchStrip(job, false)) : null);
       return;
     }
 
@@ -280,10 +304,10 @@ export async function mount(root) {
         h("div", { class: "stack-8" }, h("strong", {}, "Generation failed"), h("div", { class: "mono" }, job.error || "Unknown error"),
           job.error_kind === "oom" ? h("div", {}, "Out of VRAM. Lower the resolution (or frame count), set offloading to Sequential, or use NF4 quantization.") : null)));
     } else if (job && job.status === "cancelled") {
-      outputCard.append(h("div", { class: "notice notice-info" }, icon("info"), "Cancelled."));
+      outputCard.append(h("div", { class: "notice notice-info" }, icon("info"), job.message || "Cancelled."));
     }
 
-    const clip = (job && job.status === "done" && job.clip) || history.clips.find((c) => c.id === shownClipId);
+    const clip = history.clips.find((c) => c.id === shownClipId) || (job && job.clip);
     if (clip) { showClip(clip); return; }
     outputCard.append(h("div", { class: "empty" }, icon(kind === "image" ? "image" : "generate"),
       h("div", {}, h("strong", {}, kind === "image" ? "Your image appears here" : "Your clip appears here"), h("div", {}, "Pick a model, write a prompt and press Generate."))));
@@ -297,6 +321,7 @@ export async function mount(root) {
       ? h("img", { class: "player", src: clip.url, alt: clip.prompt })
       : h("video", { class: "player", controls: true, loop: true, muted: true, autoplay: true, playsinline: true, src: clip.url });
     outputCard.append(media,
+      activeJob && activeJob.clips && activeJob.clips.length > 1 ? batchStrip(activeJob, true) : null,
       h("p", {}, clip.prompt),
       h("div", { class: "stats" },
         stat("Model", clip.model_name), stat("Size", `${p.width} × ${p.height}`),
@@ -309,6 +334,20 @@ export async function mount(root) {
         h("button", { class: "btn", type: "button", onclick: () => loadSettings(clip) }, icon("load"), "Reuse settings"),
         h("button", { class: "btn", type: "button", disabled: activeRunning(), onclick: () => rerun(clip) }, icon("rerun"), "Re-run")));
     renderHistory();
+  }
+
+  // Thumbnails of one batch's results. While running they are informational; afterwards they switch the viewer.
+  function batchStrip(job, interactive) {
+    return h("div", { class: "batch-strip", role: "list", "aria-label": "This batch" }, job.clips.map((c, i) => {
+      const img = isImageUrl(c.url)
+        ? h("img", { src: c.url, alt: "", loading: "lazy" })
+        : h("video", { src: `${c.url}#t=0.1`, preload: "metadata", muted: true, playsinline: true, tabindex: -1 });
+      const on = c.id === shownClipId;
+      return interactive
+        ? h("button", { type: "button", class: "batch-thumb", role: "listitem", "aria-current": on ? "true" : undefined, "aria-label": `Result ${i + 1} of ${job.clips.length}, seed ${c.params.seed}`,
+            title: `Seed ${c.params.seed}`, onclick: () => { shownClipId = c.id; renderOutput(); } }, img)
+        : h("div", { class: "batch-thumb", role: "listitem", title: `Seed ${c.params.seed}` }, img);
+    }));
   }
 
   const stat = (label, value) => h("div", { class: "stat" }, h("span", { class: "stat-label" }, label), h("span", { class: "stat-value" }, value));
@@ -365,12 +404,14 @@ export async function mount(root) {
       const { job } = await api.get("/api/generate/current");
       if (job && (!activeJob || activeJob.id === job.id || job.status === "running")) {
         const wasRunning = activeJob && activeJob.status === "running";
+        const had = activeJob && activeJob.id === job.id ? activeJob.clips.length : 0;
         activeJob = job;
+        if (job.clips.length > had) await loadHistory();           // each item appears in History as it finishes
         if (job.status !== "running" && wasRunning) {
           await loadHistory();
-          if (job.status === "done") toast(job.kind === "image" ? "Image finished." : "Clip finished.", "success", 3000);
+          if (job.status === "done") toast(job.items > 1 ? `${job.items} ${job.kind === "image" ? "images" : "clips"} finished.` : (job.kind === "image" ? "Image finished." : "Clip finished."), "success", 3000);
         }
-        if (job.status === "done" && job.clip) shownClipId = job.clip.id;
+        if (job.status !== "running" && job.clip) shownClipId = job.clip.id;
         renderOutput();
       }
     } catch { /* server busy: try again */ }

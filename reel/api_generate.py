@@ -21,6 +21,7 @@ class GenerateRequest(BaseModel):
     steps: int | None = None
     guidance: float | None = None
     seed: int | None = None
+    count: int | None = None
     offload: str | None = None
     vae_tiling: bool | None = None
     quantization: str | None = None

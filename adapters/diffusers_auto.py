@@ -54,8 +54,8 @@ class Adapter(BaseAdapter):
         return PipelineQuantizationConfig(quant_backend=backend, quant_kwargs=kw,
                                           components_to_quantize=self.quant_components(comps))
 
-    def call_kwargs(self, pipe) -> dict:
-        params = inspect.signature(pipe.__call__).parameters
+    def call_kwargs(self) -> dict:
+        params = inspect.signature(self.pipe.__call__).parameters
         accepts = lambda name: name in params  # noqa: E731 - **kwargs does not count as accepting
         r = self.req
         call = {"prompt": r["prompt"], "width": int(r["width"]), "height": int(r["height"]),
@@ -75,7 +75,7 @@ class Adapter(BaseAdapter):
             emit(event="log", message="This pipeline does not report per-step progress.")
         return call
 
-    def generate(self):
+    def prepare(self):
         import diffusers
         name = self.cfg["pipeline"]
         try:
@@ -97,13 +97,15 @@ class Adapter(BaseAdapter):
             kwargs["quantization_config"] = qconfig
 
         self.phase("loading", f"Loading {name}")
-        pipe = Pipe.from_pretrained(str(self.weights_dir), **kwargs)
-        self.apply_memory_options(pipe)
+        self.pipe = Pipe.from_pretrained(str(self.weights_dir), **kwargs)
+        self.apply_memory_options(self.pipe)
+        self._warned_progress = False
 
-        call = self.call_kwargs(pipe)
+    def sample(self):
+        call = self.call_kwargs()
         self.phase("denoising", "Generating")
-        emit(event="progress", step=0, total=self.total_steps)
-        out = pipe(**call)
+        emit(event="progress", step=0, total=self.total_steps, item=self.item, items=self.n_items)
+        out = self.pipe(**call)
         if self.kind == "image":
             return list(out.images)
         return out.frames[0]

@@ -9,6 +9,7 @@ import threading
 import time
 import uuid
 from collections import deque
+from pathlib import Path
 
 from . import config, history, procs, recipes, system
 from .installer import installed_info, installs, model_dir
@@ -84,6 +85,12 @@ def validate(recipe: dict, req: dict) -> dict:
         raise ValueError("Guidance must be between 0 and 20.")
     out["guidance"] = guidance
 
+    max_count = int(lim.get("max_count", 8 if kind == "image" else 4))
+    count = int(req.get("count") or 1)
+    if not 1 <= count <= max_count:
+        raise ValueError(f"Count must be between 1 and {max_count} for {recipe['name']}.")
+    out["count"] = count
+
     seed = req.get("seed")
     seed = None if seed in (None, "", -1) else int(seed)
     if seed is None:
@@ -117,7 +124,9 @@ class GenJob:
         self.finished: float | None = None
         self.error: str | None = None
         self.error_kind: str | None = None
-        self.clip: dict | None = None
+        self.items = params.get("count", 1)
+        self.item = 1                       # 1-based index of the item being generated
+        self.clips: list[dict] = []         # finished items, saved to history as soon as each completes
         self.log: deque[str] = deque(maxlen=200)
         self.cancel = threading.Event()
         self.proc = None
@@ -127,13 +136,14 @@ class GenJob:
         eta = None
         if self.denoise_started and self.step > 0 and self.status == "running":
             per = (time.time() - self.denoise_started) / self.step
-            eta = per * (self.total - self.step)
+            eta = per * (self.total - self.step) + per * self.total * (self.items - self.item)
         return {
             "id": self.id, "model_id": self.recipe["id"], "model_name": self.recipe["name"], "kind": self.params["kind"],
             "status": self.status, "phase": self.phase, "message": self.message,
             "step": self.step, "total": self.total, "elapsed": now - self.started, "eta": eta,
             "params": self.params, "error": self.error, "error_kind": self.error_kind,
-            "clip": self.clip, "log": list(self.log)[-40:],
+            "items": self.items, "item": self.item, "clips": self.clips,
+            "clip": self.clips[-1] if self.clips else None, "log": list(self.log)[-40:],
         }
 
 
@@ -179,13 +189,18 @@ class GenerationManager:
         config.OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
         tmp = config.DATA_DIR / "tmp"
         tmp.mkdir(parents=True, exist_ok=True)
-        out_name = f"{time.strftime('%Y%m%d-%H%M%S')}-{job.id}.{'png' if params['kind'] == 'image' else 'mp4'}"
-        out_path = config.OUTPUTS_DIR / out_name
+        stamp, ext = time.strftime("%Y%m%d-%H%M%S"), "png" if params["kind"] == "image" else "mp4"
+        base_seed = params["seed"]
+        # Item i uses seed+i, so every clip is individually reproducible ("Re-run" gives the same one).
+        plan = [{"seed": (base_seed + i) % 2**32, "name": f"{stamp}-{job.id}" + (f"-{i + 1}" if job.items > 1 else "") + f".{ext}"}
+                for i in range(job.items)]
+        for it in plan:
+            it["path"] = str(config.OUTPUTS_DIR / it["name"])
         req_path = tmp / f"{job.id}.json"
         request = {
             **params, "model_id": recipe["id"], "adapter": recipe["adapter"], "kind": params["kind"],
             "adapter_config": recipe.get("adapter_config", {}),
-            "weights_dir": str(mdir / "weights"), "output_path": str(out_path),
+            "weights_dir": str(mdir / "weights"), "outputs": [{"path": it["path"], "seed": it["seed"]} for it in plan],
         }
         req_path.write_text(json.dumps(request), encoding="utf-8")
         env = child_env()
@@ -214,6 +229,23 @@ class GenerationManager:
                 kind = evt.get("event")
                 if kind == "phase":
                     job.phase, job.message = evt["phase"], evt.get("message") or evt["phase"]
+                elif kind == "item_start":
+                    job.item, job.step, job.denoise_started = evt["index"] + 1, 0, None
+                    job.phase, job.message = "denoising", f"Item {job.item} of {job.items}"
+                elif kind == "item_done":
+                    it = plan[evt["index"]]
+                    p_item = {k: v for k, v in params.items() if k != "count"}
+                    p_item["seed"] = it["seed"]
+                    out_file = Path(it["path"])
+                    if out_file.exists() and out_file.stat().st_size > 0:
+                        clip = history.add({
+                            "id": f"{job.id}-{evt['index'] + 1}" if job.items > 1 else job.id, "created": time.time(),
+                            "kind": params["kind"], "model_id": recipe["id"], "model_name": recipe["name"],
+                            "prompt": params["prompt"], "params": p_item, "file": it["name"],
+                            "seconds": evt.get("seconds"), "peak_vram_gb": evt.get("peak_vram_gb"),
+                            "device": evt.get("device_name") or evt.get("device"),
+                        })
+                        job.clips.append(clip)
                 elif kind == "progress":
                     job.step, job.total = evt["step"], evt.get("total", job.total)
                     if evt["step"] == 0 or job.denoise_started is None:
@@ -227,17 +259,12 @@ class GenerationManager:
                 elif kind == "done":
                     done_evt = evt
             code = proc.wait()
+            finished_all = len(job.clips) == job.items
             if job.cancel.is_set():
-                job.status, job.message = "cancelled", "Cancelled"
-            elif code == 0 and done_evt and out_path.exists() and out_path.stat().st_size > 0:
-                clip = history.add({
-                    "id": job.id, "created": time.time(), "kind": params["kind"],
-                    "model_id": recipe["id"], "model_name": recipe["name"],
-                    "prompt": params["prompt"], "params": params, "file": out_name,
-                    "seconds": done_evt.get("seconds"), "peak_vram_gb": done_evt.get("peak_vram_gb"),
-                    "device": done_evt.get("device_name") or done_evt.get("device"),
-                })
-                job.clip, job.status, job.phase, job.message = clip, "done", "done", "Done"
+                job.status = "cancelled"
+                job.message = f"Cancelled - {len(job.clips)} of {job.items} finished" if job.items > 1 else "Cancelled"
+            elif code == 0 and done_evt and finished_all:
+                job.status, job.phase, job.message = "done", "done", "Done"
                 job.step = job.total
             else:
                 job.status = "failed"
@@ -249,8 +276,10 @@ class GenerationManager:
         finally:
             job.proc = None
             job.finished = time.time()
-            if job.status != "done":
-                out_path.unlink(missing_ok=True)
+            kept = {c["file"] for c in job.clips}
+            for it in plan:                      # remove a half-written file from an item that did not finish
+                if it["name"] not in kept:
+                    Path(it["path"]).unlink(missing_ok=True)
             req_path.unlink(missing_ok=True)
 
 

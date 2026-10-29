@@ -35,23 +35,26 @@ class Adapter(BaseAdapter):
         if self.device == "cuda":
             self.torch.cuda.empty_cache()
 
-    def generate(self):
+    def prepare(self):
         from diffusers import LTXPipeline, LTXVideoTransformer3DModel
 
-        prompt_embeds, prompt_mask, neg_embeds, neg_mask = self.encode_prompts()
+        # The prompt is the same for every item, so it is encoded (and the text encoder freed) exactly once.
+        self.embeds = self.encode_prompts()
 
         self.phase("loading", "Loading transformer and VAE")
         transformer = LTXVideoTransformer3DModel.from_pretrained(
             str(self.weights_dir), subfolder="transformer", torch_dtype=self.dtype,
             quantization_config=self.quantization_config())
-        pipe = LTXPipeline.from_pretrained(
+        self.pipe = LTXPipeline.from_pretrained(
             str(self.weights_dir), transformer=transformer, text_encoder=None, tokenizer=None,
             torch_dtype=self.dtype)
-        self.apply_memory_options(pipe)
+        self.apply_memory_options(self.pipe)
 
+    def sample(self):
+        prompt_embeds, prompt_mask, neg_embeds, neg_mask = self.embeds
         self.phase("denoising", "Generating")
-        emit(event="progress", step=0, total=self.total_steps)
-        out = pipe(
+        emit(event="progress", step=0, total=self.total_steps, item=self.item, items=self.n_items)
+        out = self.pipe(
             prompt_embeds=prompt_embeds.to(self.device), prompt_attention_mask=prompt_mask.to(self.device),
             negative_prompt_embeds=neg_embeds.to(self.device), negative_prompt_attention_mask=neg_mask.to(self.device),
             width=int(self.req["width"]), height=int(self.req["height"]), num_frames=int(self.req["frames"]),

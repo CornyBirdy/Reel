@@ -4,17 +4,19 @@ Contract
 --------
 Input  : a JSON request file (see REQUEST below).
 Output : an H.264 mp4 (video) or a PNG (image) at request["output_path"].
-Events : one JSON object per stdout line - phase / progress / done / error.
+Events : one JSON object per stdout line - phase / progress / item_start / item_done / done / error.
 
 To add a model: write a recipe in recipes/, then a module here that defines
-`class Adapter(BaseAdapter)` implementing `generate()` and name it in the
+`class Adapter(BaseAdapter)` implementing `prepare()` (load the model once)
+and `sample()` (one item, using self.seed, returns a list of PIL images) and name it in the
 recipe's "adapter" field. Everything else (seed, memory options, progress,
 mp4 export, OOM reporting) is shared.
 
 REQUEST = {
-  "model_id", "adapter", "kind": "image|video", "weights_dir", "output_path",
+  "model_id", "adapter", "kind": "image|video", "weights_dir",
+  "outputs": [{"path": ..., "seed": ...}, ...],      # one entry per item; the model is loaded once for all of them
   "prompt", "negative_prompt", "width", "height", "frames", "fps",   # frames/fps: video only
-  "steps", "guidance", "seed",
+  "steps", "guidance",
   "offload": "none|model|sequential", "vae_tiling": bool,
   "quantization": "none|int8|nf4", "adapter_config": {...}
 }
@@ -41,7 +43,11 @@ class BaseAdapter:
         self.req = request
         self.cfg = request.get("adapter_config") or {}
         self.weights_dir = Path(request["weights_dir"])
-        self.output_path = Path(request["output_path"])
+        self.items = request["outputs"]
+        self.n_items = len(self.items)
+        self.item = 0
+        self.seed = int(self.items[0]["seed"])
+        self.output_path = Path(self.items[0]["path"])
         import torch  # noqa: F401  (fail early if the env is broken)
         self.torch = torch
         forced = os.environ.get("REEL_DEVICE")
@@ -51,8 +57,12 @@ class BaseAdapter:
         self.kind = request.get("kind", "video")
 
     # -- to implement --------------------------------------------------------
-    def generate(self):
-        """Return a list of PIL images: the frames of a video, or the single image."""
+    def prepare(self) -> None:
+        """Load the model. Called once, however many items are generated."""
+        raise NotImplementedError
+
+    def sample(self):
+        """Generate ONE item with self.seed. Return a list of PIL images (video frames, or the single image)."""
         raise NotImplementedError
 
     # -- shared helpers -----------------------------------------------------
@@ -98,13 +108,13 @@ class BaseAdapter:
 
     def step_callback(self, pipe, step, timestep, kwargs):
         done = step + 1
-        emit(event="progress", step=done, total=self.total_steps)
+        emit(event="progress", step=done, total=self.total_steps, item=self.item, items=self.n_items)
         if done >= self.total_steps:
             self.phase("decoding", "Decoding video (tiled VAE)")
         return kwargs
 
     def generator(self):
-        return self.torch.Generator(device="cpu").manual_seed(int(self.req["seed"]))
+        return self.torch.Generator(device="cpu").manual_seed(self.seed)
 
     def export_mp4(self, frames) -> None:
         import imageio.v2 as imageio
@@ -123,8 +133,9 @@ class BaseAdapter:
         """Save the image losslessly, with the prompt and settings embedded so the file documents itself."""
         from PIL import PngImagePlugin
         meta = PngImagePlugin.PngInfo()
-        for key in ("prompt", "negative_prompt", "seed", "steps", "guidance", "width", "height", "model_id"):
+        for key in ("prompt", "negative_prompt", "steps", "guidance", "width", "height", "model_id"):
             meta.add_text(key, str(self.req.get(key, "")))
+        meta.add_text("seed", str(self.seed))
         meta.add_text("software", "Reel")
         self.output_path.parent.mkdir(parents=True, exist_ok=True)
         image.save(self.output_path, format="PNG", pnginfo=meta)
@@ -137,17 +148,29 @@ class BaseAdapter:
 
     # -- driver ---------------------------------------------------------------
     def run(self) -> None:
-        t0 = time.time()
+        """Load once, then generate every item. Each finished item is reported straight away, so it is kept
+        even if a later one fails or the batch is cancelled."""
+        t_start = time.time()
         torch = self.torch
         if self.device == "cuda":
             torch.cuda.reset_peak_memory_stats()
         self.phase("loading", "Loading model")
-        frames = self.generate()
-        self.phase("encoding", "Saving image" if self.kind == "image" else "Encoding mp4")
-        self.export(frames)
-        peak = None
-        if self.device == "cuda":
-            peak = round(torch.cuda.max_memory_allocated() / 1024**3, 2)
+        self.prepare()
         name = torch.cuda.get_device_name(0) if self.device == "cuda" else None
-        emit(event="done", output=str(self.output_path), seconds=round(time.time() - t0, 1),
-             peak_vram_gb=peak, device=self.device, device_name=name, frames=len(frames))
+        total = 0.0
+        peak = None
+        for i, item in enumerate(self.items):
+            self.item, self.seed, self.output_path = i, int(item["seed"]), Path(item["path"])
+            t_item = t_start if i == 0 else time.time()   # the first item includes the model load
+            emit(event="item_start", index=i, items=self.n_items, seed=self.seed)
+            frames = self.sample()
+            self.phase("encoding", "Saving image" if self.kind == "image" else "Encoding mp4")
+            self.export(frames)
+            if self.device == "cuda":
+                peak = round(torch.cuda.max_memory_allocated() / 1024**3, 2)
+            seconds = round(time.time() - t_item, 1)
+            total += seconds
+            emit(event="item_done", index=i, items=self.n_items, output=str(self.output_path), seed=self.seed,
+                 seconds=seconds, peak_vram_gb=peak, device=self.device, device_name=name, frames=len(frames))
+        emit(event="done", items=self.n_items, seconds=round(time.time() - t_start, 1), peak_vram_gb=peak,
+             device=self.device, device_name=name)
