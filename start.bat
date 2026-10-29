@@ -44,10 +44,16 @@ echo         or download it from https://www.python.org/downloads/
 echo         ^(tick "Add python.exe to PATH" in the installer^).
 echo.
 choice /c YN /n /m "Run the winget install now? [Y/N] "
-if errorlevel 2 goto :fail
+if errorlevel 2 goto :declined
 winget install -e --id Python.Python.3.12
 echo.
 echo [Reel] Close this window and run start.bat again so the new Python is picked up.
+pause
+exit /b 1
+
+:declined
+echo.
+echo [Reel] Install Python, then run start.bat again.
 pause
 exit /b 1
 
