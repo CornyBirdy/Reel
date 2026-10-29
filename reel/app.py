@@ -39,6 +39,11 @@ def system_info() -> dict:
     }
 
 
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon() -> FileResponse:
+    return FileResponse(config.STATIC_DIR / "icons" / "reel.ico", media_type="image/x-icon")
+
+
 @app.get("/")
 def index() -> FileResponse:
     return FileResponse(config.STATIC_DIR / "index.html", headers={"Cache-Control": "no-cache"})

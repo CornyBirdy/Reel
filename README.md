@@ -65,6 +65,10 @@ The UI follows the Rack Suite design system with the neutral accent.
 - `#/styleguide` shows every component and state.
 - `node tools/ui_audit.cjs` (dev only; needs `npm i playwright`) measures contrast on the rendered UI in both modes and checks that no raw colours leak outside `tokens.css`.
 
+## Icon
+
+`reel/static/icons/reel.svg` is the only hand-edited icon file. `python tools/make_icons.py` (needs `pip install cairosvg`) regenerates every PNG size and the multi-size `reel.ico` from it; those drive the favicon, manifest, apple-touch icon and the desktop shortcut.
+
 ## Requirements
 
 Windows 11, Python 3.10-3.13, an NVIDIA GPU with driver 570+ for CUDA 12.8 (Reel warns if the driver is older). Reel itself needs only FastAPI and uvicorn; PyTorch and the model libraries are installed per model.

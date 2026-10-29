@@ -1,0 +1,15 @@
+{
+  "name": "Reel",
+  "short_name": "Reel",
+  "description": "Local AI video generation.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#202124",
+  "theme_color": "#202124",
+  "icons": [
+    { "src": "/static/icons/reel-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/static/icons/reel-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/static/icons/reel.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

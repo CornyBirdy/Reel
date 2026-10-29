@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <title>Reel</title>
+  <rect width="512" height="512" rx="112" fill="#2c2e33"/>
+  <g transform="translate(64 64) scale(16)" stroke="#e8eaed" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="2.5" y="4.5" width="19" height="15" rx="3" fill="#e8eaed" fill-opacity="0.22"/>
+    <path d="M10 9.2 15.2 12 10 14.8z" fill="#e8eaed"/>
+  </g>
+</svg>
