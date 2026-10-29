@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import __version__, api_generate, api_hf, api_models, api_settings, config, generation, system  # noqa: F401
+from . import __version__, api_generate, api_hf, api_models, api_settings, api_update, config, generation, system  # noqa: F401
 
 
 @asynccontextmanager
@@ -22,6 +22,7 @@ app.include_router(api_models.router)
 app.include_router(api_settings.router)
 app.include_router(api_generate.router)
 app.include_router(api_hf.router)
+app.include_router(api_update.router)
 
 
 @app.get("/api/health")

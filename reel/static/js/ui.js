@@ -137,3 +137,33 @@ export function fmtCount(n) {
   if (n >= 1e3) return `${Math.round(n / 1e3)}K`;
   return String(n || 0);
 }
+
+// Ask the server to restart (start.bat relaunches it), show a blocking notice, and reload once it is back.
+export async function restartReel(api) {
+  const dlg = h("dialog", { class: "dialog", "aria-labelledby": "rs-title" },
+    h("h3", { id: "rs-title" }, "Restarting Reel"),
+    h("p", { class: "muted", id: "rs-msg" }, "Applying the update. This takes a few seconds."),
+    progressBar(0, { indeterminate: true, label: "Restarting" }));
+  dlg.addEventListener("cancel", (e) => e.preventDefault());
+  document.body.append(dlg);
+  dlg.showModal();
+  try {
+    const r = await api.post("/api/update/restart");
+    if (!r.restarting) {
+      dlg.querySelector("#rs-msg").textContent = "Reel was not started with start.bat, so it cannot restart itself. Close this window and run start.bat again.";
+      dlg.append(h("div", { class: "dialog-actions" }, h("button", { class: "btn", type: "button", onclick: () => dlg.close() }, "OK")));
+      return;
+    }
+  } catch (e) {
+    dlg.close(); dlg.remove(); toast(e.message, "danger", 9000); return;
+  }
+  let sawDown = false;
+  for (let i = 0; i < 90; i++) {
+    await new Promise((res) => setTimeout(res, 1000));
+    try {
+      const ok = (await fetch("/api/health", { cache: "no-store" })).ok;
+      if (ok && (sawDown || i > 20)) { location.reload(); return; }
+    } catch { sawDown = true; }
+  }
+  dlg.querySelector("#rs-msg").textContent = "Reel did not come back. Check the console window, or run start.bat again.";
+}

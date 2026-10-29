@@ -60,6 +60,18 @@ function buildThemeToggle() {
   draw();
 }
 
+// "Update available" pill: a cached check against GitHub (the server caches it for 30 minutes).
+const pill = document.getElementById("update-pill");
+function showUpdate(u) {
+  const available = u && u.state === "available";
+  pill.hidden = !available;
+  if (available) pill.querySelector("span").textContent = `Update available (${u.behind})`;
+}
+async function checkForUpdate() {
+  try { showUpdate(await api.get("/api/update/check")); } catch { /* offline: no pill */ }
+}
+document.addEventListener("reel:update-state", (e) => showUpdate(e.detail));
+
 async function refreshGpuChip() {
   const chip = document.getElementById("gpu-chip");
   try {
@@ -81,4 +93,6 @@ buildThemeToggle();
 window.addEventListener("hashchange", () => { render(); refreshGpuChip(); });
 refreshGpuChip();
 setInterval(refreshGpuChip, 15000);
+checkForUpdate();
+setInterval(checkForUpdate, 30 * 60 * 1000);
 render();

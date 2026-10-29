@@ -1,4 +1,4 @@
-import { h, icon, clear, toast, confirmDialog, fmtBytes, statusBadge } from "../ui.js";
+import { h, icon, clear, toast, confirmDialog, fmtBytes, statusBadge, restartReel } from "../ui.js";
 import { api } from "../api.js";
 
 export async function mount(root) {
@@ -10,7 +10,91 @@ export async function mount(root) {
   async function load() {
     const [s, stored] = await Promise.all([api.get("/api/settings"), api.get("/api/settings/stored-models")]);
     clear(body);
-    body.append(storageCard(s, stored), tokenCard(s), systemCard(s));
+    body.append(updatesCard(s), storageCard(s, stored), tokenCard(s), systemCard(s));
+    refreshUpdates(false);
+  }
+
+  // ---- Updates ----
+  const upd = h("div", { class: "stack-12" });
+  let applied = null;
+
+  async function refreshUpdates(force) {
+    clear(upd);
+    upd.append(h("div", { class: "muted icon-line" }, icon("clock"), force ? "Asking GitHub…" : "Checking…"));
+    let u;
+    try { u = await api.get(`/api/update/check?force=${force}`); }
+    catch (e) { clear(upd); upd.append(h("div", { class: "notice notice-danger" }, icon("error"), e.message)); return; }
+    drawUpdates(u);
+    document.dispatchEvent(new CustomEvent("reel:update-state", { detail: u }));
+  }
+
+  function drawUpdates(u) {
+    clear(upd);
+    const where = { git: "Git clone", zip: "ZIP download" }[u.mode] || u.mode;
+    const ver = u.local.short ? `${u.local.short}${u.local.date ? ` · ${u.local.date}` : ""}` : "unknown";
+    const badge = { up_to_date: ["success", "Up to date", "check"], available: ["info", `${u.behind} update${u.behind === 1 ? "" : "s"}`, "download"],
+      unknown: ["warning", "Version unknown", "alert"], error: ["danger", "Check failed", "error"], diverged: ["warning", "Diverged", "alert"],
+      ahead: ["neutral", "Ahead of GitHub", "info"] }[u.state];
+    const canUpdate = (u.state === "available" || u.state === "unknown") && !(u.dirty_files && u.dirty_files.length);
+    upd.append(
+      h("div", { class: "row-between" }, h("h4", {}, "This copy"), statusBadge(...badge)),
+      h("dl", { class: "kv" }, h("dt", {}, "Version"), h("dd", { class: "mono" }, ver),
+        h("dt", {}, "Installed as"), h("dd", {}, where),
+        h("dt", {}, "Updates from"), h("dd", { class: "mono" }, `${u.repo} (${u.branch})`)));
+    if (u.state === "up_to_date") upd.append(h("div", { class: "notice notice-success" }, icon("check"), "You're on the latest version."));
+    if (u.state === "error") upd.append(h("div", { class: "notice notice-danger", role: "alert" }, icon("error"), u.error));
+    if (u.state === "unknown") upd.append(h("div", { class: "notice notice-warning" }, icon("alert"),
+      `Reel can't tell which version this copy is. Updating installs the latest (${u.remote ? u.remote.short : "?"}) so it can track versions from then on.`));
+    if (u.state === "diverged") upd.append(h("div", { class: "notice notice-warning" }, icon("alert"), "This copy has local commits that GitHub does not have, so it can't be fast-forwarded. Merge it with git yourself."));
+    if (u.state === "ahead") upd.append(h("div", { class: "notice notice-info" }, icon("info"), "This copy is ahead of GitHub. Nothing to update."));
+    if (u.dirty_files && u.dirty_files.length) upd.append(h("div", { class: "notice notice-warning" }, icon("alert"),
+      `You have local changes to ${u.dirty_files.slice(0, 4).join(", ")}${u.dirty_files.length > 4 ? "…" : ""}. Commit, stash or discard them, then update.`));
+    if (u.commits && u.commits.length) {
+      upd.append(h("h4", {}, "What's new"), h("ul", { class: "changelog" }, u.commits.map((c) =>
+        h("li", {}, h("code", {}, c.sha), " ", c.message, h("span", { class: "muted" }, ` · ${c.date}`)))));
+    }
+    if (applied) {
+      upd.append(h("div", { class: "notice notice-success" }, icon("check"),
+        `${applied.message} Now on ${applied.new_version}. Restart Reel to use it.${applied.requirements_changed ? " New app dependencies will be installed on restart." : ""}`));
+    }
+    const row = h("div", { class: "row-8" });
+    if (applied) {
+      row.append(h("button", { class: "btn btn-primary", type: "button", onclick: () => restartReel(api) }, icon("rerun"), u.can_restart ? "Restart Reel" : "Restart"));
+    } else {
+      row.append(h("button", { class: "btn btn-primary", type: "button", disabled: !canUpdate, onclick: () => applyUpdate(u) }, icon("download"), "Update now"));
+    }
+    row.append(h("button", { class: "btn", type: "button", onclick: () => refreshUpdates(true) }, icon("rerun"), "Check for updates"));
+    upd.append(row);
+  }
+
+  async function applyUpdate(u) {
+    const ok = await confirmDialog({ title: "Update Reel?", confirmLabel: "Update",
+      body: "Reel downloads the new version and replaces its program files. Your models, clips, history and settings (the data folder) are not touched." });
+    if (!ok) return;
+    clear(upd); upd.append(h("div", { class: "muted icon-line" }, icon("download"), "Updating…"));
+    try { applied = await api.post("/api/update/apply"); toast("Update installed.", "success"); }
+    catch (e) { toast(e.message, "danger", 10000); applied = null; }
+    refreshUpdates(true);
+  }
+
+  function updatesCard(s) {
+    const tok = h("input", { id: "gh-token", class: "input input-mono", type: "password", autocomplete: "off", spellcheck: "false",
+      placeholder: s.github_token_set ? "Token saved - enter a new one to replace it" : "github_pat_..." });
+    const saveTok = async (value) => {
+      try { await api.put("/api/settings", { set_github_token: true, github_token: value }); toast(value ? "Token saved." : "Token cleared.", "success"); await load(); }
+      catch (e) { toast(e.message, "danger"); }
+    };
+    return h("section", { class: "card stack-16" },
+      h("h3", {}, "Updates"),
+      h("p", { class: "muted" }, "Updates Reel from GitHub in one click. Only the program files change; your models, clips, history and settings stay put. This is the only thing Reel contacts GitHub for."),
+      upd,
+      h("details", {}, h("summary", {}, "Private repository?"),
+        h("div", { class: "stack-12" },
+          h("p", { class: "muted" }, "If the GitHub repository is private, a ZIP-installed copy needs a GitHub access token with read access to it (a fine-grained token with Contents: read is enough). Git clones use your Git sign-in instead. Making the repository public removes the need for this."),
+          h("div", { class: "field" }, h("label", { for: "gh-token" }, "GitHub access token"), tok),
+          h("div", { class: "row-8" },
+            h("button", { class: "btn", type: "button", onclick: () => tok.value.trim() ? saveTok(tok.value.trim()) : toast("Enter a token first.", "warning") }, "Save token"),
+            h("button", { class: "btn", type: "button", disabled: !s.github_token_set, onclick: () => saveTok("") }, "Clear token")))));
   }
 
   function storageCard(s, stored) {

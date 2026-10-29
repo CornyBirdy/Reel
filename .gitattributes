@@ -7,3 +7,7 @@
 * text=auto
 *.png binary
 *.ico binary
+
+# GitHub's "Download ZIP" runs `git archive`, which expands this to "<commit sha> <date>",
+# so a ZIP install knows exactly which version it is and the updater can compare it.
+reel/VERSION export-subst

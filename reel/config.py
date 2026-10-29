@@ -22,6 +22,7 @@ _lock = threading.Lock()
 DEFAULTS = {
     "models_dir": None,  # None -> DEFAULT_MODELS_DIR
     "hf_token": None,
+    "github_token": None,  # only needed to update from a private GitHub repo without git
 }
 
 

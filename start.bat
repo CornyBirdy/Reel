@@ -6,6 +6,9 @@ setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
 title Reel
 
+rem Started again by the in-app updater: do not open a second window, the old one reconnects by itself.
+if /i "%~1"=="restarted" set "REEL_SKIP_OPEN=1"
+
 set "PYTHONUTF8=1"
 set "PIP_DISABLE_PIP_VERSION_CHECK=1"
 set "VENV_DIR=%~dp0.venv"
@@ -31,9 +34,25 @@ if errorlevel 1 goto :fail
 copy /y "%~dp0requirements.txt" "%STAMP%" >nul
 
 :launch
-"%VENV_PY%" -m reel
-if errorlevel 1 goto :fail
-exit /b 0
+set "REEL_LAUNCHER=bat"
+rem Everything that happens after Reel exits is inside ONE parenthesised block. cmd reads a block into
+rem memory before running it, so Reel can safely replace this very file while it is running (updates).
+(
+    "%VENV_PY%" -m reel
+    set "REEL_RC=!ERRORLEVEL!"
+    if "!REEL_RC!"=="75" (
+        echo [Reel] Restarting to finish the update ...
+        start "" "%~f0" restarted
+        exit
+    )
+    if not "!REEL_RC!"=="0" (
+        echo.
+        echo [Reel] Reel stopped unexpectedly ^(code !REEL_RC!^) - see the messages above.
+        pause
+        exit /b 1
+    )
+    exit /b 0
+)
 
 :no_python
 echo.

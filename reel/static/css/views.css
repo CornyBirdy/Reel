@@ -97,3 +97,19 @@ dialog.dialog.dialog-wide { width: min(780px, calc(100vw - var(--sp-32))); }
 .clip-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none; }
 img.player { object-fit: contain; width: 100%; height: auto; max-height: 70vh; }
 .stack-16 > .seg-fill { width: 100%; }
+
+/* -- Updates ---------------------------------------------------------------- */
+.update-pill {
+  display: flex; align-items: center; gap: var(--sp-8);
+  padding: var(--sp-8) var(--sp-12);
+  border-radius: var(--radius-sm);
+  background: var(--info-soft); color: var(--info);
+  font-size: var(--text-sm); font-weight: var(--weight-semibold);
+  text-decoration: none;
+}
+.update-pill:hover { background: var(--hover-bg); }
+.update-pill svg { width: var(--sp-16); height: var(--sp-16); flex: none; }
+.update-pill[hidden] { display: none; }
+.changelog { margin: 0; padding-left: var(--sp-20); display: grid; gap: var(--sp-4); font-size: var(--text-sm); }
+.changelog code { color: var(--ink-muted); }
+@media (max-width: 760px) { .update-pill span { display: none; } }

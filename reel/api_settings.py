@@ -18,8 +18,10 @@ router = APIRouter(prefix="/api/settings", tags=["settings"])
 class SettingsUpdate(BaseModel):
     models_dir: str | None = None       # "" or None resets to the default
     hf_token: str | None = None         # "" clears
+    github_token: str | None = None     # "" clears
     set_models_dir: bool = False
     set_hf_token: bool = False
+    set_github_token: bool = False
 
 
 def _view() -> dict:
@@ -31,6 +33,7 @@ def _view() -> dict:
         "default_models_dir": str(config.DEFAULT_MODELS_DIR),
         "outputs_dir": str(config.OUTPUTS_DIR),
         "hf_token_set": bool(s.get("hf_token")),
+        "github_token_set": bool(s.get("github_token")),
         "disk_free": system.disk_free(root),
         "gpu": system.gpu_info(),
         "python": sys.version.split()[0],
@@ -64,6 +67,8 @@ def update_settings(body: SettingsUpdate) -> dict:
         else:
             config.save_settings(models_dir=None)
             config.models_root().mkdir(parents=True, exist_ok=True)
+    if body.set_github_token:
+        config.save_settings(github_token=(body.github_token or "").strip() or None)
     if body.set_hf_token:
         config.save_settings(hf_token=(body.hf_token or "").strip() or None)
     return _view()
