@@ -142,7 +142,7 @@ export function fmtCount(n) {
 export async function restartReel(api) {
   const dlg = h("dialog", { class: "dialog", "aria-labelledby": "rs-title" },
     h("h3", { id: "rs-title" }, "Restarting Reel"),
-    h("p", { class: "muted", id: "rs-msg" }, "Applying the update. This takes a few seconds."),
+    h("p", { class: "muted", id: "rs-msg" }, "Reel will close and reopen on the new version. This takes a few seconds (longer if new components need installing)."),
     progressBar(0, { indeterminate: true, label: "Restarting" }));
   dlg.addEventListener("cancel", (e) => e.preventDefault());
   document.body.append(dlg);

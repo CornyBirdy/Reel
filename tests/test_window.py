@@ -102,6 +102,41 @@ class RunNative(unittest.TestCase):
         self.assertTrue(ok)
 
 
+class Icon(unittest.TestCase):
+    """The taskbar showed python.exe's icon: the window icon is now set through WM_SETICON."""
+
+    def fake_user32(self, load_result=0xABC):
+        u = mock.Mock()
+        u.GetSystemMetrics.side_effect = lambda m: {window.SM_CXICON: 32, window.SM_CYICON: 32,
+                                                    window.SM_CXSMICON: 16, window.SM_CYSMICON: 16}[m]
+        u.LoadImageW.return_value = load_result
+        return u
+
+    def test_big_and_small_icons_are_loaded_from_the_ico_at_the_system_sizes_and_sent_to_the_window(self):
+        u = self.fake_user32()
+        self.assertTrue(window.apply_icon_win32(1234, r"C:\Reel\reel.ico", u))
+        loads = [c.args for c in u.LoadImageW.call_args_list]
+        self.assertEqual([(a[3], a[4]) for a in loads], [(32, 32), (16, 16)])
+        self.assertTrue(all(a[1] == r"C:\Reel\reel.ico" and a[2] == window.IMAGE_ICON and a[5] == window.LR_LOADFROMFILE for a in loads))
+        sends = [c.args for c in u.SendMessageW.call_args_list]
+        self.assertEqual([(a[0], a[1], a[2]) for a in sends],
+                         [(1234, window.WM_SETICON, window.ICON_BIG), (1234, window.WM_SETICON, window.ICON_SMALL)])
+
+    def test_reports_failure_when_the_icon_cannot_be_loaded(self):
+        u = self.fake_user32(load_result=0)
+        self.assertFalse(window.apply_icon_win32(1234, "x.ico", u))
+        u.SendMessageW.assert_not_called()
+
+    def test_icon_file_exists_with_the_sizes_windows_asks_for(self):
+        data = window.ICON.read_bytes()
+        count = int.from_bytes(data[4:6], "little")
+        sizes = {data[6 + 16 * i] or 256 for i in range(count)}
+        self.assertTrue({16, 32, 48, 256} <= sizes, sizes)
+
+    def test_non_windows_does_nothing(self):
+        window._set_window_icon(mock.Mock())   # must not raise
+
+
 class Status(unittest.TestCase):
     def test_status_explains_what_is_missing(self):
         with mock.patch.object(window.importlib.util, "find_spec", return_value=None):

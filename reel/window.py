@@ -12,6 +12,7 @@ import importlib.util
 import inspect
 import os
 import sys
+import threading
 from pathlib import Path
 
 from . import config
@@ -74,16 +75,105 @@ def _set_taskbar_identity() -> None:
     try:
         import ctypes
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID)
-    except Exception:  # noqa: BLE001 - cosmetic only
+    except Exception as exc:  # noqa: BLE001 - cosmetic only
+        _diag(f"AppUserModelID not set ({type(exc).__name__}: {exc})")
+
+
+# --- window icon (Windows) --------------------------------------------------------------------
+# pywebview's WinForms window starts with python.exe's icon, so the taskbar shows Python. The icon is set
+# through the Win32 API (WM_SETICON), which works from any thread, with the .NET property as a second try.
+WM_SETICON, ICON_SMALL, ICON_BIG = 0x0080, 0, 1
+IMAGE_ICON, LR_LOADFROMFILE = 1, 0x0010
+SM_CXICON, SM_CYICON, SM_CXSMICON, SM_CYSMICON = 11, 12, 49, 50
+
+
+def _diag(message: str) -> None:
+    """Window problems are cosmetic and must never crash Reel, but they should be diagnosable."""
+    try:
+        config.DATA_DIR.mkdir(parents=True, exist_ok=True)
+        with (config.DATA_DIR / "window.log").open("a", encoding="utf-8") as fh:
+            fh.write(message + "\n")
+    except OSError:
         pass
+
+
+def apply_icon_win32(hwnd: int, ico_path: str, user32) -> bool:
+    """Give the window (hwnd) the Reel icon at the sizes Windows asks for. True if both were set."""
+    def load(cx_metric: int, cy_metric: int):
+        return user32.LoadImageW(None, ico_path, IMAGE_ICON, user32.GetSystemMetrics(cx_metric),
+                                 user32.GetSystemMetrics(cy_metric), LR_LOADFROMFILE)
+    big, small = load(SM_CXICON, SM_CYICON), load(SM_CXSMICON, SM_CYSMICON)
+    if big:
+        user32.SendMessageW(hwnd, WM_SETICON, ICON_BIG, big)
+    if small:
+        user32.SendMessageW(hwnd, WM_SETICON, ICON_SMALL, small)
+    return bool(big and small)
+
+
+def _user32():
+    import ctypes
+    from ctypes import wintypes
+    u = ctypes.windll.user32
+    u.LoadImageW.restype = ctypes.c_void_p
+    u.LoadImageW.argtypes = [wintypes.HINSTANCE, wintypes.LPCWSTR, wintypes.UINT, ctypes.c_int, ctypes.c_int, wintypes.UINT]
+    u.SendMessageW.restype = ctypes.c_void_p
+    u.SendMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, ctypes.c_void_p]
+    u.GetSystemMetrics.argtypes = [ctypes.c_int]
+    return u
+
+
+def _find_hwnd(title: str) -> int | None:
+    """Our own visible top-level window with this title (used if pywebview does not expose its handle)."""
+    import ctypes
+    from ctypes import wintypes
+    u, found, pid = ctypes.windll.user32, [], os.getpid()
+
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    def visit(hwnd, _):
+        owner = wintypes.DWORD()
+        u.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
+        if owner.value == pid and u.IsWindowVisible(hwnd):
+            buf = ctypes.create_unicode_buffer(256)
+            u.GetWindowTextW(hwnd, buf, 256)
+            if buf.value == title:
+                found.append(hwnd)
+        return True
+
+    u.EnumWindows(visit, 0)
+    return found[0] if found else None
 
 
 def _set_window_icon(window) -> None:
+    if sys.platform != "win32":
+        return
+    hwnd = None
     try:
+        hwnd = int(window.native.Handle.ToInt64())
+    except Exception as exc:  # noqa: BLE001
+        _diag(f"window.native.Handle unavailable ({type(exc).__name__}: {exc}); searching for the window")
+    try:
+        hwnd = hwnd or _find_hwnd(TITLE)
+        if not hwnd:
+            _diag("icon: could not find the Reel window")
+            return
+        ok = apply_icon_win32(hwnd, str(ICON), _user32())
+        _diag(f"icon: hwnd={hwnd} applied={ok}")
+    except Exception as exc:  # noqa: BLE001
+        _diag(f"icon: Win32 call failed ({type(exc).__name__}: {exc})")
+    try:  # second route: the .NET Form.Icon property (also what the title bar reads)
         from System.Drawing import Icon  # noqa: PLC0415 - provided by pythonnet on Windows
         window.native.Icon = Icon(str(ICON))
-    except Exception:  # noqa: BLE001 - cosmetic only
-        pass
+    except Exception as exc:  # noqa: BLE001
+        _diag(f"icon: .NET Form.Icon failed ({type(exc).__name__}: {exc})")
+
+
+def _icon_soon(window) -> None:
+    """Set the icon as soon as the window is shown, and again shortly after (the handle can be recreated)."""
+    _set_window_icon(window)
+    for delay in (1.0, 3.0):
+        t = threading.Timer(delay, _set_window_icon, args=(window,))
+        t.daemon = True
+        t.start()
 
 
 def run_native(url: str, *, webview=None, log=print, storage: Path | None = None) -> bool:
@@ -115,7 +205,7 @@ def run_native(url: str, *, webview=None, log=print, storage: Path | None = None
             zoomable=True,
         )))
         try:
-            window.events.shown += lambda: (shown.append(True), _set_window_icon(window))
+            window.events.shown += lambda: (shown.append(True), _icon_soon(window))
         except Exception:  # noqa: BLE001
             pass
         wv.start(**_filter_kwargs(wv.start, dict(

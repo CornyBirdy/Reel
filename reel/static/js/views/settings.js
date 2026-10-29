@@ -74,6 +74,9 @@ export async function mount(root) {
     clear(upd); upd.append(h("div", { class: "muted icon-line" }, icon("download"), "Updating…"));
     try { applied = await api.post("/api/update/apply"); toast("Update installed.", "success"); }
     catch (e) { toast(e.message, "danger", 10000); applied = null; }
+    // Started by start.bat: restart straight away so the new version is what you are using. Otherwise
+    // (e.g. `python -m reel`) the Restart button stays and explains what to do.
+    if (applied && applied.restart && u.can_restart) { await restartReel(api); return; }
     refreshUpdates(true);
   }
 
