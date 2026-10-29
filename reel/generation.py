@@ -32,10 +32,16 @@ class GenerationError(Exception):
 
 
 def validate(recipe: dict, req: dict) -> dict:
-    """Check a request against the recipe's caps and return the normalised parameters."""
+    """Check a request against the recipe's limits and return the normalised parameters.
+
+    The recipe's limits are the *safe* ones (sized for a 16 GB card). With req["unlock"] the checks use what the
+    pipeline itself supports instead; the size multiple and frame rule never relax, the pipeline would reject them.
+    """
     lim, dflt, mem = recipe["limits"], recipe["defaults"], recipe.get("memory", {})
     kind = recipe.get("kind", "video")
-    out: dict = {"kind": kind}
+    unlocked = bool(req.get("unlock"))
+    ceiling = recipes.unlock_limits(recipe)
+    out: dict = {"kind": kind, "unlock": unlocked}
 
     prompt = (req.get("prompt") or "").strip()
     if not prompt:
@@ -48,32 +54,47 @@ def validate(recipe: dict, req: dict) -> dict:
     mult = lim["size_multiple"]
     for key in ("width", "height"):
         v = int(req.get(key, dflt[key]))
-        cap = lim[f"max_{key}"]
+        cap = (ceiling if unlocked else lim)[f"max_{key}"]
         if v % mult:
-            raise ValueError(f"{key} must be a multiple of {mult}.")
+            raise ValueError(f"{key.capitalize()} must be a multiple of {mult} for {recipe['name']}.")
         if not 64 <= v <= cap:
-            raise ValueError(f"{key.capitalize()} must be between 64 and {cap} for {recipe['name']}: that is its size limit "
-                             f"for a 16 GB GPU. Pick a size from the Resolution list.")
+            more = " Turn on Unlock limits (advanced) to go higher." if not unlocked and ceiling[f"max_{key}"] > cap else ""
+            raise ValueError(f"{key.capitalize()} must be between 64 and {cap} for {recipe['name']}"
+                             f"{'' if unlocked else ' (its safe limit)'}.{more}")
         out[key] = v
 
+    beyond = False
     if kind == "video":
         fr = lim["frames"]
         frames = int(req.get("frames", fr["default"]))
         if (frames - fr["offset"]) % fr["step"]:
             raise ValueError(f"Frame count must be {fr['step']}n+{fr['offset']} (e.g. {fr['default']}).")
-        if not fr["min"] <= frames <= fr["max"]:
-            raise ValueError(f"Frame count must be between {fr['min']} and {fr['max']}.")
+        fmax = ceiling["max_frames"] if unlocked else fr["max"]
+        if not fr["min"] <= frames <= fmax:
+            more = " Turn on Unlock limits (advanced) to go higher." if not unlocked and ceiling["max_frames"] > fmax else ""
+            raise ValueError(f"Frame count must be between {fr['min']} and {fmax}{'' if unlocked else ' (the safe limit)'}.{more}")
         out["frames"] = frames
         budget = lim.get("max_area_frames")
-        if budget and out["width"] * out["height"] * frames > budget:
+        over_budget = bool(budget and out["width"] * out["height"] * frames > budget)
+        if over_budget and not unlocked:
             raise ValueError(
-                f"{out['width']}×{out['height']} with {frames} frames is over {recipe['name']}'s 16 GB budget. "
-                "Lower the resolution or the frame count.")
-        out["fps"] = lim["fps"]
+                f"{out['width']}×{out['height']} with {frames} frames is over the safe size for {recipe['name']}. "
+                "Lower the resolution or the frame count, or turn on Unlock limits (advanced).")
+        beyond = over_budget or frames > fr["max"]
+        fps = req.get("fps")
+        fps = int(fps) if fps not in (None, "") else int(dflt.get("fps") or lim["fps"])
+        if not 1 <= fps <= 60:
+            raise ValueError("Frames per second must be between 1 and 60.")
+        out["fps"] = fps
     else:
         budget = lim.get("max_area")
-        if budget and out["width"] * out["height"] > budget:
-            raise ValueError(f"{out['width']}×{out['height']} is over {recipe['name']}'s 16 GB size budget. Lower the resolution.")
+        over_budget = bool(budget and out["width"] * out["height"] > budget)
+        if over_budget and not unlocked:
+            raise ValueError(f"{out['width']}×{out['height']} is over the safe size for {recipe['name']}. "
+                             "Lower the resolution, or turn on Unlock limits (advanced).")
+        beyond = over_budget
+    beyond = beyond or out["width"] > lim["max_width"] or out["height"] > lim["max_height"]
+    out["beyond_safe"] = bool(unlocked and beyond)
 
     steps = int(req.get("steps", dflt["steps"]))
     sl = lim.get("steps", {"min": 1, "max": 100})
@@ -108,6 +129,17 @@ def validate(recipe: dict, req: dict) -> dict:
         raise ValueError("Unsupported quantization.")
     out.update(offload=offload, quantization=quant, vae_tiling=bool(req.get("vae_tiling", dflt["vae_tiling"])))
     return out
+
+
+def unlocked_run_hint(recipe: dict, params: dict) -> str:
+    """Plain words for a crash or out-of-memory that happened on a run above the safe limits."""
+    if not params.get("beyond_safe"):
+        return ""
+    safe = recipes.safe_defaults(recipe)
+    size = f"{params['width']}×{params['height']}" + (f" with {params['frames']} frames" if "frames" in params else "")
+    safe_txt = f"{safe['width']}×{safe['height']}" + (f" with {safe['frames']} frames" if "frames" in safe else "")
+    return (f"This run used Unlock limits: {size} is above the safe size for {recipe['name']}, and running out of memory is the most "
+            f"likely cause. Try {safe_txt}, or fewer frames, a smaller size, NF4 quantization or Sequential offloading.")
 
 
 class GenJob:
@@ -284,7 +316,8 @@ class GenerationManager:
                 job.status = "failed"
                 logfile.note(f"process ended with {diagnostics.format_exit(code)}")
                 fail = diagnostics.failure(code, list(output), error_evt)
-                job.error, job.error_detail, job.error_hint, job.error_kind = fail["message"], fail["detail"], fail["hint"], fail["kind"]
+                job.error, job.error_detail, job.error_kind = fail["message"], fail["detail"], fail["kind"]
+                job.error_hint = " ".join(x for x in (fail["hint"], unlocked_run_hint(recipe, params) if fail["kind"] in ("oom", "crash") else "") if x)
         except Exception as exc:  # noqa: BLE001
             job.status, job.error = "failed", f"{type(exc).__name__}: {exc}"
             logfile.note(f"Reel could not run the model: {job.error}")

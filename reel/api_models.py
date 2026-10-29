@@ -69,6 +69,8 @@ def describe(recipe: dict) -> dict:
         "tasks": recipe.get("tasks", []),
         "download_gb": recipe["download_gb"], "vram_gb": recipe["vram_gb"], "vram_note": recipe.get("vram_note"),
         "limits": recipe["limits"], "defaults": recipe["defaults"], "memory": recipe.get("memory", {}),
+        "native": recipe.get("native"), "native_label": recipes.native_label(recipe), "unlock": recipes.unlock_limits(recipe),
+        "recommended": bool(recipe.get("recommended")),
         "state": state, "installed": state == "installed", "installed_info": info,
         "disk": disk_usage(mid), "install": job.to_dict() if job else None,
         "blocked_reason": blocked,

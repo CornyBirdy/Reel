@@ -96,6 +96,34 @@
       }
     ]
   },
+  "native": {
+    "label": "1280×704",
+    "resolutions": [
+      {
+        "w": 1280,
+        "h": 704,
+        "label": "1280×704 (720P, 24 fps)"
+      },
+      {
+        "w": 704,
+        "h": 1280,
+        "label": "704×1280 (720P portrait)"
+      }
+    ],
+    "frames": [
+      121
+    ],
+    "fps": 24,
+    "source": "https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B-Diffusers",
+    "note": "The card: TI2V-5B generates 720P at 24 fps, 1280×704 or 704×1280. The diffusers example uses 121 frames, 50 steps, guidance 5.0. The card does not state a size multiple; 32 follows from its 4×32×32 total compression."
+  },
+  "unlock": {
+    "max_width": 1280,
+    "max_height": 1280,
+    "max_frames": 121,
+    "known": true,
+    "note": "Native 720P is 1280×704 / 704×1280 at 121 frames (5 s). Unlocking lifts the width×height×frames budget Reel applies for 16 GB."
+  },
   "defaults": {
     "width": 832,
     "height": 480,
@@ -117,6 +145,24 @@
       "int8",
       "nf4"
     ],
-    "notes": "Quantization applies to the 5B transformer (NF4 by default). Width x height x frames is capped (max_area_frames) so 1280x704 is limited to 49 frames."
+    "notes": "Quantization applies to the 5B transformer (NF4 by default). Width x height x frames is capped (max_area_frames) so 1280x704 is limited to 49 frames.",
+    "estimate": {
+      "weights_gb": {
+        "transformer": 10.0,
+        "text_encoder": 11.4,
+        "vae": 2.8
+      },
+      "quantized": [
+        "transformer"
+      ],
+      "denoiser": "transformer",
+      "tokens": {
+        "spatial": 32,
+        "temporal": 4
+      },
+      "hidden": 3072,
+      "vae_mb_per_mpx_frame": 768,
+      "vae_tile_mpx_frames": 1.5
+    }
   }
 }

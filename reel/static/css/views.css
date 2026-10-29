@@ -139,3 +139,10 @@ button.batch-thumb:hover { background: var(--hover-bg); }
 
 /* -- Error panel and log viewer ----------------------------------------------------- */
 .log-full { max-height: 60vh; min-height: calc(var(--sp-48) * 3); margin-top: var(--sp-12); }
+
+/* -- Unlock limits and memory estimate ------------------------------------------------ */
+.mem-est { padding: var(--sp-12); border: var(--border-w) solid var(--hairline); border-radius: var(--radius-sm); background: var(--surface-sunken); }
+.est-row { display: grid; grid-template-columns: minmax(0, 1fr) auto calc(var(--sp-48) * 2); align-items: center; gap: var(--sp-12); font-size: var(--text-sm); }
+.est-row .badge { justify-self: start; }
+.est-name { flex: 1; min-width: 0; }
+.est-nums { color: var(--ink-muted); font-variant-numeric: tabular-nums; }

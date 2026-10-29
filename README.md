@@ -30,6 +30,7 @@ If something goes wrong:
 | "Port 8765 is in use" | Close the other Reel window, or set `REEL_PORT` to another number. |
 | An install fails or stalls | Press Install again: finished downloads are kept. The full log is in `data/models/<model>/install.log`. |
 | Out of VRAM while generating | Lower the resolution, set Offloading to Sequential, or use NF4 quantization (Memory options). |
+| "The model process stopped unexpectedly (exit code 0xC0000005 ...)" | A native crash, usually the PC running out of system RAM, or an incompatible CUDA / attention kernel. Close other programs, lower the resolution or frames, and try the attention backend Native. **View full log** (or `data/logs/`) shows everything the process wrote. |
 
 ## Updating
 
@@ -76,7 +77,7 @@ The storage folder in Settings can point the `models/` part elsewhere (for examp
 
 ### VRAM saving (16 GB target)
 
-Every recipe defaults to the memory-saving options and caps resolution, frame count and (for Wan) width x height x frames so a clip should fit a 16 GB card:
+Every recipe defaults to the memory-saving options and has *safe limits* on resolution, frame count and (for Wan) width x height x frames, so a clip should fit a 16 GB card. **Unlock limits (advanced)** in the Generate panel lifts them to what the pipeline itself supports (the model card's native sizes and maximum length, or any size that is a multiple of the model's size rule), remembered per model. Generate shows a live memory estimate (VRAM and system RAM) against what your PC has free right now; it warns but never blocks. Treat it as a rough guide: the real peak is recorded in History after every run.
 
 - **Offloading**: model offload by default (sequential available).
 - **Quantization**: NF4 for Wan 2.2 and for any imported model that is too big otherwise (denoiser plus large text encoders); LTX-Video's 2B transformer stays bf16 and its T5 text encoder is the official 8-bit one, encoded first and freed before denoising.

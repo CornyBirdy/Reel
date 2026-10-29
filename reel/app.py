@@ -36,6 +36,7 @@ def system_info() -> dict:
     return {
         "version": __version__,
         "gpu": system.gpu_info(),
+        "ram": system.ram_info(),
         "models_dir": str(root),
         "disk_free": system.disk_free(root),
     }

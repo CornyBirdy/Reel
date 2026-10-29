@@ -173,6 +173,13 @@ VIDEO_FAMILIES = {
     "LattePipeline": dict(label="Latte", mult=8, w=512, h=512, max_w=512, max_h=512, frames=(1, 0, 8, 16, 16), fps=8, steps=50, guidance=7.5,
                           area=None, presets=[(512, 512)], negative=""),
 }
+# (pixels per latent token per side, frames per latent frame, denoiser hidden width) from each architecture's configs;
+# lets the memory estimate in Generate model an import. Unknown families use the estimator's generic values.
+TOKEN_HINTS = {
+    "WanPipeline": (32, 4, 3072), "LTXPipeline": (32, 8, 2048), "CogVideoXPipeline": (16, 4, 3072),
+    "HunyuanVideoPipeline": (16, 4, 3072), "HunyuanVideo15Pipeline": (16, 4, 2048),
+    "StableDiffusionXLPipeline": (8, 0, 640), "FluxPipeline": (16, 0, 3072), "StableDiffusion3Pipeline": (16, 0, 1536),
+}
 UNSUPPORTED_MARKERS = {
     "Img2Img": "it needs an input image (image-to-image)",
     "Inpaint": "it needs an input image and mask (inpainting)",
@@ -444,6 +451,21 @@ def _estimate_vram(comp_info: dict, kind: str) -> tuple[int, str]:
     return max(int(-(-peak // GB)), 2), quant
 
 
+def memory_profile(comp_info: dict, class_name: str, kind: str) -> dict:
+    """The recipe's memory.estimate block, from the real tensor sizes of each component."""
+    weights = {c: round(i["bf16"] / GB, 2) for c, i in comp_info.items() if i["bf16"] > 0.01 * GB}
+    prof = {
+        "weights_gb": weights,
+        "quantized": [c for c, i in comp_info.items() if c in weights and quantizable_component(c, i["bf16"], i.get("class"))],
+        "denoiser": next((c for c in ("transformer", "unet") if c in weights), next(iter(weights), "transformer")),
+    }
+    if class_name in TOKEN_HINTS:
+        spatial, temporal, hidden = TOKEN_HINTS[class_name]
+        prof["tokens"] = {"spatial": spatial, **({"temporal": temporal} if temporal else {})}
+        prof["hidden"] = hidden
+    return prof
+
+
 def build_recipe(repo, sha, info, class_name, kind, paths, download, comp_info, variant, gated):
     warnings: list[str] = []
     name = repo.split("/", 1)[1]
@@ -501,7 +523,8 @@ def build_recipe(repo, sha, info, class_name, kind, paths, download, comp_info, 
         "weights": [{"repo_id": repo, "revision": sha, "dest": ".", "allow_patterns": paths}],
         "limits": limits, "defaults": defaults,
         "memory": {"offload_options": ["none", "model", "sequential"], "quantization_options": ["none", "int8", "nf4"],
-                   "notes": "Quantization applies to the transformer/UNet and any T5-class text encoder."},
+                   "notes": "Quantization applies to the transformer/UNet and any T5-class text encoder.",
+                   "estimate": memory_profile(comp_info, class_name, kind)},
     }
     return recipe, warnings
 
