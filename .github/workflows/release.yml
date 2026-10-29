@@ -1,0 +1,49 @@
+name: Release
+
+# Push a tag like v0.1.0 and this builds Reel-v0.1.0.zip and publishes a GitHub Release with the
+# matching CHANGELOG.md section as its notes.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install app dependencies
+        run: pip install -r requirements.txt
+      - name: Run tests
+        run: python -m unittest discover tests -v
+
+      - name: Build the zip
+        run: |
+          # git archive expands reel/VERSION (export-subst), so the app knows exactly which version it is.
+          git archive --format=zip --prefix=Reel/ -o "Reel-${GITHUB_REF_NAME}.zip" "${GITHUB_REF_NAME}"
+          unzip -l "Reel-${GITHUB_REF_NAME}.zip" | tail -3
+
+      - name: Release notes from CHANGELOG.md
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v v="$version" '$0 ~ "^## " v " " {found=1; next} /^## / {found=0} found' CHANGELOG.md > notes.md
+          if [ ! -s notes.md ]; then echo "No CHANGELOG.md section for $version" >&2; exit 1; fi
+          {
+            echo "**To install:** download \`Reel-${GITHUB_REF_NAME}.zip\` below, extract it (for example to \`C:\\Reel\`), and double-click \`start.bat\`."
+            echo
+            cat notes.md
+          } > body.md
+          cat body.md
+
+      - name: Publish the release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Reel ${{ github.ref_name }}
+          body_path: body.md
+          files: Reel-${{ github.ref_name }}.zip
+          prerelease: ${{ contains(github.ref_name, '-') }}

@@ -6,7 +6,7 @@ Part of the Rack Suite family (Rack, MC Hoster, Shelf), so it uses the neutral a
 
 ## Quick start (Windows 11)
 
-1. **Get the files.** On the GitHub page click **Code > Download ZIP** and extract it somewhere simple such as `C:\Reel` or `D:\Reel` (not inside Program Files, and not left inside the ZIP). Or `git clone` the repo.
+1. **Get the files.** Open the repository's **Releases** page, download `Reel-vX.Y.Z.zip` from the latest release, and extract it somewhere simple such as `C:\Reel` or `D:\Reel` (not inside Program Files, and not left inside the ZIP). Or use **Code > Download ZIP**, or `git clone` the repo.
 2. **Double-click `start.bat`.** The first run sets itself up (a few minutes) and opens Reel in its own window. If Python is missing it offers to install it for you.
 3. **Library tab:** press **Install** on a model. A first install downloads PyTorch plus the model, so expect 10-30 minutes and 15-40 GB of disk per model. Good first tries: **SDXL 1.0** for images (about 15 GB total) or **LTX-Video** for video (about 20 GB total).
 4. **Generate tab:** pick Image or Video, write a prompt, press **Generate**.
