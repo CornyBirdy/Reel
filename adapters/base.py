@@ -29,6 +29,8 @@ import time
 import warnings
 from pathlib import Path
 
+import sysinfo
+
 
 # bitsandbytes repeats this notice on every layer call; it is not actionable.
 warnings.filterwarnings("ignore", message=".*MatMul8bitLt.*")
@@ -55,6 +57,7 @@ class BaseAdapter:
         self.dtype = torch.bfloat16
         self.total_steps = int(request["steps"])
         self.kind = request.get("kind", "video")
+        self.attention_active = "native"   # what is really in use; adapters that switch backends update it
 
     # -- to implement --------------------------------------------------------
     def prepare(self) -> None:
@@ -106,6 +109,43 @@ class BaseAdapter:
                 except Exception:  # noqa: BLE001 - not every VAE has both
                     pass
 
+    # -- diagnostics ----------------------------------------------------------
+    def memory_line(self) -> str:
+        """GPU name plus free VRAM and free system RAM right now."""
+        parts = []
+        if self.device == "cuda":
+            free, total = self.torch.cuda.mem_get_info()
+            parts.append(f"GPU {self.torch.cuda.get_device_name(0)}: free VRAM {free / 1024**3:.1f} of {total / 1024**3:.1f} GB")
+        else:
+            parts.append(f"device {self.device} (no CUDA)")
+        mem = sysinfo.host_memory()
+        if mem:
+            parts.append(f"free RAM {mem['available_gb']:.1f} of {mem['total_gb']:.1f} GB")
+        return "; ".join(parts)
+
+    def log_generation(self, call: dict) -> None:
+        """Log, before the pipeline runs, exactly what it is about to be given and how much memory is free.
+
+        If the process then dies without a traceback (a native crash), this is what is left to go on.
+        """
+        def brief(v):
+            if hasattr(v, "shape"):
+                return f"<tensor {tuple(v.shape)} {str(getattr(v, 'dtype', '')).replace('torch.', '')}>"
+            return v if isinstance(v, (int, float, str, bool, type(None))) else f"<{type(v).__name__}>"
+
+        r = self.req
+        context = {
+            "model": r.get("model_id"), "item": f"{self.item + 1}/{self.n_items}", "seed": self.seed,
+            "fps": r.get("fps"), "dtype": str(self.dtype).replace("torch.", ""),
+            "quantization": r.get("quantization", "none"), "offload": r.get("offload", "model"),
+            "vae_tiling": bool(r.get("vae_tiling", True)),
+            "attention_backend": self.attention_active,
+        }
+        shown = {k: brief(v) for k, v in call.items() if k not in ("callback_on_step_end", "generator")}
+        emit(event="log", message="Pipeline arguments: " + json.dumps(shown, default=str))
+        emit(event="log", message="Run settings: " + json.dumps(context, default=str))
+        emit(event="log", message="Memory before run: " + self.memory_line())
+
     def step_callback(self, pipe, step, timestep, kwargs):
         done = step + 1
         emit(event="progress", step=done, total=self.total_steps, item=self.item, items=self.n_items)
@@ -155,7 +195,9 @@ class BaseAdapter:
         if self.device == "cuda":
             torch.cuda.reset_peak_memory_stats()
         self.phase("loading", "Loading model")
+        emit(event="log", message="Loading model. " + self.memory_line())
         self.prepare()
+        emit(event="log", message="Model loaded. " + self.memory_line())
         name = torch.cuda.get_device_name(0) if self.device == "cuda" else None
         total = 0.0
         peak = None

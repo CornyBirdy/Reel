@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
-from . import history
+from . import diagnostics, history
 from .generation import GenerationError, generation
 
 router = APIRouter(prefix="/api", tags=["generate"])
@@ -46,6 +47,15 @@ def current() -> dict:
 def cancel() -> dict:
     generation.cancel()
     return {"ok": True}
+
+
+@router.get("/logs/{name}")
+def get_log(name: str) -> PlainTextResponse:
+    """Full output of a model process (what 'View full log' shows)."""
+    text = diagnostics.read_log(name)
+    if text is None:
+        raise HTTPException(404, "That log is gone (Reel keeps the most recent ones).")
+    return PlainTextResponse(text, headers={"Cache-Control": "no-store"})
 
 
 @router.get("/history")

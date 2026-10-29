@@ -136,3 +136,6 @@ div.batch-thumb { cursor: default; }
 button.batch-thumb:hover { background: var(--hover-bg); }
 .batch-thumb img, .batch-thumb video { width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none; }
 .batch-thumb[aria-current="true"] { border-color: var(--accent); box-shadow: 0 0 0 var(--indicator-w) var(--accent); }
+
+/* -- Error panel and log viewer ----------------------------------------------------- */
+.log-full { max-height: 60vh; min-height: calc(var(--sp-48) * 3); margin-top: var(--sp-12); }

@@ -103,6 +103,7 @@ class Adapter(BaseAdapter):
 
     def sample(self):
         call = self.call_kwargs()
+        self.log_generation(call)
         self.phase("denoising", "Generating")
         emit(event="progress", step=0, total=self.total_steps, item=self.item, items=self.n_items)
         out = self.pipe(**call)

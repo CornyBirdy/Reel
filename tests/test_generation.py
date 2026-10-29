@@ -3,11 +3,14 @@
     python -m unittest discover tests
 """
 import sys
+import tempfile
+import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from reel import recipes  # noqa: E402
+from reel import config, generation, recipes  # noqa: E402
 from reel.generation import validate  # noqa: E402
 
 
@@ -55,6 +58,41 @@ class Validate(unittest.TestCase):
     def test_blank_prompt_and_bad_seed_are_rejected(self):
         self.bad("sdxl-base", prompt="   ")
         self.bad("sdxl-base", seed=2**33)
+
+
+@unittest.skipIf(sys.platform == "win32", "uses a shell script as the model's python")
+class CrashReporting(unittest.TestCase):
+    """A model process that prints only a warning and then dies must not be reported as that warning."""
+
+    def test_native_crash_reports_exit_code_and_saves_a_log(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            mdir = tmp / "models" / "ltx-video"
+            (mdir / "venv" / "bin").mkdir(parents=True)
+            py = mdir / "venv" / "bin" / "python"
+            py.write_text("#!/bin/sh\n"
+                          "echo '/x/pipeline_utils.py:1003: FutureWarning: torch_dtype is deprecated! Use dtype instead!'\n"
+                          "echo 'Loading pipeline components...: 100%'\n"
+                          "kill -SEGV $$\n")
+            py.chmod(0o755)
+            with mock.patch.object(config, "LOGS_DIR", tmp / "logs"), mock.patch.object(config, "DATA_DIR", tmp), \
+                    mock.patch.object(config, "OUTPUTS_DIR", tmp / "out"), \
+                    mock.patch.object(generation, "model_dir", lambda _m: mdir), \
+                    mock.patch.object(generation, "installed_info", lambda _m: {"ok": True}):
+                job = generation.GenerationManager().start("ltx-video", {"prompt": "x"})
+                for _ in range(100):
+                    if job.status != "running":
+                        break
+                    time.sleep(0.1)
+                d = job.to_dict()
+                self.assertEqual(d["status"], "failed")
+                self.assertIn("exit code 0x", d["error"])
+                self.assertNotIn("FutureWarning", d["error"] + d["error_detail"])
+                self.assertIn("Loading pipeline components", d["error_detail"])
+                self.assertTrue(d["error_hint"])
+                log = (tmp / "logs" / d["log_name"]).read_text()
+                self.assertIn("FutureWarning", log)       # the full log keeps everything
+                self.assertIn("process ended with exit code", log)
 
 
 if __name__ == "__main__":

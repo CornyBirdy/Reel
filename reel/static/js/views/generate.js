@@ -1,4 +1,4 @@
-import { h, icon, clear, toast, fmtDuration, fmtDate, progressBar, statusBadge } from "../ui.js";
+import { h, icon, clear, toast, fmtDuration, fmtDate, progressBar, statusBadge, viewLog } from "../ui.js";
 import { api } from "../api.js";
 
 const FORM_KEY = "reel.generate.form";
@@ -301,8 +301,13 @@ export async function mount(root) {
 
     if (job && job.status === "failed") {
       outputCard.append(h("div", { class: "notice notice-danger", role: "alert" }, icon("error"),
-        h("div", { class: "stack-8" }, h("strong", {}, "Generation failed"), h("div", { class: "mono" }, job.error || "Unknown error"),
-          job.error_kind === "oom" ? h("div", {}, "Out of VRAM. Lower the resolution (or frame count), set offloading to Sequential, or use NF4 quantization.") : null)));
+        h("div", { class: "stack-8 grow" },
+          h("strong", {}, "Generation failed"),
+          h("div", {}, job.error || "Unknown error"),
+          job.error_hint ? h("div", {}, job.error_hint) : null,
+          job.error_detail ? h("pre", { class: "log mono", tabindex: 0, "aria-label": "Last error output" }, job.error_detail) : null,
+          job.log_name ? h("div", { class: "row-8" },
+            h("button", { class: "btn", type: "button", onclick: () => viewLog(job.log_name) }, icon("log"), "View full log")) : null)));
     } else if (job && job.status === "cancelled") {
       outputCard.append(h("div", { class: "notice notice-info" }, icon("info"), job.message || "Cancelled."));
     }

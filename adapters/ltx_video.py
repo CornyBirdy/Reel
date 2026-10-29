@@ -52,13 +52,15 @@ class Adapter(BaseAdapter):
 
     def sample(self):
         prompt_embeds, prompt_mask, neg_embeds, neg_mask = self.embeds
-        self.phase("denoising", "Generating")
-        emit(event="progress", step=0, total=self.total_steps, item=self.item, items=self.n_items)
-        out = self.pipe(
+        call = dict(
             prompt_embeds=prompt_embeds.to(self.device), prompt_attention_mask=prompt_mask.to(self.device),
             negative_prompt_embeds=neg_embeds.to(self.device), negative_prompt_attention_mask=neg_mask.to(self.device),
             width=int(self.req["width"]), height=int(self.req["height"]), num_frames=int(self.req["frames"]),
             num_inference_steps=self.total_steps, guidance_scale=float(self.req["guidance"]),
             generator=self.generator(), callback_on_step_end=self.step_callback,
         )
+        self.log_generation(call)
+        self.phase("denoising", "Generating")
+        emit(event="progress", step=0, total=self.total_steps, item=self.item, items=self.n_items)
+        out = self.pipe(**call)
         return out.frames[0]

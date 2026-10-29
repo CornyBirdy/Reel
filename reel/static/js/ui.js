@@ -55,6 +55,7 @@ const ICONS = {
   plus: '<path d="M12 5v14M5 12h14"/>',
   search: '<circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/>',
   back: '<path d="M10 6l-6 6 6 6M4 12h16"/>',
+  log: '<path d="M6 3.5h8.5L19 8v12.5H6z"/><path d="M14 3.5V8.5h5M9.5 12.5h6M9.5 16h6"/>',
   box: '<path d="M12 3 20.5 7.5v9L12 21l-8.5-4.5v-9z"/><path d="M3.5 7.5 12 12l8.5-4.5M12 12v9"/>',
 };
 
@@ -90,6 +91,29 @@ export function confirmDialog({ title, body, confirmLabel = "Confirm", danger = 
     document.body.append(dlg);
     dlg.showModal();
   });
+}
+
+// Everything a model process wrote (data/logs/*.log), in a dialog.
+export async function viewLog(name) {
+  const body = h("pre", { class: "log mono log-full", tabindex: 0 }, "Loading...");
+  const dlg = h("dialog", { class: "dialog dialog-wide", "aria-labelledby": "log-title" },
+    h("h3", { id: "log-title" }, "Full log"),
+    h("div", { class: "muted mono" }, `data/logs/${name}`),
+    body,
+    h("div", { class: "dialog-actions" },
+      h("button", { class: "btn", type: "button", onclick: async () => {
+        try { await navigator.clipboard.writeText(body.textContent); toast("Log copied.", "success", 2000); }
+        catch { toast("Could not copy. Select the text and copy it by hand.", "warning"); }
+      } }, icon("copy"), "Copy"),
+      h("button", { class: "btn btn-primary", type: "button", onclick: () => dlg.close() }, "Close")));
+  dlg.addEventListener("close", () => dlg.remove());
+  document.body.append(dlg);
+  dlg.showModal();
+  try {
+    const res = await fetch(`/api/logs/${encodeURIComponent(name)}`, { cache: "no-store" });
+    body.textContent = res.ok ? await res.text() : "That log is gone (Reel keeps the most recent ones).";
+    body.scrollTop = body.scrollHeight;
+  } catch (e) { body.textContent = `Could not load the log: ${e.message}`; }
 }
 
 // --- Formatting ---

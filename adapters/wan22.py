@@ -23,12 +23,14 @@ class Adapter(BaseAdapter):
         self.apply_memory_options(self.pipe)
 
     def sample(self):
-        self.phase("denoising", "Generating")
-        emit(event="progress", step=0, total=self.total_steps, item=self.item, items=self.n_items)
-        out = self.pipe(
+        call = dict(
             prompt=self.req["prompt"], negative_prompt=self.req.get("negative_prompt") or None,
             width=int(self.req["width"]), height=int(self.req["height"]), num_frames=int(self.req["frames"]),
             num_inference_steps=self.total_steps, guidance_scale=float(self.req["guidance"]),
             generator=self.generator(), callback_on_step_end=self.step_callback,
         )
+        self.log_generation(call)
+        self.phase("denoising", "Generating")
+        emit(event="progress", step=0, total=self.total_steps, item=self.item, items=self.n_items)
+        out = self.pipe(**call)
         return out.frames[0]

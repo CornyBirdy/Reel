@@ -11,7 +11,7 @@ import uuid
 from collections import deque
 from pathlib import Path
 
-from . import config, history, procs, recipes, system
+from . import config, diagnostics, history, procs, recipes, system
 from .installer import installed_info, installs, model_dir
 
 
@@ -125,6 +125,9 @@ class GenJob:
         self.finished: float | None = None
         self.error: str | None = None
         self.error_kind: str | None = None
+        self.error_detail: str | None = None   # last traceback, or the last ~30 non-warning lines of output
+        self.error_hint: str | None = None     # plain-English next step
+        self.log_name: str | None = None       # file in data/logs/ with everything the process wrote
         self.items = params.get("count", 1)
         self.item = 1                       # 1-based index of the item being generated
         self.clips: list[dict] = []         # finished items, saved to history as soon as each completes
@@ -143,6 +146,7 @@ class GenJob:
             "status": self.status, "phase": self.phase, "message": self.message,
             "step": self.step, "total": self.total, "elapsed": now - self.started, "eta": eta,
             "params": self.params, "error": self.error, "error_kind": self.error_kind,
+            "error_detail": self.error_detail, "error_hint": self.error_hint, "log_name": self.log_name,
             "items": self.items, "item": self.item, "clips": self.clips,
             "clip": self.clips[-1] if self.clips else None, "log": list(self.log)[-40:],
         }
@@ -206,6 +210,12 @@ class GenerationManager:
         req_path.write_text(json.dumps(request), encoding="utf-8")
         env = child_env()
         done_evt: dict | None = None
+        error_evt: dict | None = None
+        output: deque[str] = deque(maxlen=600)   # everything the process printed, for picking out the real error
+        logfile = diagnostics.LogFile(recipe["id"])
+        job.log_name = logfile.name
+        logfile.note(f"generation {job.id} with {recipe['name']} ({recipe['id']}); request: "
+                     + json.dumps({k: v for k, v in request.items() if k not in ("outputs", "weights_dir", "adapter_config")}))
         try:
             py = procs.venv_python(mdir / "venv")
             proc = procs.popen([str(py), str(config.ADAPTERS_DIR / "runner.py"), str(req_path)],
@@ -216,6 +226,9 @@ class GenerationManager:
                 line = raw.rstrip()
                 if not line:
                     continue
+                if '"event": "progress"' not in line:   # one progress line per step would drown the log
+                    logfile.write(line)
+                output.append(line)
                 evt = None
                 at = line.find('{"event"')  # a stray tqdm bar can precede the JSON on the same line
                 if at >= 0:
@@ -255,7 +268,7 @@ class GenerationManager:
                 elif kind == "log":
                     job.log.append(evt["message"])
                 elif kind == "error":
-                    job.error, job.error_kind = evt["message"], evt.get("kind")
+                    error_evt = evt
                     job.log.append(evt.get("trace", ""))
                 elif kind == "done":
                     done_evt = evt
@@ -269,12 +282,14 @@ class GenerationManager:
                 job.step = job.total
             else:
                 job.status = "failed"
-                if not job.error:
-                    tail = " | ".join(list(job.log)[-3:])
-                    job.error = f"The model process exited with code {code}. {tail}"
+                logfile.note(f"process ended with {diagnostics.format_exit(code)}")
+                fail = diagnostics.failure(code, list(output), error_evt)
+                job.error, job.error_detail, job.error_hint, job.error_kind = fail["message"], fail["detail"], fail["hint"], fail["kind"]
         except Exception as exc:  # noqa: BLE001
             job.status, job.error = "failed", f"{type(exc).__name__}: {exc}"
+            logfile.note(f"Reel could not run the model: {job.error}")
         finally:
+            logfile.close()
             job.proc = None
             job.finished = time.time()
             kept = {c["file"] for c in job.clips}
