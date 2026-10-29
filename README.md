@@ -11,7 +11,7 @@ Part of the Rack Suite family (Rack, MC Hoster, Shelf), so it uses the neutral a
 3. **Library tab:** press **Install** on a model. A first install downloads PyTorch plus the model, so expect 10-30 minutes and 15-40 GB of disk per model. Good first tries: **SDXL 1.0** for images (about 15 GB total) or **LTX-Video** for video (about 20 GB total).
 4. **Generate tab:** pick Image or Video, write a prompt, press **Generate**.
 
-Reel opens in its **own native window** (no tabs, address bar, password prompts or browser shortcuts), using Microsoft's WebView2 runtime, which comes with Windows 11. If that is missing or the window component can't start, Reel falls back to an app-style window from Edge, Chrome, Brave or Vivaldi, then your default browser, and finally prints the address. Change this under **Settings > Window** (or set `REEL_WINDOW` to `native`, `app` or `browser`).
+Reel opens in its **own native window** (no tabs, address bar, password prompts or browser shortcuts), using Microsoft's WebView2 runtime, which comes with Windows 11. If that is missing or the window component can't start, Reel falls back to an app-style window from Edge, Chrome, Brave or Vivaldi, then your default browser, and finally prints the address. Change this under **Settings > Window** (or set `REEL_WINDOW` to `native`, `app` or `browser`). If the native window ever misbehaves, run **`start-in-browser.bat`** instead.
 
 If you removed WebView2 (debloated Windows), restore the native window with: `winget install -e --id Microsoft.EdgeWebView2Runtime`.
 
