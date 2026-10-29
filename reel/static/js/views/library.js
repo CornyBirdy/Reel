@@ -102,7 +102,7 @@ function ModelCard(initial, ctx) {
         actions.append(h("button", { class: "btn", disabled: true }, "Removing…"));
         break;
       default:
-        actions.append(install("Install"), blockedNote());
+        actions.append(...[install("Install"), blockedNote()].filter(Boolean));
     }
   }
 
