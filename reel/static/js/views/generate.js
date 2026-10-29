@@ -12,6 +12,10 @@ const isImageUrl = (url) => /\.png$/i.test(url);
 const UNLOCK_KEY = "reel.generate.unlock";   // { model_id: true } - the toggle is remembered per model
 const loadUnlock = () => { try { return JSON.parse(localStorage.getItem(UNLOCK_KEY)) || {}; } catch { return {}; } };
 const saveUnlock = (v) => { try { localStorage.setItem(UNLOCK_KEY, JSON.stringify(v)); } catch { /* ignore */ } };
+const ATTN_LABEL = {
+  auto: "Auto (per the diffusers docs for this GPU)", native: "Native (PyTorch)", sage_hub: "SageAttention (sage_hub)",
+  flash_hub: "FlashAttention-2 (flash_hub)", _flash_3_hub: "FlashAttention-3 (_flash_3_hub, H100)", sage_blackwell_hub: "SageAttention 3 (sage_blackwell_hub, RTX 50)",
+};
 const STATUS_KIND = { ok: "success", risky: "warning", fail: "danger", unknown: "neutral" };
 const STATUS_LABEL = { ok: "OK", risky: "Risky", fail: "Likely to fail", unknown: "Unknown" };
 
@@ -111,6 +115,9 @@ export async function mount(root) {
     f.offload = h("select", { id: "g-offload", class: "select", onchange: () => { persist(); refreshEstimate(); } });
     f.quant = h("select", { id: "g-quant", class: "select", onchange: () => { persist(); refreshEstimate(); } });
     f.tiling = h("input", { id: "g-tiling", type: "checkbox", onchange: () => { persist(); refreshEstimate(); } });
+    f.attn = h("select", { id: "g-attn", class: "select", onchange: persist });
+    f.attnHint = h("span", { class: "field-hint" });
+    f.attnField = h("div", { class: "field" }, h("label", { for: "g-attn" }, "Attention backend"), f.attn, f.attnHint);
     f.caps = h("div", { class: "field-hint" });
     f.warn = h("div", { class: "stack-8" });
     f.count = h("select", { id: "g-count", class: "select count-select", "aria-label": "How many to generate", onchange: () => { syncGoLabel(); persist(); } });
@@ -139,6 +146,7 @@ export async function mount(root) {
         h("summary", {}, "Memory options (VRAM saving)"),
         h("div", { class: "stack-12" },
           h("div", { class: "grid-2" }, field("Offloading", f.offload, null, "g-offload"), field("Quantization", f.quant, null, "g-quant")),
+          f.attnField,
           h("label", { class: "check" }, f.tiling, "Tiled VAE decode"),
           h("div", { class: "field-hint", id: "mem-note" }))),
       f.est, f.caps, f.warn,
@@ -162,6 +170,7 @@ export async function mount(root) {
       else if (k === "offload" && [...f.offload.options].some((o) => o.value === v)) f.offload.value = v;
       else if (k === "quantization" && [...f.quant.options].some((o) => o.value === v)) f.quant.value = v;
       else if (k === "vae_tiling") f.tiling.checked = !!v;
+      else if (k === "attention_backend" && [...f.attn.options].some((o) => o.value === v)) f.attn.value = v;
       else if (k === "count") fillCount(v);
     }
     syncCustom(); syncFrames(); validate(); refreshEstimate();
@@ -186,6 +195,11 @@ export async function mount(root) {
     for (const o of mem.quantization_options || ["none"]) f.quant.append(h("option", { value: o }, { none: "Off (bf16)", int8: "8-bit", nf4: "4-bit NF4" }[o] || o));
     f.quant.value = d.quantization;
     f.tiling.checked = d.vae_tiling;
+    f.attnField.hidden = !mem.attention_options;
+    f.attnHint.textContent = mem.attention_note || "How the denoiser computes attention. Native is PyTorch's own and always works.";
+    clear(f.attn);
+    for (const o of mem.attention_options || []) f.attn.append(h("option", { value: o }, ATTN_LABEL[o] || o));
+    if (mem.attention_options) f.attn.value = d.attention_backend || "native";
     fillCount(f.count.value);
     const note = document.getElementById("mem-note");
     if (note) note.textContent = mem.notes || "";
@@ -366,6 +380,7 @@ export async function mount(root) {
       fps: kind === "video" ? Number(f.fps.value) || undefined : undefined, unlock: isUnlocked(),
       guidance: Number(f.guidance.value), seed: f.seed.value === "" ? null : Number(f.seed.value),
       offload: f.offload.value, quantization: f.quant.value, vae_tiling: f.tiling.checked,
+      attention_backend: f.attnField.hidden ? undefined : f.attn.value,
       count: Number(f.count.value) || 1,
     };
   }
@@ -376,6 +391,7 @@ export async function mount(root) {
       kind, model_id: model.id, prompt: f.prompt.value, negative_prompt: f.negative.value, seed: f.seed.value,
       res: f.res.value, cw: f.cw.value, ch: f.ch.value, fps: f.fps.value, frames: f.frames.value, steps: f.steps.value, guidance: f.guidance.value,
       offload: f.offload.value, quantization: f.quant.value, vae_tiling: f.tiling.checked, count: f.count.value,
+      attention_backend: f.attn.value,
     });
   }
 
@@ -393,6 +409,7 @@ export async function mount(root) {
     f.steps.value = p.steps;
     f.guidance.value = p.guidance; f.seed.value = p.seed;
     f.offload.value = p.offload; f.quant.value = p.quantization; f.tiling.checked = p.vae_tiling;
+    if (p.attention_backend && [...f.attn.options].some((o) => o.value === p.attention_backend)) f.attn.value = p.attention_backend;
     fillCount(1);
     syncFrames(); validate(); persist();
     formCard.scrollIntoView({ behavior: "smooth", block: "start" });

@@ -28,6 +28,7 @@ class GenerateRequest(BaseModel):
     quantization: str | None = None
     fps: int | None = None
     unlock: bool | None = None
+    attention_backend: str | None = None
 
 
 class EstimateRequest(BaseModel):

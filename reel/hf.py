@@ -505,6 +505,14 @@ def build_recipe(repo, sha, info, class_name, kind, paths, download, comp_info, 
         defaults = {"width": fam["w"], "height": fam["h"], "steps": steps, "guidance": guidance,
                     "negative_prompt": fam.get("negative", ""), "offload": "model", "vae_tiling": True, "quantization": quant}
     fit_size_limits(limits, defaults)
+    memory_extra: dict = {}
+    packages = GENERIC_PACKAGES
+    if class_name == "HunyuanVideo15Pipeline":   # needs diffusers 0.36+, and benefits from a prebuilt attention kernel
+        memory_extra["attention_options"] = ["auto", "native", "sage_hub", "flash_hub", "_flash_3_hub", "sage_blackwell_hub"]
+        defaults["attention_backend"] = "auto"
+        packages = [("diffusers>=0.36" if x.startswith("diffusers") else x) for x in GENERIC_PACKAGES] + ["kernels"]
+    if kind == "video":
+        defaults["fps"] = limits["fps"]
     if gated:
         warnings.append("Gated model: accept its terms on huggingface.co and save an access token in Settings before installing.")
     recipe = {
@@ -519,12 +527,12 @@ def build_recipe(repo, sha, info, class_name, kind, paths, download, comp_info, 
         "adapter_config": {"pipeline": class_name, "variant": variant},
         "download_gb": round(download / GB, 1), "vram_gb": vram,
         "vram_note": "Estimate from the weights' real tensor sizes; not measured. Reel shows the true peak per clip in History.",
-        "python": {"torch_index": TORCH_INDEX, "torch": ["torch>=2.7", "torchvision"], "packages": GENERIC_PACKAGES},
+        "python": {"torch_index": TORCH_INDEX, "torch": ["torch>=2.7", "torchvision"], "packages": packages},
         "weights": [{"repo_id": repo, "revision": sha, "dest": ".", "allow_patterns": paths}],
         "limits": limits, "defaults": defaults,
         "memory": {"offload_options": ["none", "model", "sequential"], "quantization_options": ["none", "int8", "nf4"],
                    "notes": "Quantization applies to the transformer/UNet and any T5-class text encoder.",
-                   "estimate": memory_profile(comp_info, class_name, kind)},
+                   "estimate": memory_profile(comp_info, class_name, kind), **memory_extra},
     }
     return recipe, warnings
 

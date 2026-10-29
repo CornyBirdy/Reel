@@ -128,6 +128,10 @@ def validate(recipe: dict, req: dict) -> dict:
     if quant not in mem.get("quantization_options", ["none"]):
         raise ValueError("Unsupported quantization.")
     out.update(offload=offload, quantization=quant, vae_tiling=bool(req.get("vae_tiling", dflt["vae_tiling"])))
+    attention = req.get("attention_backend", dflt.get("attention_backend", "native"))
+    if attention not in mem.get("attention_options", ["native"]):
+        raise ValueError(f"Unsupported attention backend '{attention}' for {recipe['name']}.")
+    out["attention_backend"] = attention
     return out
 
 

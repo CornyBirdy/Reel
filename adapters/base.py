@@ -23,6 +23,8 @@ REQUEST = {
 """
 from __future__ import annotations
 
+import contextlib
+import importlib
 import json
 import os
 import time
@@ -38,6 +40,38 @@ warnings.filterwarnings("ignore", message=".*MatMul8bitLt.*")
 
 def emit(**event) -> None:
     print(json.dumps(event), flush=True)
+
+
+def auto_attention_backend(gpu_name: str, capability: tuple[int, int] | None = None) -> str:
+    """The attention backend the diffusers HunyuanVideo-1.5 docs recommend for this GPU.
+
+    H100/H800 (Hopper): _flash_3_hub. A100/A800/RTX 4090: flash_hub. Any other GPU: sage_hub.
+    """
+    name = (gpu_name or "").upper()
+    if capability == (9, 0) or any(k in name for k in ("H100", "H800")):
+        return "_flash_3_hub"
+    if any(k in name for k in ("A100", "A800", "4090")):
+        return "flash_hub"
+    return "sage_hub"
+
+
+@contextlib.contextmanager
+def online_for_kernels():
+    """Reel starts model processes offline. Fetching an attention kernel from the Hub needs the network, and with the
+    offline flag set diffusers would also skip its trusted-publisher check, so lift the flag only while switching."""
+    saved = []
+    for modname in ("huggingface_hub.constants", "diffusers.models.attention_dispatch"):
+        try:
+            mod = importlib.import_module(modname)
+            saved.append((mod, mod.HF_HUB_OFFLINE))
+            mod.HF_HUB_OFFLINE = False
+        except Exception:  # noqa: BLE001 - not present in this version
+            pass
+    try:
+        yield
+    finally:
+        for mod, value in saved:
+            mod.HF_HUB_OFFLINE = value
 
 
 class BaseAdapter:
@@ -57,7 +91,8 @@ class BaseAdapter:
         self.dtype = torch.bfloat16
         self.total_steps = int(request["steps"])
         self.kind = request.get("kind", "video")
-        self.attention_active = "native"   # what is really in use; adapters that switch backends update it
+        self.attention_active = "native"   # what is really in use after apply_attention_backend()
+        self.steps_done = 0
 
     # -- to implement --------------------------------------------------------
     def prepare(self) -> None:
@@ -108,6 +143,65 @@ class BaseAdapter:
                     getattr(vae, fn)()
                 except Exception:  # noqa: BLE001 - not every VAE has both
                     pass
+        self.apply_attention_backend(pipe)
+
+    def apply_attention_backend(self, pipe) -> None:
+        """Switch the denoiser's attention kernel when the recipe/request asks for one; never fail the run over it.
+
+        "auto" follows the diffusers docs for this GPU. The *_hub backends fetch a prebuilt kernel with the `kernels`
+        package (online, publisher-trust checked by diffusers); when that is not possible (no `kernels`, no build for this
+        Windows/torch/CUDA combination, an untrusted publisher) the run continues on PyTorch's native attention and the
+        log says why.
+        """
+        want = self.req.get("attention_backend") or "native"
+        backend = want
+        if want == "auto":
+            gpu = self.torch.cuda.get_device_name(0) if self.device == "cuda" else ""
+            cap = self.torch.cuda.get_device_capability(0) if self.device == "cuda" else None
+            backend = auto_attention_backend(gpu, cap)
+        label = want if want == backend else f"{want} -> {backend}"
+        if backend in ("native", "default"):
+            self.attention_active = "native"
+            emit(event="log", message=f"Attention backend: native (requested {label}).")
+            return
+        targets = [(n, getattr(pipe, n)) for n in ("transformer", "transformer_2", "unet")
+                   if getattr(pipe, n, None) is not None and hasattr(getattr(pipe, n), "set_attention_backend")]
+        if not targets:
+            emit(event="log", message=f"Attention backend '{backend}' requested, but this pipeline's denoiser cannot switch backends; using native attention.")
+            return
+        try:
+            with online_for_kernels():
+                for _name, module in targets:
+                    module.set_attention_backend(backend)
+            self.attention_active = backend
+            emit(event="log", message=f"Attention backend: {backend} (requested {label}).")
+        except Exception as exc:  # noqa: BLE001 - missing kernels package, no matching build, untrusted publisher, ...
+            for _name, module in targets:
+                try:
+                    module.reset_attention_backend()
+                except Exception:  # noqa: BLE001
+                    pass
+            self.attention_active = "native"
+            emit(event="log", message=f"Attention backend '{backend}' could not be enabled ({type(exc).__name__}: {exc}). "
+                                      "Using PyTorch native attention instead.")
+
+    def hook_scheduler_progress(self, pipe) -> None:
+        """Progress for pipelines that have no callback_on_step_end: count the scheduler's steps."""
+        sched = getattr(pipe, "scheduler", None)
+        if sched is None or getattr(sched, "_reel_hooked", False):
+            return
+        original, adapter = sched.step, self
+
+        def step(*args, **kwargs):
+            out = original(*args, **kwargs)
+            adapter.steps_done += 1
+            emit(event="progress", step=adapter.steps_done, total=adapter.total_steps, item=adapter.item, items=adapter.n_items)
+            if adapter.steps_done >= adapter.total_steps:
+                adapter.phase("decoding", "Decoding video (tiled VAE)")
+            return out
+
+        sched.step = step
+        sched._reel_hooked = True
 
     # -- diagnostics ----------------------------------------------------------
     def memory_line(self) -> str:
@@ -148,6 +242,7 @@ class BaseAdapter:
 
     def step_callback(self, pipe, step, timestep, kwargs):
         done = step + 1
+        self.steps_done = done
         emit(event="progress", step=done, total=self.total_steps, item=self.item, items=self.n_items)
         if done >= self.total_steps:
             self.phase("decoding", "Decoding video (tiled VAE)")

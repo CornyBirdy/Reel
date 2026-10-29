@@ -164,3 +164,140 @@ class Estimate(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HunyuanVideo15(unittest.TestCase):
+    """The 480p checkpoint, as its model card and the diffusers docs describe it."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.all, cls.problems = recipes.load_all()
+        cls.r = cls.all["hunyuanvideo-1.5-480p"]
+
+    def test_repo_is_the_official_diffusers_480p_t2v_one_and_pinned(self):
+        w = self.r["weights"][0]
+        self.assertEqual(w["repo_id"], "hunyuanvideo-community/HunyuanVideo-1.5-Diffusers-480p_t2v")
+        self.assertRegex(w["revision"], r"^[0-9a-f]{40}$")
+        self.assertIn("guider/*", w["allow_patterns"])      # the pipeline cannot be built without its guider config
+        self.assertEqual(self.r["adapter_config"]["pipeline"], "HunyuanVideo15Pipeline")
+
+    def test_native_values_come_from_the_card(self):
+        lim, nat = self.r["limits"], self.r["native"]
+        self.assertEqual((lim["fps"], self.r["defaults"]["fps"], nat["fps"]), (24, 24, 24))
+        self.assertEqual((self.r["defaults"]["width"], self.r["defaults"]["height"]), (848, 480))
+        self.assertEqual(lim["frames"], {"step": 4, "offset": 1, "min": 5, "max": 121, "default": 121})
+        self.assertEqual(lim["size_multiple"], 16)
+        self.assertIn({"w": 848, "h": 480, "label": "848×480 (16:9)"}, nat["resolutions"])
+        self.assertEqual(self.r["defaults"]["steps"], 50)
+        self.assertEqual(self.r["defaults"]["guidance"], 6.0)
+
+    def test_it_is_listed_before_the_older_hunyuan_and_marked_recommended(self):
+        ids = list(self.all)
+        self.assertLess(ids.index("hunyuanvideo-1.5-480p"), ids.index("hunyuanvideo"))
+        self.assertTrue(self.r["recommended"])
+        self.assertNotIn("recommended", self.all["hunyuanvideo"])
+
+    def test_native_defaults_validate_and_720p_needs_the_unlock(self):
+        out = validate(self.r, {"prompt": "x"})
+        self.assertEqual((out["width"], out["height"], out["frames"], out["fps"]), (848, 480, 121, 24))
+        self.assertEqual(out["attention_backend"], "auto")
+        with self.assertRaises(ValueError):
+            validate(self.r, {"prompt": "x", "width": 1280, "height": 720})
+        self.assertTrue(validate(self.r, {"prompt": "x", "width": 1280, "height": 720, "unlock": True})["beyond_safe"])
+        with self.assertRaises(ValueError):
+            validate(self.r, {"prompt": "x", "width": 856, "height": 480, "unlock": True})   # multiples of 16
+        with self.assertRaises(ValueError):
+            validate(self.r, {"prompt": "x", "frames": 120, "unlock": True})                  # 4n+1
+
+    def test_every_native_bucket_is_safe_at_the_native_length(self):
+        for res in self.r["native"]["resolutions"]:
+            validate(self.r, {"prompt": "x", "width": res["w"], "height": res["h"], "frames": 121})
+
+    def test_attention_backend_is_a_recipe_option(self):
+        validate(self.r, {"prompt": "x", "attention_backend": "flash_hub"})
+        with self.assertRaises(ValueError):
+            validate(self.r, {"prompt": "x", "attention_backend": "flash_attention_9"})
+        with self.assertRaises(ValueError):                       # a model with no options has only native
+            validate(self.all["ltx-video"], {"prompt": "x", "attention_backend": "sage_hub"})
+
+    def test_memory_defaults_fit_a_16gb_card_and_unquantized_does_not(self):
+        d = self.r["defaults"]
+        p = {"width": 848, "height": 480, "frames": 121, "offload": d["offload"], "quantization": d["quantization"], "vae_tiling": True}
+        e = estimate.estimate(self.r, p, GPU_16, RAM_32)
+        self.assertEqual(e["status"], "ok", e)
+        e = estimate.estimate(self.r, {**p, "quantization": "none"}, GPU_16, RAM_32)
+        self.assertEqual(e["ram"], "fail", e)     # ~34 GB of bf16 weights parked in RAM: how a 32 GB PC crashes
+
+
+class AttentionBackend(unittest.TestCase):
+    def test_auto_follows_the_diffusers_docs_table(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "adapters"))
+        from base import auto_attention_backend as pick
+        self.assertEqual(pick("NVIDIA H100 80GB HBM3"), "_flash_3_hub")
+        self.assertEqual(pick("NVIDIA H800"), "_flash_3_hub")
+        self.assertEqual(pick("NVIDIA A100-SXM4-80GB"), "flash_hub")
+        self.assertEqual(pick("NVIDIA GeForce RTX 4090"), "flash_hub")
+        self.assertEqual(pick("NVIDIA GeForce RTX 5070 Ti"), "sage_hub")
+        self.assertEqual(pick("NVIDIA GeForce GTX 1660 SUPER"), "sage_hub")
+
+    def adapter(self, want):
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "adapters"))
+        import base
+        a = object.__new__(base.BaseAdapter)
+        a.req, a.device, a.attention_active = {"attention_backend": want}, "cpu", "native"
+        return a
+
+    def run_apply(self, adapter, pipe):
+        import contextlib
+        import io
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            adapter.apply_attention_backend(pipe)
+        return buf.getvalue()
+
+    def test_a_backend_that_cannot_load_falls_back_to_native_and_says_why(self):
+        calls = []
+
+        class Denoiser:
+            def set_attention_backend(self, name):
+                raise ValueError("Backend 'sage_hub' loads `SageAttention/sage-attention`, which is not published by a trusted kernel publisher")
+
+            def reset_attention_backend(self):
+                calls.append("reset")
+
+        a = self.adapter("sage_hub")
+        out = self.run_apply(a, type("P", (), {"transformer": Denoiser()})())
+        self.assertEqual(a.attention_active, "native")
+        self.assertEqual(calls, ["reset"])
+        self.assertIn("could not be enabled", out)
+        self.assertIn("trusted kernel publisher", out)
+
+    def test_a_backend_that_loads_is_used_and_logged(self):
+        seen = []
+
+        class Denoiser:
+            def set_attention_backend(self, name):
+                seen.append(name)
+
+        a = self.adapter("flash_hub")
+        out = self.run_apply(a, type("P", (), {"transformer": Denoiser()})())
+        self.assertEqual((seen, a.attention_active), (["flash_hub"], "flash_hub"))
+        self.assertIn("Attention backend: flash_hub", out)
+
+    def test_native_never_touches_the_pipeline(self):
+        a = self.adapter("native")
+        out = self.run_apply(a, object())
+        self.assertEqual(a.attention_active, "native")
+        self.assertIn("native", out)
+
+    def test_imported_hunyuan15_models_get_the_same_options(self):
+        from reel import hf
+        info = {"id": "acme/HunyuanVideo-1.5-Diffusers-720p_t2v", "cardData": {"license": "other"}, "tags": []}
+        comp = {"transformer": {"stored": 16 * 10**9, "bf16": 16 * 10**9, "class": None}}
+        r = hf.build_recipe("acme/HunyuanVideo-1.5-Diffusers-720p_t2v", "abcdef1234", info, "HunyuanVideo15Pipeline", "video",
+                            ["model_index.json"], 12 * 10**9, comp, None, False)[0]
+        self.assertIn("sage_hub", r["memory"]["attention_options"])
+        self.assertEqual(r["defaults"]["attention_backend"], "auto")
+        self.assertEqual(r["defaults"]["fps"], 24)
+        self.assertIn("kernels", r["python"]["packages"])
+        self.assertEqual(recipes.validate(r), [])

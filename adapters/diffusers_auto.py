@@ -55,6 +55,7 @@ class Adapter(BaseAdapter):
                                           components_to_quantize=self.quant_components(comps))
 
     def call_kwargs(self) -> dict:
+        self.steps_done = 0
         params = inspect.signature(self.pipe.__call__).parameters
         accepts = lambda name: name in params  # noqa: E731 - **kwargs does not count as accepting
         r = self.req
@@ -65,14 +66,18 @@ class Adapter(BaseAdapter):
             call["guidance_scale"] = guidance
         elif accepts("true_cfg_scale"):
             call["true_cfg_scale"] = guidance
+        elif getattr(self.pipe, "guider", None) is not None:
+            # Pipelines built on diffusers' guiders (HunyuanVideo 1.5) take the scale from pipe.guider, not from the call.
+            self.pipe.guider = self.pipe.guider.new(guidance_scale=guidance)
+            emit(event="log", message=f"Guidance {guidance} is set on the pipeline's guider ({type(self.pipe.guider).__name__}).")
         if r.get("negative_prompt") and accepts("negative_prompt"):
             call["negative_prompt"] = r["negative_prompt"]
         if self.kind == "video" and accepts("num_frames"):
             call["num_frames"] = int(r["frames"])
         if accepts("callback_on_step_end"):
             call["callback_on_step_end"] = self.step_callback
-        else:
-            emit(event="log", message="This pipeline does not report per-step progress.")
+        else:                          # e.g. HunyuanVideo 1.5: count the scheduler's steps instead
+            self.hook_scheduler_progress(self.pipe)
         return call
 
     def prepare(self):

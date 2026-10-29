@@ -1,0 +1,209 @@
+{
+  "schema": 1,
+  "id": "hunyuanvideo-1.5-480p",
+  "name": "HunyuanVideo 1.5",
+  "family": "Tencent",
+  "version": "480p T2V",
+  "status": "ready",
+  "kind": "video",
+  "verified": false,
+  "recommended": true,
+  "summary": "Tencent's 8.3B text-to-video model, 480p checkpoint, trained for 848×480 (16:9) at 121 frames and 24 fps. Newer and lighter than HunyuanVideo 1.0. Large download: NF4 quantization is on by default so the denoiser and the 7B text encoder fit a 16 GB card. Runs through the generic diffusers adapter; not yet tested end to end by Reel.",
+  "license": "Tencent Hunyuan Community License",
+  "license_url": "https://huggingface.co/tencent/HunyuanVideo-1.5/blob/main/LICENSE",
+  "tasks": [
+    "text-to-video"
+  ],
+  "adapter": "diffusers_auto",
+  "download_gb": 53.4,
+  "vram_gb": 14,
+  "vram_note": "Tencent's README: minimum 14 GB with model offloading. With NF4 here the denoiser is ~5 GB, but system RAM matters too: about 20 GB at the defaults. The repo stores the denoiser and VAE in fp32, which is why the download is larger than the loaded model.",
+  "python": {
+    "torch_index": "https://download.pytorch.org/whl/cu128",
+    "torch": [
+      "torch>=2.7",
+      "torchvision"
+    ],
+    "packages": [
+      "diffusers>=0.36",
+      "transformers>=4.57",
+      "accelerate>=1.4",
+      "bitsandbytes>=0.46",
+      "kernels",
+      "sentencepiece",
+      "protobuf",
+      "ftfy",
+      "safetensors",
+      "huggingface_hub",
+      "imageio",
+      "imageio-ffmpeg",
+      "numpy",
+      "Pillow"
+    ]
+  },
+  "weights": [
+    {
+      "repo_id": "hunyuanvideo-community/HunyuanVideo-1.5-Diffusers-480p_t2v",
+      "revision": "286be7ce72277246578a3e3cc2487e95ddae5bcf",
+      "dest": ".",
+      "allow_patterns": [
+        "model_index.json",
+        "guider/*",
+        "scheduler/*",
+        "tokenizer*/*",
+        "text_encoder*/*",
+        "transformer/*",
+        "vae/*"
+      ]
+    }
+  ],
+  "limits": {
+    "max_width": 848,
+    "max_height": 848,
+    "size_multiple": 16,
+    "max_area_frames": 49561600,
+    "frames": {
+      "step": 4,
+      "offset": 1,
+      "min": 5,
+      "max": 121,
+      "default": 121
+    },
+    "fps": 24,
+    "steps": {
+      "min": 1,
+      "max": 100
+    },
+    "presets": [
+      {
+        "w": 512,
+        "h": 288
+      },
+      {
+        "w": 640,
+        "h": 368
+      },
+      {
+        "w": 544,
+        "h": 720
+      },
+      {
+        "w": 480,
+        "h": 848
+      },
+      {
+        "w": 640,
+        "h": 640
+      },
+      {
+        "w": 720,
+        "h": 544
+      },
+      {
+        "w": 848,
+        "h": 480
+      }
+    ]
+  },
+  "native": {
+    "label": "848×480",
+    "resolutions": [
+      {
+        "w": 848,
+        "h": 480,
+        "label": "848×480 (16:9)"
+      },
+      {
+        "w": 480,
+        "h": 848,
+        "label": "480×848 (9:16)"
+      },
+      {
+        "w": 720,
+        "h": 544,
+        "label": "720×544 (4:3)"
+      },
+      {
+        "w": 544,
+        "h": 720,
+        "label": "544×720 (3:4)"
+      },
+      {
+        "w": 640,
+        "h": 640,
+        "label": "640×640 (1:1)"
+      }
+    ],
+    "frames": [
+      121
+    ],
+    "fps": 24,
+    "source": "https://huggingface.co/hunyuanvideo-community/HunyuanVideo-1.5-Diffusers-480p_t2v and https://github.com/Tencent-Hunyuan/HunyuanVideo-1.5",
+    "note": "Sizes are the 480p aspect-ratio buckets diffusers derives from the checkpoint's target size (640): about 0.41 megapixels, multiples of 16. Frames are 4n+1; the model card and README use 121 (5 s) at 24 fps, 50 steps, CFG 6."
+  },
+  "unlock": {
+    "max_width": 1280,
+    "max_height": 1280,
+    "max_frames": 241,
+    "known": true,
+    "note": "The pipeline accepts any multiple of 16. This 480p checkpoint is trained for ~0.41 MP, so larger sizes are unlikely to look better; the 720p checkpoint reaches 1280×720. Tencent's report mentions 10-second clips (241 frames at 24 fps); no hard maximum is published."
+  },
+  "defaults": {
+    "width": 848,
+    "height": 480,
+    "steps": 50,
+    "guidance": 6.0,
+    "negative_prompt": "",
+    "offload": "model",
+    "vae_tiling": true,
+    "quantization": "nf4",
+    "attention_backend": "auto",
+    "fps": 24
+  },
+  "memory": {
+    "offload_options": [
+      "none",
+      "model",
+      "sequential"
+    ],
+    "quantization_options": [
+      "none",
+      "int8",
+      "nf4"
+    ],
+    "attention_options": [
+      "auto",
+      "native",
+      "sage_hub",
+      "flash_hub",
+      "_flash_3_hub",
+      "sage_blackwell_hub"
+    ],
+    "attention_note": "Auto follows the diffusers docs: H100/H800 _flash_3_hub, A100/A800/RTX 4090 flash_hub, other GPUs sage_hub. They download a prebuilt kernel on first use. If one cannot load here (no build for your Windows / PyTorch / CUDA, or an untrusted publisher such as sage_hub's), Reel logs why and uses PyTorch's native attention.",
+    "notes": "Quantization applies to the 8.3B denoiser and the Qwen2.5-VL text encoder. Without it the loaded model is about 34 GB, which does not fit a 16 GB card and uses up a 32 GB PC's RAM.",
+    "estimate": {
+      "weights_gb": {
+        "transformer": 16.7,
+        "text_encoder": 14.1,
+        "text_encoder_2": 0.5,
+        "vae": 2.5
+      },
+      "quantized": [
+        "transformer",
+        "text_encoder"
+      ],
+      "denoiser": "transformer",
+      "tokens": {
+        "spatial": 16,
+        "temporal": 4
+      },
+      "hidden": 2048,
+      "vae_mb_per_mpx_frame": 768,
+      "vae_tile_mpx_frames": 1.5
+    }
+  },
+  "adapter_config": {
+    "pipeline": "HunyuanVideo15Pipeline",
+    "variant": null
+  }
+}

@@ -184,8 +184,10 @@ function ModelCard(initial, ctx) {
     const job = m.install;
     let [kind, text, ic] = m.status === "placeholder" ? ["neutral", "Placeholder", "box"] : STATE_BADGE[m.state];
     if (m.state === "partial" && job && job.status === "failed") [kind, text, ic] = ["danger", "Install failed", "error"];
-    once(badgeSlot, [m.kind, m.verified, m.gated, ctx.hfTokenSet, kind, text].join("|"), () => {
+    once(badgeSlot, [m.kind, m.verified, m.gated, m.recommended, m.native_label, ctx.hfTokenSet, kind, text].join("|"), () => {
       badgeSlot.append(kindBadge(m.kind));
+      if (m.recommended) badgeSlot.append(statusBadge("success", "Recommended", "check", "The better-quality choice among this model's variants"));
+      if (m.native_label) badgeSlot.append(statusBadge("neutral", `Native ${m.native_label}`, "image", "The resolution this checkpoint was trained for. Quality is best at or near it."));
       if (m.verified === false) badgeSlot.append(statusBadge("neutral", "Unverified", "info", "Reel has not run this model itself yet. It should work, but you may be the first to try it."));
       if (m.gated) badgeSlot.append(ctx.hfTokenSet ? statusBadge("info", "Gated", "info", "Needs accepted terms on Hugging Face (token saved)")
                                                    : statusBadge("warning", "Needs HF token", "alert", "Gated model: accept its terms on Hugging Face and save a token in Settings"));
