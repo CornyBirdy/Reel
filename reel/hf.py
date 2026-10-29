@@ -165,6 +165,9 @@ VIDEO_FAMILIES = {
                               area=None, presets=[(720, 480)], negative=""),
     "HunyuanVideoPipeline": dict(label="HunyuanVideo", mult=16, w=640, h=352, max_w=848, max_h=480, frames=(4, 1, 9, 61, 33), fps=15, steps=30, guidance=6.0,
                                  area=None, presets=[(640, 352), (848, 480)], negative=""),
+    "HunyuanVideo15Pipeline": dict(label="HunyuanVideo 1.5", mult=16, w=848, h=480, max_w=1280, max_h=720, frames=(4, 1, 5, 121, 33), fps=24,
+                                   steps=30, guidance=6.0, area=1280 * 720 * 33,
+                                   presets=[(640, 384), (848, 480), (960, 544), (1280, 720)], negative=""),
     "MochiPipeline": dict(label="Mochi", mult=16, w=848, h=480, max_w=848, max_h=480, frames=(6, 1, 7, 85, 37), fps=30, steps=64, guidance=4.5,
                           area=None, presets=[(848, 480)], negative=""),
     "LattePipeline": dict(label="Latte", mult=8, w=512, h=512, max_w=512, max_h=512, frames=(1, 0, 8, 16, 16), fps=8, steps=50, guidance=7.5,
@@ -189,6 +192,34 @@ UNSUPPORTED_MARKERS = {
     "Prior": "it is a prior stage, not a full pipeline",
 }
 FAST_NAME = re.compile(r"(turbo|lightning|schnell|lcm|hyper|distill|sprint|flash|dmd|fast)", re.I)
+
+
+RES_HINT = re.compile(r"(?<![0-9])(480|540|576|720|1080)p(?![a-z0-9])", re.I)
+
+
+def native_height(name: str) -> int | None:
+    """'...-720p_t2v' -> 720. Models are usually named after the resolution they were trained for."""
+    m = RES_HINT.search(name)
+    return int(m.group(1)) if m else None
+
+
+def _round_up(v: int, mult: int) -> int:
+    return -(-v // mult) * mult
+
+
+def fit_size_limits(limits: dict, defaults: dict) -> None:
+    """Make presets and the default size agree with the caps (the importer must never emit a recipe
+    whose own default is outside its own limits)."""
+    mw, mh, mult = limits["max_width"], limits["max_height"], limits["size_multiple"]
+    limits["presets"] = [p for p in limits["presets"] if p["w"] <= mw and p["h"] <= mh and p["w"] % mult == 0 and p["h"] % mult == 0]
+    if not limits["presets"]:
+        limits["presets"] = [{"w": mw, "h": mh}]
+    if defaults["width"] > mw or defaults["height"] > mh or defaults["width"] % mult or defaults["height"] % mult:
+        best = max(limits["presets"], key=lambda p: p["w"] * p["h"])
+        defaults["width"], defaults["height"] = best["w"], best["h"]
+    if not any(p["w"] == defaults["width"] and p["h"] == defaults["height"] for p in limits["presets"]):
+        limits["presets"].append({"w": defaults["width"], "h": defaults["height"]})
+        limits["presets"].sort(key=lambda p: p["w"] * p["h"])
 
 
 def unsupported_reason(class_name: str) -> str | None:
@@ -432,8 +463,16 @@ def build_recipe(repo, sha, info, class_name, kind, paths, download, comp_info, 
         defaults = {"width": w, "height": h, "steps": steps, "guidance": guidance,
                     "negative_prompt": fam.get("negative", ""), "offload": "model", "vae_tiling": True, "quantization": quant}
     else:
-        fam = fam or dict(label=class_name, mult=16, w=512, h=512, max_w=832, max_h=480, frames=(1, 0, 8, 49, 16), fps=16,
-                          steps=30, guidance=5.0, area=832 * 480 * 49, presets=[(512, 512), (832, 480)], negative="")
+        fam = fam or dict(label=class_name, mult=16, w=832, h=480, max_w=832, max_h=480, frames=(1, 0, 8, 49, 16), fps=16,
+                          steps=30, guidance=5.0, area=832 * 480 * 49, presets=[(512, 320), (640, 384), (832, 480)], negative="")
+        fam = dict(fam)
+        hint = native_height(name)
+        if hint and hint > fam["max_h"]:   # e.g. a "720p" model: allow (and default to) its native size
+            fam["max_h"] = _round_up(hint, fam["mult"])
+            fam["max_w"] = _round_up(round(hint * 16 / 9), fam["mult"])
+            fam["h"], fam["w"] = fam["max_h"], fam["max_w"]
+            fam["presets"] = sorted({*fam["presets"], (fam["max_w"], fam["max_h"])}, key=lambda p: p[0] * p[1])
+            fam["area"] = max(fam.get("area") or 0, fam["max_w"] * fam["max_h"] * fam["frames"][4])
         fstep, foffset, fmin, fmax, fdef = fam["frames"]
         steps, guidance = (4, 1.0) if fast else (fam["steps"], fam["guidance"])
         limits = {"max_width": fam["max_w"], "max_height": fam["max_h"], "size_multiple": fam["mult"],
@@ -443,6 +482,7 @@ def build_recipe(repo, sha, info, class_name, kind, paths, download, comp_info, 
             limits["max_area_frames"] = fam["area"]
         defaults = {"width": fam["w"], "height": fam["h"], "steps": steps, "guidance": guidance,
                     "negative_prompt": fam.get("negative", ""), "offload": "model", "vae_tiling": True, "quantization": quant}
+    fit_size_limits(limits, defaults)
     if gated:
         warnings.append("Gated model: accept its terms on huggingface.co and save an access token in Settings before installing.")
     recipe = {
@@ -464,3 +504,16 @@ def build_recipe(repo, sha, info, class_name, kind, paths, download, comp_info, 
                    "notes": "Quantization applies to the transformer/UNet and any T5-class text encoder."},
     }
     return recipe, warnings
+
+
+def refresh_recipe(old: dict, new: dict) -> dict:
+    """Bring an imported recipe's limits, defaults and estimates up to date with the current importer,
+    keeping what makes it THIS install: its id, the exact files it downloads, and the weight variant."""
+    merged = {**old}
+    for key in ("limits", "defaults", "memory", "vram_gb", "vram_note", "version", "summary", "license", "license_url"):
+        if key in new:
+            merged[key] = new[key]
+    cfg = dict(new.get("adapter_config") or {})
+    cfg["variant"] = (old.get("adapter_config") or {}).get("variant")
+    merged["adapter_config"] = cfg
+    return merged

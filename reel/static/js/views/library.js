@@ -102,6 +102,9 @@ function ModelCard(initial, ctx) {
         if (ok) act(() => api.del(`/api/models/${m.id}`), `${m.name} removed.`);
       },
     }, icon("trash"), label);
+    const refresh = () => m.source === "user" && m.hf_repo ? h("button", { class: "btn btn-ghost", type: "button",
+      title: "Re-read this model on Hugging Face and update its size limits, defaults and VRAM estimate",
+      onclick: () => act(() => api.post(`/api/models/${m.id}/refresh`), `${m.name} settings refreshed.`) }, icon("rerun"), "Refresh settings") : null;
     switch (m.state) {
       case "installing":
         actions.append(h("button", { class: "btn", onclick: () => act(() => api.post(`/api/models/${m.id}/cancel`)) }, icon("stop"), "Cancel install"));
@@ -109,17 +112,17 @@ function ModelCard(initial, ctx) {
       case "installed":
         actions.append(
           h("a", { class: "btn btn-primary", href: `#/generate?model=${encodeURIComponent(m.id)}` }, icon("generate"), "Generate"),
-          remove("Uninstall", "This deletes only this model's folder: its environment and weights."));
+          ...[remove("Uninstall", "This deletes only this model's folder: its environment and weights."), refresh()].filter(Boolean));
         break;
       case "partial":
-        actions.append(install(job && job.status === "failed" ? "Retry install" : "Resume install"),
-          remove("Remove files", "This deletes the partly installed model folder."));
+        actions.append(...[install(job && job.status === "failed" ? "Retry install" : "Resume install"),
+          remove("Remove files", "This deletes the partly installed model folder."), refresh()].filter(Boolean));
         break;
       case "uninstalling":
         actions.append(h("button", { class: "btn", disabled: true }, "Removing…"));
         break;
       default: {
-        const items = [install("Install"), blockedNote()];
+        const items = [install("Install"), blockedNote(), refresh()];
         if (m.source === "user") {
           items.push(h("button", { class: "btn btn-ghost", type: "button", onclick: async () => {
             const ok = await confirmDialog({ title: `Remove ${m.name} from the Library?`, confirmLabel: "Remove",

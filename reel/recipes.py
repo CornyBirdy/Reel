@@ -18,6 +18,12 @@ STATUSES = {"ready", "placeholder"}
 KINDS = {"image", "video"}
 
 
+def validate_base(r: dict) -> list[str]:
+    """Structural problems only (missing keys); used before attempting a repair."""
+    return [f"missing '{k}'" for k in ("id", "name", "status", "adapter", "download_gb", "vram_gb", "python", "weights", "limits", "defaults")
+            if k not in r]
+
+
 def validate(r: dict) -> list[str]:
     errs: list[str] = []
     for key in ("id", "name", "status", "adapter", "download_gb", "vram_gb", "python", "weights", "limits", "defaults"):
@@ -45,7 +51,39 @@ def validate(r: dict) -> list[str]:
     for key in required:
         if key not in lim:
             errs.append(f"limits.{key} missing")
+    errs += consistency_errors(r, kind)
     return errs
+
+
+def consistency_errors(r: dict, kind: str) -> list[str]:
+    """A recipe's defaults and presets must satisfy its own limits (otherwise the default form can never run)."""
+    lim, dflt = r["limits"], r["defaults"]
+    errs: list[str] = []
+    mult = lim.get("size_multiple", 1)
+    for key in ("width", "height"):
+        v, cap = dflt.get(key), lim.get(f"max_{key}")
+        if v is not None and cap is not None and (v > cap or v % mult):
+            errs.append(f"defaults.{key} {v} is outside limits (max {cap}, multiple of {mult})")
+    for pr in lim.get("presets", []):
+        if pr["w"] > lim.get("max_width", 10**9) or pr["h"] > lim.get("max_height", 10**9):
+            errs.append(f"preset {pr['w']}x{pr['h']} is larger than the limits allow")
+    if kind == "video" and "frames" in lim:
+        fr = lim["frames"]
+        if not fr["min"] <= fr["default"] <= fr["max"] or (fr["default"] - fr["offset"]) % fr["step"]:
+            errs.append("limits.frames.default does not satisfy the frame rule")
+        budget = lim.get("max_area_frames")
+        if budget and dflt.get("width") and dflt["width"] * dflt["height"] * fr["default"] > budget:
+            errs.append("the default size and frame count exceed limits.max_area_frames")
+    return errs
+
+
+def repair_user(r: dict) -> dict:
+    """Recipes written by an older importer could contain a default outside their own limits. Fix those on load."""
+    from . import hf
+    if not consistency_errors(r, r.get("kind", "video")):
+        return r
+    hf.fit_size_limits(r["limits"], r["defaults"])
+    return r
 
 
 def adapter_exists(r: dict) -> bool:
@@ -59,6 +97,11 @@ def _load_dir(directory: Path, source: str, recipes: dict, problems: dict) -> No
         except (OSError, json.JSONDecodeError) as exc:
             problems[path.name] = [f"unreadable: {exc}"]
             continue
+        if source == "user" and not validate_base(r):
+            try:
+                r = repair_user(r)
+            except (KeyError, TypeError, ValueError):
+                pass
         errs = validate(r)
         if errs:
             problems[path.name] = errs

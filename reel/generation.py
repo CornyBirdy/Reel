@@ -52,7 +52,8 @@ def validate(recipe: dict, req: dict) -> dict:
         if v % mult:
             raise ValueError(f"{key} must be a multiple of {mult}.")
         if not 64 <= v <= cap:
-            raise ValueError(f"{key} must be between 64 and {cap} for {recipe['name']} on a 16 GB GPU.")
+            raise ValueError(f"{key.capitalize()} must be between 64 and {cap} for {recipe['name']}: that is its size limit "
+                             f"for a 16 GB GPU. Pick a size from the Resolution list.")
         out[key] = v
 
     if kind == "video":

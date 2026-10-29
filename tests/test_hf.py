@@ -78,6 +78,64 @@ class Classification(unittest.TestCase):
                 hf.parse_repo(bad)
 
 
+class Consistency(unittest.TestCase):
+    """HunyuanVideo-1.5-720p was imported with a 512x512 default and a 480 height cap: the default form could not run."""
+    INFO = {"id": "acme/Model-720p_t2v", "cardData": {"license": "apache-2.0"}, "tags": []}
+
+    def build(self, cls, name, kind="video"):
+        comp = {"transformer": {"stored": 8 * GB, "bf16": 8 * GB, "class": None}}
+        return hf.build_recipe(f"acme/{name}", "abcdef1234", {**self.INFO, "id": f"acme/{name}"}, cls, kind,
+                               ["model_index.json"], 12 * GB, comp, None, False)[0]
+
+    def test_unknown_video_architecture_never_gets_a_default_outside_its_own_limits(self):
+        r = self.build("BrandNewVideoPipeline", "Some-Video-Model")
+        self.assertLessEqual(r["defaults"]["height"], r["limits"]["max_height"])
+        self.assertLessEqual(r["defaults"]["width"], r["limits"]["max_width"])
+        self.assertEqual(recipes.validate(r), [])
+
+    def test_a_720p_name_unlocks_720p_on_an_unknown_architecture(self):
+        r = self.build("BrandNewVideoPipeline", "Some-Video-720p_t2v")
+        self.assertGreaterEqual(r["limits"]["max_height"], 720)
+        self.assertIn({"w": 1280, "h": 720}, r["limits"]["presets"])
+        self.assertEqual(recipes.validate(r), [])
+
+    def test_hunyuanvideo_15_is_a_known_family_with_720p_headroom(self):
+        r = self.build("HunyuanVideo15Pipeline", "HunyuanVideo-1.5-Diffusers-720p_t2v")
+        self.assertEqual((r["limits"]["max_width"], r["limits"]["max_height"]), (1280, 720))
+        self.assertEqual(r["limits"]["frames"]["step"], 4)
+
+    def test_every_known_family_produces_a_consistent_recipe(self):
+        for cls in list(hf.VIDEO_FAMILIES):
+            self.assertEqual(recipes.validate(self.build(cls, "x")), [], cls)
+        for cls in list(hf.IMAGE_FAMILIES):
+            self.assertEqual(recipes.validate(self.build(cls, "x", "image")), [], cls)
+
+    def test_an_old_inconsistent_recipe_is_repaired_on_load_not_lost(self):
+        # exactly what the older importer wrote for HunyuanVideo-1.5-720p
+        old = {"schema": 1, "id": "m", "name": "M", "status": "ready", "kind": "video", "adapter": "diffusers_auto",
+               "download_gb": 1, "vram_gb": 1, "python": {}, "weights": [{"repo_id": "a/b"}],
+               "limits": {"max_width": 832, "max_height": 480, "size_multiple": 16, "fps": 16,
+                          "frames": {"step": 1, "offset": 0, "min": 8, "max": 49, "default": 16},
+                          "presets": [{"w": 512, "h": 512}, {"w": 832, "h": 480}]},
+               "defaults": {"width": 512, "height": 512, "steps": 30, "guidance": 5.0}}
+        self.assertTrue(recipes.validate(old))                 # reported as inconsistent...
+        fixed = recipes.repair_user(old)
+        self.assertEqual(recipes.validate(fixed), [])          # ...and repaired
+        self.assertEqual((fixed["defaults"]["width"], fixed["defaults"]["height"]), (832, 480))
+
+    def test_refresh_keeps_the_install_identity_but_takes_new_limits(self):
+        old = self.build("BrandNewVideoPipeline", "Some-Video-720p_t2v")
+        old["limits"]["max_height"] = 480
+        old["weights"][0]["allow_patterns"] = ["exactly/these.safetensors"]
+        old["adapter_config"]["variant"] = "fp16"
+        new = self.build("HunyuanVideo15Pipeline", "Some-Video-720p_t2v")
+        merged = hf.refresh_recipe(old, new)
+        self.assertEqual(merged["limits"]["max_height"], 720)
+        self.assertEqual(merged["weights"][0]["allow_patterns"], ["exactly/these.safetensors"])   # same files as installed
+        self.assertEqual(merged["id"], old["id"])
+        self.assertEqual(merged["adapter_config"]["variant"], "fp16")
+
+
 class BuildRecipe(unittest.TestCase):
     INFO = {"id": "acme/model", "cardData": {"license": "apache-2.0"}, "tags": []}
 

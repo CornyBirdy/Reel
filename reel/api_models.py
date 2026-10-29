@@ -7,7 +7,7 @@ import time
 
 from fastapi import APIRouter, HTTPException
 
-from . import config, recipes, system
+from . import config, hf, recipes, system
 from .installer import InstallError, installs, installed_info, model_dir
 
 router = APIRouter(prefix="/api/models", tags=["models"])
@@ -108,6 +108,24 @@ def install(model_id: str) -> dict:
 def cancel(model_id: str) -> dict:
     _recipe_or_404(model_id)
     installs.cancel(model_id)
+    return {"ok": True}
+
+
+@router.post("/{model_id}/refresh")
+def refresh_recipe(model_id: str) -> dict:
+    """Re-read an imported model from Hugging Face and update its limits, defaults and estimates."""
+    recipe = _recipe_or_404(model_id)
+    if recipe.get("source") != "user" or not recipe.get("hf_repo"):
+        raise HTTPException(409, "Only models added from Hugging Face can be refreshed.")
+    if installs.is_installing(model_id) or installs.is_uninstalling(model_id):
+        raise HTTPException(409, "Wait for the install to finish first.")
+    try:
+        result = hf.inspect(recipe["hf_repo"])
+    except hf.HFError as exc:
+        raise HTTPException(502, str(exc))
+    if not result["recipe"]:
+        raise HTTPException(422, result["unsupported"] or "This model can no longer be described.")
+    recipes.save_user(hf.refresh_recipe({k: v for k, v in recipe.items() if k != "source"}, result["recipe"]))
     return {"ok": True}
 
 
