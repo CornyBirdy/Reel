@@ -1,0 +1,123 @@
+/* ==========================================================================
+   Rack Suite design tokens - Reel
+   --------------------------------------------------------------------------
+   This is the ONLY file that may contain raw colour values. Every other
+   stylesheet and script styles through the variables defined here.
+
+   Theming: `color-scheme: light dark` follows the OS. The manual toggle sets
+   data-theme="light" | "dark" on <html> (absent = follow OS). Each colour is a
+   single light-dark(<light>, <dark>) declaration, so there is one source of
+   truth per token.
+   ========================================================================== */
+
+:root { color-scheme: light dark; }
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark; }
+
+/* -- Neutrals ------------------------------------------------------------ */
+:root {
+  --ground:          light-dark(#f6f8fc, #202124);
+  --surface-sunken:  light-dark(#eef1f7, #1b1c1f);
+  --surface:         light-dark(#ffffff, #292a2d);
+  --surface-raised:  light-dark(#f1f4f9, #303134);
+  --surface-track:   light-dark(#e1e5ec, #3c4043);
+  --hairline:        light-dark(#e1e4ea, #3c4043);
+  --border-control:  light-dark(#7a8088, #9aa0a6);
+  --ink:             light-dark(#1f2329, #e8eaed);
+  --ink-muted:       light-dark(#5f6368, #a9aeb4);
+}
+
+/* -- Status: shared across the whole suite, never changes with the accent -- */
+:root {
+  --success:       light-dark(#137333, #81c995);
+  --success-soft:  light-dark(rgba(19, 115, 51, 0.10),  rgba(129, 201, 149, 0.14));
+  --warning:       light-dark(#8f5800, #fdd663);
+  --warning-soft:  light-dark(rgba(143, 88, 0, 0.10),   rgba(253, 214, 99, 0.14));
+  --danger:        light-dark(#c5221f, #f28b82);
+  --danger-soft:   light-dark(rgba(197, 34, 31, 0.10),  rgba(242, 139, 130, 0.14));
+  --info:          light-dark(#1967d2, #8ab4f8);
+  --info-soft:     light-dark(rgba(25, 103, 210, 0.10), rgba(138, 180, 248, 0.14));
+}
+
+/* ==========================================================================
+   ACCENT - neutral (all-rounder apps: Rack, MC Hoster, Shelf, Reel)
+   To brand an app, replace ONLY the values in this block. Nothing else in the
+   suite references a specific accent colour.
+   ========================================================================== */
+:root {
+  --accent:        light-dark(#1f2329, #e8eaed);
+  --on-accent:     light-dark(#ffffff, #202124);
+  --accent-text:   light-dark(#1f2329, #e8eaed);
+  --accent-soft:   light-dark(rgba(31, 35, 41, 0.08), rgba(232, 234, 237, 0.12));
+  --accent-2:      light-dark(#5f6368, #9aa0a6);
+  --accent-3:      light-dark(#8a9098, #6b7075);
+
+  /* Primary button states: subtle tints of the accent toward the ground. */
+  --accent-hover:  color-mix(in srgb, var(--accent) 88%, var(--ground));
+  --accent-active: color-mix(in srgb, var(--accent) 76%, var(--ground));
+}
+
+/* -- Derived interaction tints (neutral, accent-independent) -------------- */
+:root {
+  --hover-bg:             var(--surface-raised);
+  --btn-secondary-hover:  color-mix(in srgb, var(--surface-raised) 92%, var(--ink));
+  --btn-secondary-active: color-mix(in srgb, var(--surface-raised) 84%, var(--ink));
+  --danger-soft-hover:    color-mix(in srgb, var(--danger) 18%, transparent);
+  --danger-soft-active:   color-mix(in srgb, var(--danger) 26%, transparent);
+  --focus-ring:           var(--accent);
+  --scrim:                light-dark(rgba(31, 35, 41, 0.40), rgba(0, 0, 0, 0.60));
+  --shadow-pop:           0 4px 16px light-dark(rgba(31, 35, 41, 0.12), rgba(0, 0, 0, 0.40));
+}
+
+/* -- Typography ----------------------------------------------------------- */
+:root {
+  --font-sans: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
+
+  --text-xs:  12px;
+  --text-sm:  13px;
+  --text-md:  14px;
+  --text-lg:  16px;
+  --text-xl:  20px;
+  --text-2xl: 28px;
+
+  --weight-regular:  400;
+  --weight-medium:   500;
+  --weight-semibold: 600;
+
+  --leading-tight: 1.25;
+  --leading-body:  1.5;
+}
+
+/* -- Spacing, shape, sizing ---------------------------------------------- */
+:root {
+  --sp-4:  4px;
+  --sp-8:  8px;
+  --sp-12: 12px;
+  --sp-16: 16px;
+  --sp-20: 20px;
+  --sp-24: 24px;
+  --sp-32: 32px;
+  --sp-48: 48px;
+
+  --radius-xs: 3px;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+
+  --control-h:       32px;
+  --control-h-touch: 44px;
+
+  --border-w:    1px;
+  --indicator-w: 2px;
+  --sidebar-w:   232px;
+  --content-max: 1180px;
+
+  --dur-fast: 120ms;
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+}
+
+/* Touch devices get the 44px control height automatically. */
+@media (pointer: coarse) {
+  :root { --control-h: var(--control-h-touch); }
+}

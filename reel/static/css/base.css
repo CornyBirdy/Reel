@@ -1,0 +1,113 @@
+/* Base: reset, typography, app shell layout. Colours come from tokens.css only. */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: var(--text-md);
+  line-height: var(--leading-body);
+  font-weight: var(--weight-regular);
+  min-height: 100vh;
+}
+
+h1, h2, h3, h4, p { margin: 0; }
+h1 { font-size: var(--text-2xl); line-height: var(--leading-tight); font-weight: var(--weight-semibold); }
+h2 { font-size: var(--text-xl);  line-height: var(--leading-tight); font-weight: var(--weight-semibold); }
+h3 { font-size: var(--text-lg);  line-height: var(--leading-tight); font-weight: var(--weight-semibold); }
+h4 { font-size: var(--text-md);  font-weight: var(--weight-semibold); }
+
+a { color: var(--accent-text); text-underline-offset: 2px; }
+code, kbd, pre, .mono { font-family: var(--font-mono); font-size: var(--text-sm); }
+
+:focus-visible {
+  outline: var(--indicator-w) solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.muted { color: var(--ink-muted); }
+.sr-only {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+/* -- App shell ------------------------------------------------------------ */
+.app {
+  display: grid;
+  grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
+  height: 100vh;
+}
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-24);
+  padding: var(--sp-16);
+  background: var(--surface);
+  border-right: var(--border-w) solid var(--hairline);
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-12);
+  padding: var(--sp-4) var(--sp-8);
+}
+.brand img { width: var(--sp-32); height: var(--sp-32); display: block; }
+.brand-name { font-size: var(--text-lg); font-weight: var(--weight-semibold); }
+.brand-tag { font-size: var(--text-xs); color: var(--ink-muted); }
+
+.nav { display: flex; flex-direction: column; gap: var(--sp-4); }
+.sidebar-spacer { flex: 1; }
+.sidebar-foot { display: flex; flex-direction: column; gap: var(--sp-12); }
+
+.main { min-width: 0; overflow-y: auto; }
+.view {
+  max-width: var(--content-max);
+  margin: 0 auto;
+  padding: var(--sp-32);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-24);
+}
+.page-head { display: flex; flex-direction: column; gap: var(--sp-4); }
+.page-head p { color: var(--ink-muted); }
+
+.stack-8  { display: flex; flex-direction: column; gap: var(--sp-8); }
+.stack-12 { display: flex; flex-direction: column; gap: var(--sp-12); }
+.stack-16 { display: flex; flex-direction: column; gap: var(--sp-16); }
+.row-8  { display: flex; align-items: center; gap: var(--sp-8); flex-wrap: wrap; }
+.row-12 { display: flex; align-items: center; gap: var(--sp-12); flex-wrap: wrap; }
+.row-between { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-12); flex-wrap: wrap; }
+.grow { flex: 1; min-width: 0; }
+
+/* -- Narrow screens: sidebar becomes a bottom bar -------------------------- */
+@media (max-width: 760px) {
+  .app { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; }
+  .sidebar {
+    grid-row: 2;
+    flex-direction: row;
+    align-items: center;
+    gap: var(--sp-8);
+    padding: var(--sp-8) var(--sp-12);
+    border-right: 0;
+    border-top: var(--border-w) solid var(--hairline);
+    overflow: visible;
+  }
+  .brand-text, .sidebar-spacer, .sidebar-foot .gpu-chip { display: none; }
+  .nav { flex-direction: row; flex: 1; }
+  .nav .nav-item { flex: 1; justify-content: center; }
+  .nav .nav-item span.label { display: none; }
+  .sidebar-foot { flex-direction: row; }
+  .view { padding: var(--sp-16); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}

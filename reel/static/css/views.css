@@ -1,0 +1,19 @@
+/* View-specific layout. Tokens only. */
+
+.gpu-chip {
+  display: flex;
+  gap: var(--sp-8);
+  align-items: flex-start;
+  padding: var(--sp-8) var(--sp-12);
+  border: var(--border-w) solid var(--hairline);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  font-size: var(--text-xs);
+  color: var(--ink-muted);
+}
+.gpu-chip svg { width: var(--sp-16); height: var(--sp-16); flex: none; margin-top: 1px; }
+.gpu-chip strong { display: block; color: var(--ink); font-weight: var(--weight-semibold); }
+
+.sg-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: var(--sp-12); }
+.sg-swatch { display: flex; flex-direction: column; gap: var(--sp-4); font-size: var(--text-xs); }
+.sg-chip { height: var(--sp-48); border-radius: var(--radius-sm); border: var(--border-w) solid var(--hairline); }

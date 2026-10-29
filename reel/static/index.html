@@ -4,8 +4,38 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Reel</title>
+  <meta name="description" content="Local AI video generation.">
+  <script>
+    /* Apply a saved manual theme before first paint (no flash). */
+    try {
+      var t = localStorage.getItem("reel.theme");
+      if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+    } catch (e) {}
+  </script>
+  <link rel="stylesheet" href="/static/css/tokens.css">
+  <link rel="stylesheet" href="/static/css/base.css">
+  <link rel="stylesheet" href="/static/css/components.css">
+  <link rel="stylesheet" href="/static/css/views.css">
 </head>
 <body>
-  <h1>Reel</h1>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-text">
+          <div class="brand-name">Reel</div>
+          <div class="brand-tag">Local video generation</div>
+        </div>
+      </div>
+      <nav class="nav" id="nav" aria-label="Main"></nav>
+      <div class="sidebar-spacer"></div>
+      <div class="sidebar-foot">
+        <div class="gpu-chip" id="gpu-chip"></div>
+        <div class="seg seg-fill" id="theme-toggle" role="group" aria-label="Theme"></div>
+      </div>
+    </aside>
+    <main class="main" id="view"></main>
+  </div>
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+  <script type="module" src="/static/js/app.js"></script>
 </body>
 </html>
