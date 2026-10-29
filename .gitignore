@@ -1,0 +1,12 @@
+# Reel runtime
+.venv/
+data/
+__pycache__/
+*.pyc
+*.egg-info/
+
+# Editor / OS
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
