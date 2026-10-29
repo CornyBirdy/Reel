@@ -1,0 +1,98 @@
+{
+  "schema": 1,
+  "id": "cogvideox",
+  "name": "CogVideoX",
+  "family": "THUDM",
+  "version": "5B",
+  "status": "placeholder",
+  "summary": "Placeholder recipe. Needs an adapter (adapters/cogvideox.py) before it can be installed.",
+  "license": "CogVideoX License",
+  "license_url": "https://huggingface.co/THUDM/CogVideoX-5b",
+  "tasks": [
+    "text-to-video"
+  ],
+  "adapter": "cogvideox",
+  "download_gb": 21.5,
+  "vram_gb": 12,
+  "vram_note": "Approximate, from the upstream model card.",
+  "python": {
+    "torch_index": "https://download.pytorch.org/whl/cu128",
+    "torch": [
+      "torch>=2.7",
+      "torchvision"
+    ],
+    "packages": [
+      "diffusers>=0.33",
+      "transformers>=4.49",
+      "accelerate>=1.4",
+      "sentencepiece",
+      "protobuf",
+      "safetensors",
+      "huggingface_hub",
+      "imageio",
+      "imageio-ffmpeg",
+      "numpy",
+      "Pillow"
+    ]
+  },
+  "weights": [
+    {
+      "repo_id": "THUDM/CogVideoX-5b",
+      "dest": ".",
+      "allow_patterns": [
+        "model_index.json",
+        "scheduler/*",
+        "tokenizer/*",
+        "text_encoder/*",
+        "transformer/*",
+        "vae/*"
+      ]
+    }
+  ],
+  "limits": {
+    "max_width": 720,
+    "max_height": 480,
+    "size_multiple": 16,
+    "frames": {
+      "step": 8,
+      "offset": 1,
+      "min": 9,
+      "max": 49,
+      "default": 49
+    },
+    "fps": 8,
+    "steps": {
+      "min": 1,
+      "max": 100
+    },
+    "presets": [
+      {
+        "w": 720,
+        "h": 480
+      }
+    ]
+  },
+  "defaults": {
+    "width": 720,
+    "height": 480,
+    "steps": 50,
+    "guidance": 6.0,
+    "negative_prompt": "",
+    "offload": "model",
+    "vae_tiling": true,
+    "quantization": "none"
+  },
+  "memory": {
+    "offload_options": [
+      "none",
+      "model",
+      "sequential"
+    ],
+    "quantization_options": [
+      "none",
+      "int8",
+      "nf4"
+    ],
+    "notes": ""
+  }
+}

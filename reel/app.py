@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import __version__, config, system
+from . import __version__, api_models, api_settings, config, system
 
 
 @asynccontextmanager
@@ -18,6 +18,8 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="Reel", version=__version__, lifespan=lifespan)
+app.include_router(api_models.router)
+app.include_router(api_settings.router)
 
 
 @app.get("/api/health")

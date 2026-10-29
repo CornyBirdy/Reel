@@ -1,0 +1,118 @@
+"""Library endpoints: list models with state, install, cancel, uninstall."""
+
+from __future__ import annotations
+
+import threading
+import time
+
+from fastapi import APIRouter, HTTPException
+
+from . import config, recipes, system
+from .installer import InstallError, installs, installed_info, model_dir
+
+router = APIRouter(prefix="/api/models", tags=["models"])
+
+_disk_cache: dict[str, tuple[float, dict]] = {}
+_disk_lock = threading.Lock()
+DISK_TTL = 4.0
+
+
+def disk_usage(model_id: str) -> dict:
+    now = time.time()
+    with _disk_lock:
+        hit = _disk_cache.get(model_id)
+        if hit and now - hit[0] < DISK_TTL:
+            return hit[1]
+    d = model_dir(model_id)
+    usage = {"total": 0, "weights": 0, "venv": 0, "other": 0}
+    if d.exists():
+        usage["weights"] = system.dir_size(d / "weights")
+        usage["venv"] = system.dir_size(d / "venv")
+        usage["total"] = system.dir_size(d)
+        usage["other"] = usage["total"] - usage["weights"] - usage["venv"]
+    with _disk_lock:
+        _disk_cache[model_id] = (now, usage)
+    return usage
+
+
+def describe(recipe: dict) -> dict:
+    mid = recipe["id"]
+    info = installed_info(mid)
+    job = installs.job(mid)
+    d = model_dir(mid)
+    if installs.is_uninstalling(mid):
+        state = "uninstalling"
+    elif installs.is_installing(mid):
+        state = "installing"
+    elif info:
+        state = "installed"
+    elif d.exists():
+        state = "partial"
+    else:
+        state = "not_installed"
+    blocked = None
+    if recipe["status"] != "ready":
+        blocked = "Placeholder recipe: the adapter has not been written yet."
+    else:
+        other = installs.active_job()
+        if other and other.model_id != mid:
+            blocked = f"Another install is running ({other.model_id})."
+    return {
+        "id": mid, "name": recipe["name"], "family": recipe.get("family"), "version": recipe.get("version"),
+        "status": recipe["status"], "summary": recipe.get("summary"),
+        "license": recipe.get("license"), "license_url": recipe.get("license_url"),
+        "tasks": recipe.get("tasks", []),
+        "download_gb": recipe["download_gb"], "vram_gb": recipe["vram_gb"], "vram_note": recipe.get("vram_note"),
+        "limits": recipe["limits"], "defaults": recipe["defaults"], "memory": recipe.get("memory", {}),
+        "state": state, "installed": state == "installed", "installed_info": info,
+        "disk": disk_usage(mid), "install": job.to_dict() if job else None,
+        "blocked_reason": blocked,
+    }
+
+
+@router.get("")
+def list_models() -> dict:
+    found, problems = recipes.load_all()
+    root = config.models_root()
+    return {
+        "models": [describe(r) for r in found.values()],
+        "recipe_problems": problems,
+        "models_dir": str(root),
+        "disk_free": system.disk_free(root),
+    }
+
+
+def _recipe_or_404(model_id: str) -> dict:
+    r = recipes.get(model_id) if recipes.MODEL_ID_RE.match(model_id) else None
+    if not r:
+        raise HTTPException(404, "Unknown model.")
+    return r
+
+
+@router.post("/{model_id}/install")
+def install(model_id: str) -> dict:
+    _recipe_or_404(model_id)
+    try:
+        installs.start(model_id)
+    except InstallError as exc:
+        raise HTTPException(409, str(exc))
+    return {"ok": True}
+
+
+@router.post("/{model_id}/cancel")
+def cancel(model_id: str) -> dict:
+    _recipe_or_404(model_id)
+    installs.cancel(model_id)
+    return {"ok": True}
+
+
+@router.delete("/{model_id}")
+def uninstall(model_id: str) -> dict:
+    _recipe_or_404(model_id)
+    try:
+        installs.uninstall(model_id)
+    except InstallError as exc:
+        raise HTTPException(409, str(exc))
+    with _disk_lock:
+        _disk_cache.pop(model_id, None)
+    return {"ok": True}

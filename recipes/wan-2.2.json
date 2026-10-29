@@ -1,0 +1,120 @@
+{
+  "schema": 1,
+  "id": "wan-2.2",
+  "name": "Wan 2.2",
+  "family": "Wan-AI",
+  "version": "TI2V-5B",
+  "status": "ready",
+  "summary": "Higher-fidelity 5B model with a high-compression VAE. Best quality in the library; slower than LTX-Video. The 14B A14B variants do not fit 16 GB, so this recipe uses the 5B.",
+  "license": "Apache-2.0",
+  "license_url": "https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B-Diffusers",
+  "tasks": [
+    "text-to-video"
+  ],
+  "adapter": "wan22",
+  "adapter_config": {
+    "pipeline": "WanPipeline"
+  },
+  "download_gb": 34.2,
+  "vram_gb": 12,
+  "vram_note": "Estimate with NF4 transformer + model offload, not measured on a 5070 Ti. Reel shows the real peak per clip in History.",
+  "python": {
+    "torch_index": "https://download.pytorch.org/whl/cu128",
+    "torch": [
+      "torch>=2.7",
+      "torchvision"
+    ],
+    "packages": [
+      "diffusers>=0.35",
+      "transformers>=4.49",
+      "accelerate>=1.4",
+      "bitsandbytes>=0.46",
+      "sentencepiece",
+      "protobuf",
+      "ftfy",
+      "safetensors",
+      "huggingface_hub",
+      "imageio",
+      "imageio-ffmpeg",
+      "numpy",
+      "Pillow"
+    ]
+  },
+  "weights": [
+    {
+      "repo_id": "Wan-AI/Wan2.2-TI2V-5B-Diffusers",
+      "dest": ".",
+      "allow_patterns": [
+        "model_index.json",
+        "scheduler/*",
+        "tokenizer/*",
+        "text_encoder/*",
+        "transformer/*",
+        "vae/*"
+      ]
+    }
+  ],
+  "limits": {
+    "max_width": 1280,
+    "max_height": 704,
+    "max_area_frames": 44154880,
+    "size_multiple": 32,
+    "frames": {
+      "step": 4,
+      "offset": 1,
+      "min": 5,
+      "max": 121,
+      "default": 49
+    },
+    "fps": 24,
+    "steps": {
+      "min": 1,
+      "max": 80
+    },
+    "presets": [
+      {
+        "w": 512,
+        "h": 320
+      },
+      {
+        "w": 640,
+        "h": 384
+      },
+      {
+        "w": 832,
+        "h": 480
+      },
+      {
+        "w": 960,
+        "h": 544
+      },
+      {
+        "w": 1280,
+        "h": 704
+      }
+    ]
+  },
+  "defaults": {
+    "width": 832,
+    "height": 480,
+    "steps": 30,
+    "guidance": 5.0,
+    "negative_prompt": "blurry, low quality, distorted, jittery, watermark, text, static",
+    "offload": "model",
+    "vae_tiling": true,
+    "quantization": "nf4"
+  },
+  "memory": {
+    "offload_options": [
+      "none",
+      "model",
+      "sequential"
+    ],
+    "quantization_options": [
+      "none",
+      "int8",
+      "nf4"
+    ],
+    "notes": "Quantization applies to the 5B transformer (NF4 by default). Width x height x frames is capped (max_area_frames) so 1280x704 is limited to 49 frames."
+  }
+}
