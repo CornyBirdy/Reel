@@ -1,10 +1,20 @@
 name: Release
 
-# Push a tag like v0.1.0 and this builds Reel-v0.1.0.zip and publishes a GitHub Release with the
-# matching CHANGELOG.md section as its notes.
+# Builds Reel-vX.Y.Z.zip and publishes a GitHub Release whose notes are the matching CHANGELOG.md section.
+# Start it either by pushing a tag like v0.1.0, or from the Actions tab: Run workflow > version 0.1.0
+# (the workflow then creates the tag itself).
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, without the v (must have a section in CHANGELOG.md)"
+        required: true
+        default: "0.1.0"
+
+env:
+  TAG: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', inputs.version) || github.ref_name }}
 
 permissions:
   contents: write
@@ -25,16 +35,17 @@ jobs:
       - name: Build the zip
         run: |
           # git archive expands reel/VERSION (export-subst), so the app knows exactly which version it is.
-          git archive --format=zip --prefix=Reel/ -o "Reel-${GITHUB_REF_NAME}.zip" "${GITHUB_REF_NAME}"
-          unzip -l "Reel-${GITHUB_REF_NAME}.zip" | tail -3
+          REF=HEAD; [ "${{ github.event_name }}" = "push" ] && REF="$TAG"
+          git archive --format=zip --prefix=Reel/ -o "Reel-${TAG}.zip" "$REF"
+          unzip -l "Reel-${TAG}.zip" | tail -3
 
       - name: Release notes from CHANGELOG.md
         run: |
-          version="${GITHUB_REF_NAME#v}"
+          version="${TAG#v}"
           awk -v v="$version" '$0 ~ "^## " v " " {found=1; next} /^## / {found=0} found' CHANGELOG.md > notes.md
           if [ ! -s notes.md ]; then echo "No CHANGELOG.md section for $version" >&2; exit 1; fi
           {
-            echo "**To install:** download \`Reel-${GITHUB_REF_NAME}.zip\` below, extract it (for example to \`C:\\Reel\`), and double-click \`start.bat\`."
+            echo "**To install:** download \`Reel-${TAG}.zip\` below, extract it (for example to \`C:\\Reel\`), and double-click \`start.bat\`."
             echo
             cat notes.md
           } > body.md
@@ -43,7 +54,9 @@ jobs:
       - name: Publish the release
         uses: softprops/action-gh-release@v2
         with:
-          name: Reel ${{ github.ref_name }}
+          tag_name: ${{ env.TAG }}
+          target_commitish: ${{ github.sha }}
+          name: Reel ${{ env.TAG }}
           body_path: body.md
-          files: Reel-${{ github.ref_name }}.zip
-          prerelease: ${{ contains(github.ref_name, '-') }}
+          files: Reel-${{ env.TAG }}.zip
+          prerelease: ${{ contains(env.TAG, '-') }}
