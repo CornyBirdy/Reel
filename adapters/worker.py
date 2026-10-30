@@ -21,6 +21,7 @@ stdout (events; those that answer a command carry its "id"):
 
 When stdin closes (Reel exited or crashed) the worker exits, so a model never outlives the app.
 """
+import faulthandler
 import importlib
 import json
 import os
@@ -35,6 +36,7 @@ import sysinfo
 from base import Cancelled, emit
 
 HEARTBEAT_SECONDS = 4
+STUCK_DUMP_SECONDS = 120   # a load that takes this long writes where every thread is to the log (and again every this often)
 GB = 1024**3
 
 
@@ -151,8 +153,24 @@ class Worker:
                 self.stop = True
         finally:
             base.CURRENT_ID = None
+            if cmd.get("cmd") == "load":
+                faulthandler.cancel_dump_traceback_later()      # loading is over, one way or the other
+
+    @staticmethod
+    def start_pytorch() -> None:
+        """Import PyTorch first, alone: on Windows its many DLLs can take minutes to load the first time, and other threads
+        calling into Windows meanwhile are a needless risk. If it is slow, the log shows exactly where it is stuck."""
+        faulthandler.dump_traceback_later(STUCK_DUMP_SECONDS, repeat=True)
+        emit(event="phase", phase="loading", message="Starting PyTorch", id=None)
+        t0 = time.time()
+        try:
+            import torch  # noqa: F401
+            emit(event="log", message=f"PyTorch {torch.__version__} imported in {time.time() - t0:.1f}s", id=None)
+        except BaseException as exc:  # noqa: BLE001 - the adapter raises the same error with a proper report when asked to load
+            emit(event="log", message=f"PyTorch could not be imported ({type(exc).__name__}: {exc})", id=None)
 
     def run(self) -> int:
+        self.start_pytorch()
         threading.Thread(target=self.read_commands, daemon=True, name="stdin").start()
         threading.Thread(target=self.heartbeat, daemon=True, name="heartbeat").start()
         emit(event="ready", id=None, pid=os.getpid())

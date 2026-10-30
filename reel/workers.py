@@ -157,6 +157,9 @@ class WorkerProcess:
         if kind == "memory":
             self.memory = {k: v for k, v in evt.items() if k not in ("event", "id")}
             return
+        if kind == "phase" and not evt.get("id") and evt.get("message"):
+            self.message = evt["message"]           # the process's own start-up (before any command), e.g. importing PyTorch
+            return
         if kind == "loaded":
             self.memory = evt.get("memory") or self.memory
             self.attention = evt.get("attention")
@@ -258,6 +261,7 @@ class WorkerManager:
             "settings": ({k: w.load_req.get(k) for k in ("quantization", "offload", "vae_tiling", "attention_backend")}
                          if w and state != "unloaded" else None),
             "log_name": w.log.name if w else None,
+            "python": str(procs.venv_python(model_dir(w.model_id) / "venv")) if w and state == "loading" else None,
             "busy": self.op,
             "last_crash": self.last_crash,
         }
