@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- If the model process crashes outright (Windows error 3221225477 / 0xC0000005, usually out of memory while loading a large model), Reel now retries once automatically, only for the items that had not finished. If it crashes again, the error explains the likely cause and what to change, and shows the free RAM and pagefile just before loading.
+
 ## 0.1.0 - 2026-10-29
 
 First release.

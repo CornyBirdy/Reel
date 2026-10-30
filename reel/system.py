@@ -90,6 +90,46 @@ def gpu_env() -> dict:
     return {"CUDA_VISIBLE_DEVICES": chosen["uuid"], "CUDA_DEVICE_ORDER": "PCI_BUS_ID"}
 
 
+def memory_info() -> dict | None:
+    """Physical RAM and commit (RAM + pagefile) in bytes: ram_total, ram_free, commit_total, commit_free. None if unknown."""
+    try:
+        if os.name == "nt":
+            import ctypes
+
+            class MEMORYSTATUSEX(ctypes.Structure):
+                _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong),
+                            ("ullTotalPhys", ctypes.c_ulonglong), ("ullAvailPhys", ctypes.c_ulonglong),
+                            ("ullTotalPageFile", ctypes.c_ulonglong), ("ullAvailPageFile", ctypes.c_ulonglong),
+                            ("ullTotalVirtual", ctypes.c_ulonglong), ("ullAvailVirtual", ctypes.c_ulonglong),
+                            ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
+
+            st = MEMORYSTATUSEX()
+            st.dwLength = ctypes.sizeof(st)
+            if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(st)):
+                return None
+            return {"ram_total": st.ullTotalPhys, "ram_free": st.ullAvailPhys,
+                    "commit_total": st.ullTotalPageFile, "commit_free": st.ullAvailPageFile}
+        meminfo = {}
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            key, _, rest = line.partition(":")
+            meminfo[key] = int(rest.split()[0]) * 1024
+        return {"ram_total": meminfo["MemTotal"], "ram_free": meminfo["MemAvailable"],
+                "commit_total": meminfo["CommitLimit"],
+                "commit_free": max(meminfo["CommitLimit"] - meminfo["Committed_AS"], 0)}
+    except (OSError, ValueError, KeyError, AttributeError):
+        return None
+
+
+def memory_summary() -> str:
+    """One line for logs and error messages, e.g. 'RAM 21.4 of 31.9 GB free, 40.2 GB of commit (RAM + pagefile) free'."""
+    m = memory_info()
+    if not m:
+        return ""
+    gb = lambda n: f"{n / 1e9:.1f}"  # noqa: E731
+    return (f"RAM {gb(m['ram_free'])} of {gb(m['ram_total'])} GB free, "
+            f"{gb(m['commit_free'])} GB of commit (RAM + pagefile) free")
+
+
 def dir_size(path: Path) -> int:
     """Total bytes under path (0 if missing). Does not follow symlinks."""
     total = 0
