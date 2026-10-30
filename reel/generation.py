@@ -538,6 +538,7 @@ def load_request(recipe: dict, params: dict) -> dict:
         "weights_dir": str(model_dir(recipe["id"]) / "weights"), "kind": recipe.get("kind", "video"),
         "dtype": recipe.get("dtype", "bfloat16"), "quantization": params["quantization"], "offload": params["offload"],
         "vae_tiling": params["vae_tiling"], "attention_backend": params.get("attention_backend", "native"),
+        "require_cuda": bool(system.gpu_info().get("selected_gpu")),     # an NVIDIA card is here: never fall back to the CPU
     }
 
 

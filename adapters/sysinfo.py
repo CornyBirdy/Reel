@@ -63,3 +63,15 @@ def process_rss_gb() -> float | None:
         return pages * os.sysconf("SC_PAGE_SIZE") / GB
     except Exception:  # noqa: BLE001
         return None
+
+
+def process_line() -> str:
+    """"This process holds 8.2 GB of RAM; 11.0 of 31.9 GB are free." for the log."""
+    parts = []
+    rss = process_rss_gb()
+    if rss is not None:
+        parts.append(f"This process holds {rss:.1f} GB of RAM")
+    mem = host_memory()
+    if mem:
+        parts.append(f"{mem['available_gb']:.1f} of {mem['total_gb']:.1f} GB are free")
+    return "; ".join(parts) + "." if parts else ""

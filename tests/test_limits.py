@@ -119,11 +119,14 @@ class Estimate(unittest.TestCase):
             if r.get("kind") == "upscale":
                 continue
             e = self.est(rid)
-            if rid in self.BORDERLINE:     # the estimate honestly says "risky" for these on 32 GB of RAM; it must not say "fail"
+            if rid in self.TOO_BIG_FOR_32GB:      # says so itself in its summary; the estimate must agree
+                self.assertIn(e["status"], ("risky", "fail"), (rid, e))
+            elif rid in self.BORDERLINE:     # the estimate honestly says "risky" for these on 32 GB of RAM; it must not say "fail"
                 self.assertIn(e["status"], ("ok", "risky"), (rid, e))
             else:
                 self.assertEqual(e["status"], "ok", (rid, e))
 
+    TOO_BIG_FOR_32GB = {"ltx-2"}     # 19B transformer + 27B Gemma text encoder: about 37 GB of RAM even in 4-bit
     BORDERLINE = {"qwen-image-edit", "wan-vace-1.3b"}   # 20B edit model; and VACE parks umT5 (11 GB) in RAM
 
     def test_edit_models_cost_more_than_plain_generation(self):

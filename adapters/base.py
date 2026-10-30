@@ -125,6 +125,32 @@ def open_image(path):
     return ImageOps.exif_transpose(Image.open(path)).convert("RGB")
 
 
+@contextlib.contextmanager
+def trace_component_loading():
+    """Say which part of the pipeline is being read (text encoder, transformer, VAE...) and how long each took, so a long
+    load shows where it is. diffusers loads a pipeline's components one by one through load_sub_model."""
+    try:
+        from diffusers.pipelines import pipeline_utils
+        original = pipeline_utils.load_sub_model
+    except Exception:  # noqa: BLE001 - another diffusers layout: loading just goes untraced
+        yield
+        return
+
+    def traced(*args, **kwargs):
+        name = kwargs.get("name") or (args[-1] if args and isinstance(args[-1], str) else "component")
+        emit(event="phase", phase="loading", message=f"Loading {name}")
+        t = time.time()
+        out = original(*args, **kwargs)
+        emit(event="log", message=f"Loaded {name} in {time.time() - t:.1f}s. " + sysinfo.process_line())
+        return out
+
+    pipeline_utils.load_sub_model = traced
+    try:
+        yield
+    finally:
+        pipeline_utils.load_sub_model = original
+
+
 class BaseAdapter:
     def __init__(self, request: dict):
         self.load_req = request
@@ -136,10 +162,22 @@ class BaseAdapter:
         self.item = 0
         self.seed = 0
         self.output_path = Path(".")
+        emit(event="phase", phase="loading", message="Starting PyTorch")
+        t0 = time.time()
         import torch  # noqa: F401  (fail early if the env is broken)
         self.torch = torch
         forced = os.environ.get("REEL_DEVICE")
+        emit(event="phase", phase="loading", message="Looking for the graphics card")
         self.device = forced or ("cuda" if torch.cuda.is_available() else "cpu")
+        emit(event="log", message=f"PyTorch {torch.__version__} (CUDA build {torch.version.cuda or 'none'}) started in {time.time() - t0:.1f}s; "
+                                  f"device {self.device}" + (f" ({torch.cuda.get_device_name(0)})" if self.device == "cuda" else ""))
+        if request.get("require_cuda") and self.device != "cuda":
+            # Reel saw an NVIDIA card but this environment cannot use it. A 30 GB model on the CPU never finishes: stop here.
+            raise RuntimeError(
+                f"This model's Python environment cannot use your graphics card: it has PyTorch {torch.__version__} with "
+                f"{'CUDA ' + torch.version.cuda if torch.version.cuda else 'no CUDA support (a CPU-only build)'}. "
+                "Running on the CPU would take hours, so Reel stopped. Fix: in the Library press Uninstall, then Install again "
+                "(that reinstalls PyTorch with CUDA 12.8), and update your NVIDIA driver if it is older than 570.")
         self.dtype = getattr(torch, request.get("dtype") or "bfloat16")
         self.total_steps = 0
         self.kind = request.get("kind", "video")
@@ -343,7 +381,8 @@ class BaseAdapter:
             self.torch.cuda.reset_peak_memory_stats()
         self.phase("loading", "Loading model")
         emit(event="log", message="Loading model. " + self.memory_line())
-        self.prepare()
+        with trace_component_loading():
+            self.prepare()
         seconds = round(time.time() - t0, 1)
         emit(event="log", message=f"Model loaded in {seconds}s. " + self.memory_line())
         return seconds

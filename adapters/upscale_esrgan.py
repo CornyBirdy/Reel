@@ -132,7 +132,8 @@ class Adapter:
         fps = int(self.req.get("fps") or round(reader.get_meta_data().get("fps", 24)))
         total = int(self.req.get("frames") or 0)
         self.output_path.parent.mkdir(parents=True, exist_ok=True)
-        writer = imageio.get_writer(str(self.output_path), fps=fps, codec="libx264", quality=8, pixelformat="yuv420p",
+        silent = self.output_path.with_name(self.output_path.stem + ".silent.mp4")     # the sound is put back afterwards
+        writer = imageio.get_writer(str(silent), fps=fps, codec="libx264", quality=8, pixelformat="yuv420p",
                                     macro_block_size=1, ffmpeg_params=["-movflags", "+faststart"])
         n, size = 0, (0, 0)
         try:
@@ -145,7 +146,24 @@ class Adapter:
         finally:
             writer.close()
             reader.close()
+        self.restore_audio(silent)
         return size[0], size[1], n
+
+    def restore_audio(self, silent) -> None:
+        """Clips that have sound (LTX-2) keep it: copy the original's audio track onto the upscaled picture."""
+        import subprocess
+        import imageio_ffmpeg
+        exe = imageio_ffmpeg.get_ffmpeg_exe()
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        has_audio = "Audio:" in subprocess.run([exe, "-i", str(self.input_path)], capture_output=True, text=True, creationflags=flags).stderr
+        if has_audio:
+            done = subprocess.run([exe, "-y", "-i", str(silent), "-i", str(self.input_path), "-map", "0:v", "-map", "1:a:0", "-c", "copy",
+                                   "-movflags", "+faststart", str(self.output_path)], capture_output=True, creationflags=flags)
+            if done.returncode == 0:
+                silent.unlink(missing_ok=True)
+                return
+            emit(event="log", message="Could not copy the sound onto the upscaled clip; it has no sound.")
+        silent.replace(self.output_path)
 
     def phase(self, name: str, message: str = "") -> None:
         emit(event="phase", phase=name, message=message)

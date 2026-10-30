@@ -106,6 +106,30 @@ class WorkerLifecycle(unittest.TestCase):
             self.gen.start("ltx-video", {"prompt": "x", **kw})
         return str(caught.exception)
 
+    def test_the_load_request_says_whether_a_gpu_must_be_used(self):
+        from reel import system
+        recipe = recipes.get("ltx-video")
+        params = {"quantization": "none", "offload": "model", "vae_tiling": True}
+        with mock.patch.object(system, "gpu_info", return_value={"selected_gpu": {"name": "RTX"}}):
+            self.assertTrue(generation.load_request(recipe, params)["require_cuda"])
+        with mock.patch.object(system, "gpu_info", return_value={"selected_gpu": None}):
+            self.assertFalse(generation.load_request(recipe, params)["require_cuda"])
+
+    def test_status_shows_what_a_loading_model_is_doing(self):
+        job = self.gen.start("ltx-video", {"prompt": "slow one", "steps": 5})
+        seen = None
+        end = time.time() + 10
+        while time.time() < end and not seen:
+            st = self.manager.status()
+            if st["state"] == "loading" and st.get("loading_seconds") is not None and st["message"] != "Loading ltx-video":
+                seen = st
+            time.sleep(0.05)
+        self.gen.cancel()
+        while job.status == "running":
+            time.sleep(0.05)
+        self.assertIsNotNone(seen, "the status never showed the model process's own stage")
+        self.assertEqual(seen["message"], "Loading model")
+
     def test_unload_ends_the_process(self):
         self.run_job(steps=2)
         w = self.manager.worker

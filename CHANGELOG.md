@@ -6,6 +6,12 @@
 - **Pause** and **Resume** on a download or install in the Library: the download is frozen and carries on exactly where it stopped (if the connection was dropped meanwhile, Reel reconnects by itself; finished files are kept).
 - **Pause** and **Resume** while generating: the run holds at its next step, the model stays loaded, and the paused time is not counted in the elapsed time or the estimate. Cancel still works while paused. Upscales can be paused too.
 
+**Loading problems**
+- **Verify** on every installed model's Library card: checks that each file is complete and undamaged (sizes against Hugging Face, and each weights file's own header, which also works offline), optionally reads every file against its checksum (**Deep check**), and tests the model's Python environment: PyTorch version, whether it can use your graphics card, whether 4-bit loading works on it, and how long PyTorch takes to start. **Repair** deletes only the damaged files so they download again, and rebuilds the environment if it cannot use the GPU.
+- A model whose Python environment has no usable CUDA PyTorch used to be loaded on the **CPU** (a 34 GB FLUX would crawl for hours with nothing in VRAM). Reel now stops at once and says why. Installing also refuses to finish in that state, and pip can no longer swap the CUDA PyTorch for a CPU build while installing a model's other packages.
+- While a model loads, the Library and Generate show what it is doing (starting PyTorch, finding the graphics card, loading each part, with how long each took), how long it has been loading and a **View log** button, instead of a bare "Loading".
+- Models that make **sound** are supported: a pipeline that returns audio (LTX-2) has it written into the mp4, clips play with sound, and upscaling keeps the audio track. **LTX-2** (19B, video with sound) is in the Library but needs about 37 GB of system RAM, so Reel's own estimate says a 32 GB PC will probably run out. LTX-Video 0.9.5 (the built-in LTX) has no sound.
+
 **New abilities** (all Unverified until run on real hardware)
 - **Edit pictures with a local AI**: new **Edit** mode with **Qwen-Image-Edit 2509** and **FLUX.1 Kontext dev**. Add a picture (drag it in, choose a file, or take one from History), say what to change. Imported Hugging Face repos of these pipelines are accepted too.
 - **Start and end frames for video**: new **Frames** mode. LTX-Video makes a clip that begins on your picture and optionally finishes on another (the same install as text-to-video; an older install needs reinstalling to get diffusers 0.35).

@@ -46,7 +46,7 @@ def memory_report(torch) -> dict:
         out["ram_available_gb"] = round(host["available_gb"], 2)
     if torch is not None:
         try:
-            if torch.cuda.is_available():
+            if torch.cuda.is_available() and torch.cuda.is_initialized():
                 free, total = torch.cuda.mem_get_info()
                 out.update(vram_reserved_gb=torch.cuda.memory_reserved() / GB, vram_allocated_gb=torch.cuda.memory_allocated() / GB,
                            vram_free_gb=free / GB, vram_total_gb=total / GB)
@@ -101,7 +101,8 @@ class Worker:
             emit(event="memory", id=None, **memory_report(self.torch()))
 
     def torch(self):
-        return getattr(self.adapter, "torch", None) if self.adapter else None
+        """PyTorch once it is imported, even while the model is still loading (so the app can show what is held)."""
+        return getattr(self.adapter, "torch", None) if self.adapter else sys.modules.get("torch")
 
     # -- commands ---------------------------------------------------------------------------------------------
     def do_load(self, request: dict) -> None:
