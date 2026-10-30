@@ -98,6 +98,20 @@ Install **Real-ESRGAN x4+** from the Library, then press **Upscale 2Ã—** or **4Ã
 
 Like LM Studio, each installed model has **Settings** (the sliders icon on its Library card, and next to Load in Generate): how it loads (offloading, quantization, tiled VAE, attention backend), and what it generates with by default (resolution, frames, frame rate, steps, guidance). Press **Save** to keep them, **Save and load** to load straight away, **Recommended** to go back to the starting values (which follow your GPU). Load and Generate start from what you saved. In the Library, **Load** and **Unload** put a model in or out of memory without opening Generate.
 
+### Pause
+
+**Pause** on a download or install freezes it where it is, and **Resume** carries on (finished files are kept; if the connection dropped while paused, Reel reconnects). **Pause** while generating holds the run at its next step with the model still loaded; the paused time is not counted. Cancel works while paused.
+
+### Edit pictures, start and end frames, replace a person
+
+Generate has five modes. **Image** and **Video** are text-to-image and text-to-video, as before. The other three need a picture or video from you, which you add by dragging a file in, choosing one, or taking it **From History** (a finished result also has buttons to send itself straight into a mode):
+
+- **Edit**: change a picture with an instruction ("make the jacket red leather"). Models: **Qwen-Image-Edit 2509** (20B, up to three pictures, about 58 GB to download) and **FLUX.1 Kontext dev** (12B, one picture, gated, about 34 GB). Both run in 4-bit on a 16 GB card.
+- **Frames**: make a clip that starts on a picture you choose, and optionally ends on another. **LTX-Video** does this from the same install as text-to-video.
+- **Replace**: swap a person in a video for someone from one to three photos. **Wan2.1 VACE 1.3B** (480p, up to 81 frames, about 16 GB to download). Reel finds the person in every frame with a small segmentation model (Mask2Former), follows them, and the video model repaints them. If several people are in the video, click the one you mean in the first frame; otherwise the largest person is used.
+
+These are **Unverified** until they have been run on real hardware: the sizes, settings and memory figures come from the model cards and the weights' real tensor sizes. Edit models in particular are heavy, and the memory estimate may say Risky on 32 GB of RAM. The width and height can be set to your picture's shape with **Match picture size**.
+
 ### VRAM saving (16 GB target)
 
 Every recipe defaults to the memory-saving options and carries *safe sizes* (resolution, frame count, and for Wan width x height x frames) that suit a typical 16 GB card. They are guidance, not limits: like LM Studio's memory guardrail, Reel lets you choose **any size and length up to what the model's pipeline supports** (the model card's native sizes and maximum length, or any multiple of the model's size rule, including a custom width and height), and the live **memory estimate** (VRAM and system RAM against what your PC has free right now) warns when it is Risky or Likely to fail. It never blocks. Treat it as a rough guide: the real peak is recorded in History after every run. If a bigger-than-safe run crashes or runs out of memory, the error says so and suggests safer settings.
@@ -115,7 +129,7 @@ A model in Reel is two things:
 - a **recipe** (a JSON file): which Hugging Face repos and files to download, which Python packages it needs, its resolution/frame caps for a 16 GB card, and sensible defaults;
 - an **adapter** (a small Python class): how to actually run it. Reel ships dedicated adapters for LTX-Video and Wan 2.2, and a **generic diffusers adapter** that runs any diffusers-format text-to-image or text-to-video repo.
 
-So the set of models is not fixed: it is whatever recipes exist. Built in: SDXL 1.0 and FLUX.1 schnell (image), LTX-Video, Wan 2.2, CogVideoX, HunyuanVideo 1.5 (480p) and HunyuanVideo 1.0 (video), and the Real-ESRGAN x4+ upscaler. Everything else comes from **Library > Add from Hugging Face**.
+So the set of models is not fixed: it is whatever recipes exist. Built in: SDXL 1.0 and FLUX.1 schnell (image), Qwen-Image-Edit and FLUX.1 Kontext (edit), Wan2.1 VACE (replace a person), LTX-Video, Wan 2.2, CogVideoX, HunyuanVideo 1.5 (480p) and HunyuanVideo 1.0 (video), and the Real-ESRGAN x4+ upscaler. Everything else comes from **Library > Add from Hugging Face**.
 
 Only LTX-Video has been run end to end by the Reel author; the other built-ins and anything you import are marked **Unverified** until they have been.
 
@@ -128,7 +142,7 @@ Paste a model link or `org/name`, or search. Reel reads the repo, then shows wha
 - Gated models (FLUX, SD3, ...) work once you accept the terms on the model's page and save an access token in Settings.
 - Imported recipes live in `data/recipes/` and can be removed from the Library again. You can also build one on the command line: `python tools/make_recipe.py org/name --user`.
 
-What it can run: diffusers-format repos for text-to-image and text-to-video. What it cannot (it tells you why in the dialog): single-file checkpoints and GGUF, pipelines that need an input image (img2img, inpainting, image-to-video, editing models), ControlNet, LoRA-only repos, models that need custom code (`trust_remote_code` is never used), and architectures newer than the latest diffusers release.
+What it can run: diffusers-format repos for text-to-image and text-to-video. What it cannot (it tells you why in the dialog): single-file checkpoints and GGUF (for example `Lightricks/LTX-2.3`: one 46 GB file with no diffusers version yet, so it cannot be imported, and it would not fit a 16 GB card anyway), pipelines that need an input image other than the picture-editing ones above (img2img, inpainting, image-to-video), ControlNet, LoRA-only repos, models that need custom code (`trust_remote_code` is never used), and architectures newer than the latest diffusers release.
 
 ## Adding a model by hand
 

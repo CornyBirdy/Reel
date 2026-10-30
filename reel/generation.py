@@ -15,7 +15,7 @@ import uuid
 from collections import deque
 from pathlib import Path
 
-from . import config, diagnostics, history, procs, recipes, system, workers
+from . import config, diagnostics, history, inputs, procs, recipes, system, workers
 from .diagnostics import is_native_crash  # noqa: F401
 from .installer import installed_info, installs, model_dir
 from .workers import child_env, WorkerBusy  # noqa: F401  (child_env stays importable from here)
@@ -126,6 +126,13 @@ def validate(recipe: dict, req: dict) -> dict:
     if attention not in mem.get("attention_options", ["native"]):
         raise ValueError(f"Unsupported attention backend '{attention}' for {recipe['name']}.")
     out["attention_backend"] = attention
+    modes = recipes.modes_of(recipe)
+    mode = req.get("mode") or modes[0]
+    if mode not in modes:
+        raise ValueError(f"{recipe['name']} does not do '{mode}'. It supports: {', '.join(modes)}.")
+    out["mode"] = mode
+    if recipe.get("inputs"):
+        out["inputs"] = inputs.resolve(recipe, req.get("inputs"), mode)   # InputError is a ValueError: it reaches the person as a sentence
     return out
 
 
@@ -340,6 +347,9 @@ class GenerationManager:
         recipe, params = job.recipe, job.params
         gen_req = {k: params[k] for k in ("kind", "prompt", "negative_prompt", "width", "height", "steps", "guidance", "frames", "fps") if k in params}
         gen_req["outputs"] = [{"path": it["path"], "seed": it["seed"]} for it in todo]
+        if recipe.get("inputs"):
+            gen_req["inputs"] = inputs.resolve(recipe, params.get("inputs"), params["mode"], files=True)   # the model process gets file paths
+            gen_req["mode"] = params["mode"]
         events.todo = todo
         with workers.manager.operation("generating", cancel=job.cancel, wait_for=job.cancel):
             job.message = "Starting the model"

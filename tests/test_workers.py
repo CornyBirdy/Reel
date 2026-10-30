@@ -85,6 +85,27 @@ class WorkerLifecycle(unittest.TestCase):
         self.assertEqual(self.pid_of(a), self.pid_of(b))
         self.assertEqual(len(history.list_clips()[0]), 2)
 
+    def test_inputs_reach_the_model_process_as_file_paths(self):
+        from reel import inputs
+        with mock.patch.object(config, "INPUTS_DIR", Path(self.tmp.name) / "inputs"):
+            ref = inputs.store(b"\x89PNG\r\n\x1a\n" + b"\0" * 32)["ref"]
+            job = self.run_job(steps=2, mode="frames", inputs={"start_image": [ref]})
+            self.assertEqual(job.status, "done", (job.error, job.error_detail))
+            written = (Path(config.OUTPUTS_DIR) / job.clips[0]["file"]).read_text()
+            self.assertIn("mode:frames", written)
+            self.assertIn(".png", written)
+            self.assertNotIn(ref, written)                 # the process is given paths, never references
+            self.assertEqual(job.clips[0]["params"]["inputs"], {"start_image": [ref]})   # History keeps the references
+            plain = self.run_job(steps=2)                  # an ordinary request carries no inputs at all
+            self.assertIn("mode:video inputs:{}", (Path(config.OUTPUTS_DIR) / plain.clips[0]["file"]).read_text())
+            bad = self.gen_error(mode="frames")            # a start frame is required in this mode
+            self.assertIn("Start frame", bad)
+
+    def gen_error(self, **kw):
+        with self.assertRaises(GenerationError) as caught:
+            self.gen.start("ltx-video", {"prompt": "x", **kw})
+        return str(caught.exception)
+
     def test_unload_ends_the_process(self):
         self.run_job(steps=2)
         w = self.manager.worker

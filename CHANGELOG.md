@@ -6,6 +6,14 @@
 - **Pause** and **Resume** on a download or install in the Library: the download is frozen and carries on exactly where it stopped (if the connection was dropped meanwhile, Reel reconnects by itself; finished files are kept).
 - **Pause** and **Resume** while generating: the run holds at its next step, the model stays loaded, and the paused time is not counted in the elapsed time or the estimate. Cancel still works while paused. Upscales can be paused too.
 
+**New abilities** (all Unverified until run on real hardware)
+- **Edit pictures with a local AI**: new **Edit** mode with **Qwen-Image-Edit 2509** and **FLUX.1 Kontext dev**. Add a picture (drag it in, choose a file, or take one from History), say what to change. Imported Hugging Face repos of these pipelines are accepted too.
+- **Start and end frames for video**: new **Frames** mode. LTX-Video makes a clip that begins on your picture and optionally finishes on another (the same install as text-to-video; an older install needs reinstalling to get diffusers 0.35).
+- **Replace a person in a video**: new **Replace** mode with **Wan2.1 VACE 1.3B**. Reel finds and follows the person (Mask2Former), you choose them by clicking in the first frame if there are several, and one to three photos say who replaces them.
+- Finished pictures and clips have **Edit picture / Start frame / End frame / Replace a person** buttons that send them into the right mode. **Match picture size** sets the width and height to your input's shape. **Reuse settings** brings the inputs back too.
+- Every model card in the Library links to its **Hugging Face page**.
+- Importing a single-file repo (such as `Lightricks/LTX-2.3`) now says what it is and why it cannot run, instead of only "no model_index.json".
+
 **Generate**
 - Failed runs now say why: the exit code in hex with a plain-English hint (0xC0000005 = native crash, often host-RAM exhaustion or an incompatible CUDA/attention kernel), the last traceback or the last ~30 non-warning lines, and a **View full log** button. A Python warning is never shown as the error. Each model process writes `data/logs/<timestamp>-<model>.log`, which also records the exact pipeline arguments, GPU and free VRAM/RAM before every run.
 - Per-model **safe sizes** (for a typical 16 GB card) are now guidance, not limits: choose any size and length up to what the model's pipeline supports, including a custom width and height. Each model lists its native resolutions and frame counts from its model card.

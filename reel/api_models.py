@@ -39,6 +39,12 @@ def disk_usage(model_id: str) -> dict:
     return usage
 
 
+def hf_url(recipe: dict) -> str | None:
+    """The model's page on Hugging Face: the repo it was imported from, or the first repo its recipe downloads."""
+    repo = recipe.get("hf_repo") or next((w["repo_id"] for w in recipe.get("weights", []) if w.get("repo_id")), None)
+    return f"https://huggingface.co/{repo}" if repo else None
+
+
 def describe(recipe: dict, gpu: dict | None = None) -> dict:
     mid = recipe["id"]
     info = installed_info(mid)
@@ -66,12 +72,14 @@ def describe(recipe: dict, gpu: dict | None = None) -> dict:
         "status": recipe["status"], "summary": recipe.get("summary"),
         "kind": recipe.get("kind", "video"), "source": recipe.get("source", "builtin"),
         "verified": recipe.get("verified", True), "gated": bool(recipe.get("gated")), "hf_repo": recipe.get("hf_repo"),
+        "hf_url": hf_url(recipe),
         "license": recipe.get("license"), "license_url": recipe.get("license_url"),
         "tasks": recipe.get("tasks", []),
         "download_gb": recipe["download_gb"], "vram_gb": recipe["vram_gb"], "vram_note": recipe.get("vram_note"),
         "limits": recipe["limits"], "defaults": recipe["defaults"], "memory": recipe.get("memory", {}),
         "native": recipe.get("native"), "native_label": recipes.native_label(recipe), "unlock": recipes.unlock_limits(recipe),
         "recommended": bool(recipe.get("recommended")), "settings": model_settings.get(mid),
+        "modes": recipes.modes_of(recipe), "inputs": recipe.get("inputs"),
         "state": state, "installed": state == "installed", "installed_info": info,
         "disk": disk_usage(mid), "install": job.to_dict() if job else None,
         "blocked_reason": blocked,

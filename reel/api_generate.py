@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
-from . import diagnostics, estimate, history, recipes, system, workers
+from . import diagnostics, estimate, history, inputs, recipes, system, workers
 from .generation import GenerationError, generation
 
 router = APIRouter(prefix="/api", tags=["generate"])
@@ -28,6 +28,8 @@ class GenerateRequest(BaseModel):
     quantization: str | None = None
     fps: int | None = None
     unlock: bool | None = None       # older History entries send this; sizes are no longer gated, so it is ignored
+    inputs: dict | None = None       # {name: [reference, ...]} for models that take pictures or a video (see reel/inputs.py)
+    mode: str | None = None          # image | video | edit | frames | replace (a model's first mode when left out)
     attention_backend: str | None = None
 
 
@@ -110,6 +112,18 @@ def cancel() -> dict:
     return {"ok": True}
 
 
+@router.post("/inputs")
+async def upload_input(request: Request) -> dict:
+    """A picture or video to use as input: the file itself is the request body. Returns its reference for /api/generate."""
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > inputs.MAX_VIDEO_BYTES:
+        raise HTTPException(413, f"That file is larger than the {inputs.MAX_VIDEO_BYTES // 1024 // 1024} MB limit.")
+    try:
+        return inputs.store(await request.body())
+    except inputs.InputError as exc:
+        raise HTTPException(400, str(exc))
+
+
 @router.get("/logs/{name}")
 def get_log(name: str) -> PlainTextResponse:
     """Full output of a model process (what 'View full log' shows)."""
@@ -117,6 +131,16 @@ def get_log(name: str) -> PlainTextResponse:
     if text is None:
         raise HTTPException(404, "That log is gone (Reel keeps the most recent ones).")
     return PlainTextResponse(text, headers={"Cache-Control": "no-store"})
+
+
+@router.get("/inputs/describe")
+def describe_input(ref: str) -> dict:
+    """What an input reference points to (its kind and where to show it), so a saved request can be put back in the form."""
+    try:
+        d = inputs.describe(ref)
+    except inputs.InputError as exc:
+        raise HTTPException(404, str(exc))
+    return {"ref": d["ref"], "kind": d["kind"], "url": d["url"]}
 
 
 @router.get("/history")

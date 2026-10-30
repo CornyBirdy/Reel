@@ -84,6 +84,8 @@ def estimate(recipe: dict, params: dict, gpu: dict | None = None, ram: dict | No
         vae = comp.get("vae", 0.0)
         hidden = est.get("hidden", GENERIC["hidden"])
         act = _tokens(est, w, h, frames, kind) * hidden * 2 * LIVE_TENSORS / 1e9
+        if est.get("doubles_tokens"):                          # image editing: the input picture(s) are attended to as well
+            act *= 2
         vae_mb = est.get("vae_mb_per_mpx_frame", GENERIC["vae_mb_per_mpx_frame"])
         vae_act = mpx_frames * vae_mb / 1000
         if tiling:

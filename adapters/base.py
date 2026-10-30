@@ -108,6 +108,23 @@ def online_for_kernels():
             mod.HF_HUB_OFFLINE = value
 
 
+def fit_image(img, width: int, height: int):
+    """Center-crop to the target aspect ratio, then resize, so an input is never stretched."""
+    from PIL import Image
+    src_w, src_h = img.size
+    scale = max(width / src_w, height / src_h)
+    new_w, new_h = max(round(src_w * scale), width), max(round(src_h * scale), height)
+    img = img.resize((new_w, new_h), Image.LANCZOS)
+    left, top = (new_w - width) // 2, (new_h - height) // 2
+    return img.crop((left, top, left + width, top + height))
+
+
+def open_image(path):
+    """An input picture as RGB, upright according to its EXIF orientation."""
+    from PIL import Image, ImageOps
+    return ImageOps.exif_transpose(Image.open(path)).convert("RGB")
+
+
 class BaseAdapter:
     def __init__(self, request: dict):
         self.load_req = request

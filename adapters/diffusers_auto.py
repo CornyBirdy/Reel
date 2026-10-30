@@ -12,7 +12,7 @@ large text encoders (T5, Llama, ...). Loading never uses trust_remote_code.
 import inspect
 import json
 
-from base import BaseAdapter, emit
+from base import BaseAdapter, emit, open_image
 
 GB = 1e9
 
@@ -62,7 +62,12 @@ class Adapter(BaseAdapter):
         call = {"prompt": r["prompt"], "width": int(r["width"]), "height": int(r["height"]),
                 "num_inference_steps": self.total_steps, "generator": self.generator()}
         guidance = float(r["guidance"])
-        if accepts("guidance_scale"):
+        guidance_arg = self.cfg.get("guidance_arg")          # e.g. Qwen-Image-Edit: true_cfg_scale, not guidance_scale
+        if guidance_arg and accepts(guidance_arg):
+            call[guidance_arg] = guidance
+            if guidance_arg == "true_cfg_scale" and not r.get("negative_prompt") and accepts("negative_prompt"):
+                call["negative_prompt"] = " "                # the pipeline only uses true CFG when it has a negative prompt
+        elif accepts("guidance_scale"):
             call["guidance_scale"] = guidance
         elif accepts("true_cfg_scale"):
             call["true_cfg_scale"] = guidance
@@ -74,6 +79,10 @@ class Adapter(BaseAdapter):
             call["negative_prompt"] = r["negative_prompt"]
         if self.kind == "video" and accepts("num_frames"):
             call["num_frames"] = int(r["frames"])
+        images = (r.get("inputs") or {}).get("images")      # an image-editing model: the picture(s) to change
+        if images and accepts("image"):
+            pics = [open_image(p) for p in images]
+            call["image"] = pics if self.cfg.get("multi_image") else pics[0]
         if accepts("callback_on_step_end"):
             call["callback_on_step_end"] = self.step_callback
         else:                          # e.g. HunyuanVideo 1.5: count the scheduler's steps instead

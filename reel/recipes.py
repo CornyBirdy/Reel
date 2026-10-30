@@ -16,6 +16,10 @@ from .config import ADAPTERS_DIR, RECIPES_DIR, USER_RECIPES_DIR
 MODEL_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 STATUSES = {"ready", "placeholder"}
 KINDS = {"image", "video", "upscale"}
+# What a model can be used for, and the kind of thing each produces. A recipe lists the modes it supports ("modes"); without
+# the list it is the plain mode of its kind. A mode other than the plain ones needs inputs (a recipe's "inputs" block).
+MODE_KIND = {"image": "image", "edit": "image", "video": "video", "frames": "video", "replace": "video"}
+INPUT_TYPES = ("image", "video", "point")
 
 
 def validate_base(r: dict) -> list[str]:
@@ -55,6 +59,40 @@ def validate(r: dict) -> list[str]:
             errs.append(f"limits.{key} missing")
     errs += consistency_errors(r, kind)
     errs += native_errors(r, kind)
+    errs += task_errors(r, kind)
+    return errs
+
+
+def modes_of(r: dict) -> list[str]:
+    """The modes a recipe supports (its plain one when it lists none)."""
+    kind = r.get("kind", "video")
+    return list(r.get("modes") or ([kind] if kind in MODE_KIND else []))
+
+
+def task_errors(r: dict, kind: str) -> list[str]:
+    """A recipe's modes must fit what it produces, and each mode beyond the plain one needs inputs of its own."""
+    errs: list[str] = []
+    spec = r.get("inputs") or {}
+    if kind == "upscale":
+        return errs
+    modes = modes_of(r)
+    for mode in modes:
+        if mode not in MODE_KIND:
+            errs.append(f"modes: '{mode}' is not one of {sorted(MODE_KIND)}")
+        elif MODE_KIND[mode] != kind:
+            errs.append(f"mode {mode} produces a {MODE_KIND[mode]}, but the recipe's kind is {kind}")
+    for name, rule in spec.items():
+        if rule.get("type") not in INPUT_TYPES:
+            errs.append(f"inputs.{name}.type must be one of {list(INPUT_TYPES)}")
+        if not isinstance(rule.get("max", 1), int) or rule.get("max", 1) < 1:
+            errs.append(f"inputs.{name}.max must be a whole number of at least 1")
+        for m in rule.get("modes", []):
+            if m not in modes:
+                errs.append(f"inputs.{name} is for mode {m}, which the recipe does not list")
+    for mode in modes:
+        if mode in ("edit", "frames", "replace") and not any(
+                rule.get("required") and mode in (rule.get("modes") or modes) for rule in spec.values()):
+            errs.append(f"mode {mode} needs at least one required input")
     return errs
 
 
