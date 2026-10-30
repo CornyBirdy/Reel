@@ -31,6 +31,8 @@ class FakeWebview:
         self._start_raises, self._fire_shown = start_raises, fire_shown
         self.window = mock.Mock()
         self.window.events.shown = Events()
+        self.window.events.restored = Events()
+        self.window.events.maximized = Events()
 
     def create_window(self, title, url=None, width=800, height=600, min_size=(200, 100), background_color="#fff",
                       text_select=False, zoomable=False):
@@ -135,6 +137,57 @@ class Icon(unittest.TestCase):
 
     def test_non_windows_does_nothing(self):
         window._set_window_icon(mock.Mock())   # must not raise
+
+
+class Restore(unittest.TestCase):
+    """Coming back from minimised left the window blank until it was minimised and restored again."""
+
+    def setUp(self):
+        window._last_repaint[0] = 0.0
+
+    def test_restoring_the_window_triggers_a_repaint(self):
+        fake = FakeWebview()
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(window, "_repaint_soon") as soon:
+            window.run_native(URL, webview=fake, log=mock.Mock(), storage=Path(tmp) / "w")
+            for ev in (fake.window.events.restored, fake.window.events.maximized):
+                self.assertEqual(len(ev.handlers), 1)
+                ev.handlers[0]()
+        self.assertEqual(soon.call_count, 2)
+
+    def test_repaint_nudges_the_webview2_control_and_asks_the_page_to_relayout(self):
+        win = mock.Mock()
+        window._repaint(win)
+        controller = win.native.browser.web_view.CoreWebView2Controller
+        controller.NotifyParentWindowPositionChanged.assert_called_once()
+        self.assertIs(controller.IsVisible, True)             # hidden, then shown again
+        win.evaluate_js.assert_called_once()
+        self.assertIn("resize", win.evaluate_js.call_args.args[0])
+
+    def test_a_failing_route_does_not_stop_the_others(self):
+        win = mock.Mock()
+        controller = win.native.browser.web_view.CoreWebView2Controller
+        controller.NotifyParentWindowPositionChanged.side_effect = RuntimeError("boom")
+        window._repaint(win)
+        win.native.Refresh.assert_called()
+        win.evaluate_js.assert_called_once()
+
+    def test_a_window_without_a_native_form_is_left_alone(self):
+        win = mock.Mock(spec=["evaluate_js"])
+        window._repaint(win)                                  # must not raise
+        win.evaluate_js.assert_called_once()
+
+    def test_repaint_repeats_a_few_times_and_ignores_a_burst_of_events(self):
+        win = mock.Mock()
+        with mock.patch.object(window.threading, "Timer") as timer:
+            window._repaint_soon(win)
+            window._repaint_soon(win)                        # restored + watcher firing together
+        self.assertEqual(timer.call_count, len(window.REPAINT_DELAYS))
+        self.assertEqual([c.args[0] for c in timer.call_args_list], list(window.REPAINT_DELAYS))
+
+    def test_the_restore_watcher_only_runs_on_windows(self):
+        with mock.patch.object(window.threading, "Thread") as thread:
+            window._watch_restore(mock.Mock())
+        thread.assert_not_called()
 
 
 class Status(unittest.TestCase):
