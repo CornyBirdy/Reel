@@ -1,5 +1,5 @@
 // The loaded model: its state chip, what it holds, and the Load / Unload buttons. Used by Library and Generate.
-import { h, icon, statusBadge, toast, viewLog } from "./ui.js";
+import { fmtDuration, h, icon, statusBadge, toast, viewLog } from "./ui.js";
 import { api } from "./api.js";
 
 export const WORKER_STATE = {
@@ -29,6 +29,17 @@ export function holdsText(worker) {
   const parts = [v != null ? `VRAM ${gb(v)}` : null, r != null ? `RAM ${gb(r)}` : null].filter(Boolean);
   return parts.length ? `Holds ${parts.join(" · ")}` : null;
 }
+
+/** While a model loads: what the model process is doing right now, for how long, and a way to read its log. */
+export function loadingNote(worker) {
+  if (!worker || worker.state !== "loading") return null;
+  const s = worker.loading_seconds;
+  return h("div", { class: "stack-8" },
+    h("div", { class: "field-hint" }, `${worker.message || "Loading"}${s != null ? ` · ${fmtDuration(s)}` : ""}`),
+    s != null && s > 300 ? h("div", { class: "field-hint" }, "Still loading. A big model takes several minutes the first time (it reads tens of GB from disk). The log says which step it is on, and Cancel load stops it.") : null,
+    worker.log_name ? h("div", { class: "row-8" }, h("button", { class: "btn btn-ghost", type: "button", onclick: () => viewLog(worker.log_name) }, icon("log"), "View log")) : null);
+}
+export const loadingKey = (w) => (w && w.state === "loading" ? `${w.message}|${Math.floor(w.loading_seconds || 0)}` : "");
 
 export const holdsTitle = "VRAM is what PyTorch has reserved in the model process (Task Manager adds about 0.5 GB for the CUDA context). RAM is the process's working set.";
 

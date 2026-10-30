@@ -1,6 +1,6 @@
 import { h, icon, clear, toast, fmtDuration, fmtDate, progressBar, statusBadge, viewLog } from "../ui.js";
 import { api } from "../api.js";
-import { KEEPS_MEMORY, crashNotice, holdsText, holdsTitle, idleText, loadButton, stateChip, stateOf, watchWorker } from "../worker.js";
+import { KEEPS_MEMORY, crashNotice, holdsText, holdsTitle, idleText, loadButton, loadingNote, stateChip, stateOf, watchWorker } from "../worker.js";
 import { ATTN_LABEL, OFFLOAD_LABEL, QUANT_LABEL, describeCeiling, dims, resolutionChoices, snapFrames } from "../limits.js";
 import { fetchEstimate, renderEstimate } from "../estimate.js";
 import { openModelSettings } from "../model_settings.js";
@@ -31,6 +31,12 @@ const PLACEHOLDER = {
   replace: "A woman with short red hair in a green raincoat walks along the same street…",
 };
 const supports = (m, mode) => (m.modes || [m.kind]).includes(mode);
+// Clips from models that make sound (LTX-2) play with it. A browser may refuse sound before the page has been clicked: then
+// it plays muted and the player's own volume control unmutes it.
+function playWithSound(video) {
+  video.addEventListener("loadeddata", () => { video.play().catch(() => { video.muted = true; video.play().catch(() => {}); }); }, { once: true });
+  return video;
+}
 const isImageUrl = (url) => /\.png$/i.test(url);
 // Element.append turns null into the text "null"; optional children are dropped here instead.
 const put = (el, ...kids) => el.append(...kids.filter((k) => k !== null && k !== undefined && k !== false));
@@ -230,6 +236,7 @@ export async function mount(root) {
       }
     }
     for (const n of notes) f.worker.append(h("div", { class: "field-hint" }, n));
+    if (st === "loading") f.worker.append(loadingNote(w));
     // A crash of the request that is on screen is already explained in the output panel.
     const explained = activeJob && w && w.last_crash && activeJob.id === w.last_crash.request;
     const crash = explained ? null : crashNotice(w, () => watcher && watcher.poke());
@@ -679,7 +686,7 @@ export async function mount(root) {
     const upscaled = !!p.upscale_scale;
     const media = image
       ? h("img", { class: "player", src: clip.url, alt: clip.prompt })
-      : h("video", { class: "player", controls: true, loop: true, muted: true, autoplay: true, playsinline: true, src: clip.url });
+      : playWithSound(h("video", { class: "player", controls: true, loop: true, autoplay: true, playsinline: true, src: clip.url }));
     put(viewerEl, media,
       !activeRunning() && activeJob && activeJob.clips && activeJob.clips.length > 1 ? batchStrip(activeJob, true) : null,
       h("p", {}, clip.prompt),

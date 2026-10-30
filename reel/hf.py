@@ -161,6 +161,9 @@ VIDEO_FAMILIES = {
     "LTXPipeline": dict(label="LTX-Video", mult=32, w=704, h=480, max_w=1216, max_h=704, frames=(8, 1, 9, 161, 97), fps=24, steps=40, guidance=3.0,
                         area=None, presets=[(512, 320), (704, 480), (768, 512), (960, 544), (1216, 704)],
                         negative="worst quality, inconsistent motion, blurry, jittery, distorted"),
+    "LTX2Pipeline": dict(label="LTX-2 (video with sound)", mult=32, w=768, h=512, max_w=1280, max_h=768, frames=(8, 1, 9, 121, 121), fps=24, steps=30,
+                         guidance=3.0, area=None, presets=[(512, 320), (768, 512), (960, 544), (1280, 768)],
+                         negative="worst quality, inconsistent motion, blurry, jittery, distorted"),
     "CogVideoXPipeline": dict(label="CogVideoX", mult=16, w=720, h=480, max_w=720, max_h=480, frames=(8, 1, 9, 49, 49), fps=8, steps=50, guidance=6.0,
                               area=None, presets=[(720, 480)], negative=""),
     "HunyuanVideoPipeline": dict(label="HunyuanVideo", mult=16, w=640, h=352, max_w=848, max_h=480, frames=(4, 1, 9, 61, 33), fps=15, steps=30, guidance=6.0,
@@ -176,7 +179,7 @@ VIDEO_FAMILIES = {
 # (pixels per latent token per side, frames per latent frame, denoiser hidden width) from each architecture's configs;
 # lets the memory estimate in Generate model an import. Unknown families use the estimator's generic values.
 TOKEN_HINTS = {
-    "WanPipeline": (32, 4, 3072), "LTXPipeline": (32, 8, 2048), "CogVideoXPipeline": (16, 4, 3072),
+    "WanPipeline": (32, 4, 3072), "LTXPipeline": (32, 8, 2048), "LTX2Pipeline": (32, 8, 4096), "CogVideoXPipeline": (16, 4, 3072),
     "HunyuanVideoPipeline": (16, 4, 3072), "HunyuanVideo15Pipeline": (16, 4, 2048),
     "QwenImageEditPipeline": (16, 0, 3072), "QwenImageEditPlusPipeline": (16, 0, 3072), "FluxKontextPipeline": (16, 0, 3072),
     "StableDiffusionXLPipeline": (8, 0, 640), "FluxPipeline": (16, 0, 3072), "StableDiffusion3Pipeline": (16, 0, 1536),

@@ -70,6 +70,7 @@ class WorkerProcess:
         self.load_seconds: float | None = None
         self.loaded_at: float | None = None
         self.last_used = time.time()
+        self.load_started: float | None = None
         self.exit_code: int | None = None
         self.exit_tags: list[str] = []
         self.expected_exit = False
@@ -252,6 +253,7 @@ class WorkerManager:
             "idle_seconds": (time.time() - w.last_used) if w and state == "ready" else None,
             "idle_unload_minutes": self.idle_minutes(),
             "load_seconds": w.load_seconds if w and state != "unloaded" else None,
+            "loading_seconds": (time.time() - w.load_started) if w and state == "loading" and w.load_started else None,
             "attention": w.attention if w and state != "unloaded" else None,
             "settings": ({k: w.load_req.get(k) for k in ("quantization", "offload", "vae_tiling", "attention_backend")}
                          if w and state != "unloaded" else None),
@@ -341,7 +343,15 @@ class WorkerManager:
                     "failure": {"message": f"Reel could not start the model process: {exc}", "detail": "", "hint": "", "kind": "error"}}
         w.state, w.message = "loading", f"Loading {recipe['name']}"
         p = w.send("load", load_req)
-        end = self._drain(w, p, on_event, cancel, cancel_kills=True)
+        w.load_started = time.time()
+
+        def track(evt: dict) -> None:           # what the model process is doing, for the status chip while it loads
+            if evt.get("event") == "phase" and evt.get("message"):
+                w.message = evt["message"]
+            if on_event:
+                on_event(evt)
+
+        end = self._drain(w, p, track, cancel, cancel_kills=True)
         w.forget(p)
         if end["event"] == "loaded":
             w.state, w.message, w.load_seconds, w.loaded_at, w.last_used = "ready", "Ready", end.get("seconds"), time.time(), time.time()

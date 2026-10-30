@@ -79,6 +79,8 @@ class Adapter(BaseAdapter):
             call["negative_prompt"] = r["negative_prompt"]
         if self.kind == "video" and accepts("num_frames"):
             call["num_frames"] = int(r["frames"])
+        if self.kind == "video" and accepts("frame_rate") and r.get("fps"):
+            call["frame_rate"] = float(r["fps"])          # LTX models condition on it (and LTX-2 times its sound by it)
         images = (r.get("inputs") or {}).get("images")      # an image-editing model: the picture(s) to change
         if images and accepts("image"):
             pics = [open_image(p) for p in images]
@@ -123,4 +125,21 @@ class Adapter(BaseAdapter):
         out = self.pipe(**call)
         if self.kind == "image":
             return list(out.images)
+        # A model that makes sound with its video (LTX-2) returns it beside the frames; export() then writes both into the mp4.
+        audio = getattr(out, "audio", None)
+        self.audio = audio[0] if audio is not None else None
         return out.frames[0]
+
+    audio = None
+
+    def export(self, frames) -> None:
+        if self.kind == "video" and self.audio is not None:
+            from diffusers.utils import encode_video          # needs PyAV (the "av" package), which the recipe installs
+            rate = getattr(getattr(getattr(self.pipe, "vocoder", None), "config", None), "output_sampling_rate", None) or 24000
+            self.output_path.parent.mkdir(parents=True, exist_ok=True)
+            encode_video(list(frames), fps=int(self.req["fps"]), output_path=str(self.output_path),
+                         audio=self.audio.float().cpu(), audio_sample_rate=int(rate))
+            emit(event="log", message=f"Wrote the clip with sound ({rate} Hz).")
+            self.audio = None
+            return
+        super().export(frames)

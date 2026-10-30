@@ -288,8 +288,15 @@ class InstallManager:
                 self._run_cmd(job, log, cmd, env=pip_env)
 
             def do_packages():
+                # Keep the CUDA PyTorch that was just installed: without this a package that wants torch could pull the
+                # CPU-only build from PyPI, and the model would then silently run on the CPU.
+                found: list[str] = []
+                self._run_cmd(job, log, [str(py), "-c", "import importlib.metadata as m; print('TORCH', m.version('torch'))"], capture=found)
+                pins = [l.split(" ", 1)[1].strip() for l in found if l.startswith("TORCH ")]
+                constraints = tmp / "constraints.txt"
+                constraints.write_text("".join(f"torch=={v}\n" for v in pins), encoding="utf-8")
                 cmd = [str(py), "-m", "pip", "install", "--no-cache-dir", "--progress-bar", "off",
-                       "--disable-pip-version-check", *pyc["packages"]]
+                       "--disable-pip-version-check", *(["-c", str(constraints)] if pins else []), *pyc["packages"]]
                 self._run_cmd(job, log, cmd, env=pip_env)
                 # Fail now, not after a 30 GB download, if this diffusers has no such pipeline class.
                 cls = (recipe.get("adapter_config") or {}).get("pipeline")
@@ -326,6 +333,16 @@ class InstallManager:
                         break
                 if not verify_result.get("ok"):
                     raise InstallError(verify_result.get("error") or "Environment check failed.")
+                gpu = system.gpu_info().get("selected_gpu")
+                if gpu and verify_result.get("cuda_available") is False:
+                    raise InstallError(
+                        f"This environment's PyTorch ({verify_result.get('torch')}, CUDA build {verify_result.get('cuda_build') or 'none'}) "
+                        f"cannot use your {gpu['name']}, so the model would run on the CPU and never finish. Update the NVIDIA driver "
+                        "(570 or newer) and press Install again; if it still fails, the log above shows which PyTorch pip installed.")
+                if gpu and verify_result.get("kernels_ok") is False:
+                    raise InstallError(
+                        f"This PyTorch ({verify_result.get('torch')}) has no kernels for your {gpu['name']} ({verify_result.get('capability')}); "
+                        "RTX 50-series cards need a CUDA 12.8 build. Press Install again after updating the NVIDIA driver.")
                 job.warnings.extend(verify_result.get("warnings", []))
 
             stage("env", "Creating isolated environment", do_env)

@@ -112,6 +112,14 @@ Generate has five modes. **Image** and **Video** are text-to-image and text-to-v
 
 These are **Unverified** until they have been run on real hardware: the sizes, settings and memory figures come from the model cards and the weights' real tensor sizes. Edit models in particular are heavy, and the memory estimate may say Risky on 32 GB of RAM. The width and height can be set to your picture's shape with **Match picture size**.
 
+### Verify and Repair
+
+If a model will not load or gives odd results, press **Verify** on its Library card. It checks that every file is complete and undamaged, and tests the model's Python environment (can PyTorch use your graphics card, does 4-bit loading work, how long does PyTorch take to start). **Deep check** also reads every file against its checksum, which is slow for a big model. **Repair** deletes only what is damaged so it downloads again, and rebuilds the environment if it cannot use the GPU. While a model loads, the Library shows which step it is on and how long it has taken; **View log** shows the details (data/logs).
+
+### Sound
+
+LTX-2 makes sound with its video. Reel writes it into the mp4, plays it in Generate, and keeps it when you upscale. LTX-2 is very large (about 95 GB to download, about 37 GB of system RAM), so it suits PCs with 64 GB of RAM; the memory estimate in Generate says whether yours can run it. LTX-Video 0.9.5 has no sound.
+
 ### VRAM saving (16 GB target)
 
 Every recipe defaults to the memory-saving options and carries *safe sizes* (resolution, frame count, and for Wan width x height x frames) that suit a typical 16 GB card. They are guidance, not limits: like LM Studio's memory guardrail, Reel lets you choose **any size and length up to what the model's pipeline supports** (the model card's native sizes and maximum length, or any multiple of the model's size rule, including a custom width and height), and the live **memory estimate** (VRAM and system RAM against what your PC has free right now) warns when it is Risky or Likely to fail. It never blocks. Treat it as a rough guide: the real peak is recorded in History after every run. If a bigger-than-safe run crashes or runs out of memory, the error says so and suggests safer settings.

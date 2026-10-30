@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import json
+import shutil
 import threading
 import time
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from . import config, fit, generation, hf, model_settings, recipes, system, workers
+from . import config, fit, generation, hf, model_settings, recipes, system, verify, workers
 from .installer import InstallError, installs, installed_info, model_dir
 
 router = APIRouter(prefix="/api/models", tags=["models"])
@@ -194,6 +196,74 @@ def resume(model_id: str) -> dict:
     _recipe_or_404(model_id)
     try:
         installs.resume(model_id)
+    except InstallError as exc:
+        raise HTTPException(409, str(exc))
+    return {"ok": True}
+
+
+class VerifyBody(BaseModel):
+    deep: bool = False            # also read every file and compare its checksum (slow for big models)
+    environment: bool = True      # also test the model's Python environment and GPU
+
+
+@router.post("/{model_id}/verify")
+def start_verify(model_id: str, body: VerifyBody | None = None) -> dict:
+    """Check an installed model's files (and its environment) in the background; poll GET for the result."""
+    recipe = _recipe_or_404(model_id)
+    if recipe["status"] != "ready" or not model_dir(model_id).exists():
+        raise HTTPException(409, "This model is not installed.")
+    if installs.is_installing(model_id) or installs.is_uninstalling(model_id):
+        raise HTTPException(409, "Wait for the install to finish first.")
+    body = body or VerifyBody()
+    return verify.start(recipe, deep=body.deep, environment=body.environment).to_dict()
+
+
+@router.get("/{model_id}/verify")
+def get_verify(model_id: str) -> dict:
+    _recipe_or_404(model_id)
+    job = verify.get(model_id)
+    return {"verify": job.to_dict() if job else None}
+
+
+@router.post("/{model_id}/verify/cancel")
+def cancel_verify(model_id: str) -> dict:
+    _recipe_or_404(model_id)
+    verify.cancel(model_id)
+    return {"ok": True}
+
+
+@router.post("/{model_id}/repair")
+def repair(model_id: str) -> dict:
+    """Fix what the last verification found: delete damaged files so they download again, and rebuild the Python
+    environment if it cannot use the GPU. Then run the installer, which skips everything that is fine."""
+    _recipe_or_404(model_id)
+    job = verify.get(model_id)
+    if not job or job.state != "done":
+        raise HTTPException(409, "Verify the model first, then repair what it finds.")
+    if not job.problems:
+        raise HTTPException(409, "Verification found nothing to repair.")
+    _release_worker(model_id)
+    mdir = model_dir(model_id)
+    weights = mdir / "weights"
+    stages = {}
+    try:
+        stages = json.loads((mdir / "stages.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        pass
+    for rel in verify.damaged_paths(job):
+        target = (weights / rel).resolve()
+        if weights.resolve() in target.parents and target.is_file():
+            target.unlink()
+    if verify.damaged_paths(job) or not job.online:
+        stages["weights"] = False
+    if verify.needs_new_environment(job):
+        shutil.rmtree(mdir / "venv", ignore_errors=True)
+        for name in ("env", "torch", "packages", "verify"):
+            stages[name] = False
+    (mdir / "stages.json").write_text(json.dumps(stages), encoding="utf-8")
+    (mdir / "install.json").unlink(missing_ok=True)
+    try:
+        installs.start(model_id)
     except InstallError as exc:
         raise HTTPException(409, str(exc))
     return {"ok": True}
