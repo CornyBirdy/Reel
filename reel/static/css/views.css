@@ -146,3 +146,8 @@ button.batch-thumb:hover { background: var(--hover-bg); }
 .est-row .badge { justify-self: start; }
 .est-name { flex: 1; min-width: 0; }
 .est-nums { color: var(--ink-muted); font-variant-numeric: tabular-nums; }
+
+/* -- Model settings dialog ------------------------------------------------------------- */
+.ms-body { max-height: 62vh; overflow-y: auto; padding: var(--sp-4) var(--sp-4) var(--sp-4) 0; margin-top: var(--sp-12); }
+.ms-actions { align-items: center; }
+.progress-panel { padding: var(--sp-12); border: var(--border-w) solid var(--hairline); border-radius: var(--radius-sm); background: var(--surface-sunken); }

@@ -1,6 +1,7 @@
 import { h, icon, clear, toast, confirmDialog, fmtBytes, fmtDuration, progressBar, statusBadge, kindBadge } from "../ui.js";
 import { api } from "../api.js";
 import { openAddFromHF } from "./hf_dialog.js";
+import { openModelSettings } from "../model_settings.js";
 import { KEEPS_MEMORY, crashNotice, holdsText, holdsTitle, idleText, loadButton, stateChip, stateOf } from "../worker.js";
 
 const FILTER_KEY = "reel.library.filter";
@@ -80,7 +81,7 @@ function ModelCard(initial, ctx) {
   function renderActions(m) {
     const job = m.install;
     const w = ctx.worker;
-    const key = [m.state, m.status, !!m.blocked_reason, job && job.status, m.source, m.fit.level, stateOf(w, m.id), w && w.state, w && w.model_id].join("|");
+    const key = [m.state, m.status, !!m.blocked_reason, job && job.status, m.source, m.fit.level, stateOf(w, m.id), w && w.state, w && w.model_id, JSON.stringify(m.settings)].join("|");
     if (key === lastActionsKey) return;
     lastActionsKey = key;
     clear(actions);
@@ -126,6 +127,8 @@ function ModelCard(initial, ctx) {
             ? h("a", { class: "btn btn-primary", href: "#/generate", title: "Press Upscale under any image or clip" }, icon("upscale"), "Open Generate to upscale")
             : h("a", { class: "btn btn-primary", href: `#/generate?model=${encodeURIComponent(m.id)}` }, icon("generate"), "Generate"),
           m.kind === "upscale" ? null : loadButton(m, ctx.worker, { onDone: ctx.refresh }),
+          m.kind === "upscale" ? null : h("button", { class: "btn btn-icon", type: "button", title: "Model settings: how it loads and what it generates with by default",
+            "aria-label": `${m.name} settings`, onclick: () => openModelSettings(m, { onSaved: ctx.refresh }) }, icon("settings")),
           ...[remove("Uninstall", "This deletes only this model's folder: its environment and weights."), refresh()].filter(Boolean));
         break;
       case "partial":
@@ -212,10 +215,16 @@ function ModelCard(initial, ctx) {
     const w = ctx.worker, ws = stateOf(w, m.id);
     const holds = ws === "unloaded" ? null : holdsText(w);
     memSlot.hidden = m.state !== "installed" || m.kind === "upscale";
-    once(memSlot, [m.state, m.kind, ws, holds, w && w.idle_unload_minutes].join("|"), () => {
+    once(memSlot, [m.state, m.kind, ws, holds, w && w.idle_unload_minutes, JSON.stringify(m.settings)].join("|"), () => {
       if (m.state !== "installed" || m.kind === "upscale") return;
       memSlot.append(h("div", { class: "row-8" }, stateChip(ws, ws === "loading" ? w.message : undefined),
         holds ? h("span", { class: "muted mono", title: holdsTitle }, holds) : null));
+      const sv = m.settings || {};
+      if (Object.keys(sv).length) {
+        const bits = [sv.width && sv.height ? `${sv.width} × ${sv.height}` : null, sv.frames ? `${sv.frames} frames` : null, sv.fps ? `${sv.fps} fps` : null,
+          sv.quantization && sv.quantization !== "none" ? sv.quantization.toUpperCase() : null, sv.offload ? `${sv.offload} offload` : null].filter(Boolean);
+        memSlot.append(h("div", { class: "field-hint" }, `Saved settings: ${bits.join(" · ")}. Load and Generate start from these.`));
+      }
       if (ws === "ready" || ws === "generating") memSlot.append(h("div", { class: "field-hint" }, `${KEEPS_MEMORY} ${idleText(w) || ""}`.trim()));
     });
 

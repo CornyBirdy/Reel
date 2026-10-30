@@ -94,9 +94,13 @@ Reel compares each model's VRAM estimate with the card it will use and says so i
 
 Install **Real-ESRGAN x4+** from the Library, then press **Upscale 2×** or **4×** under any image or clip in Generate. It works in tiles, so VRAM use stays small, and the result is saved as a new History item next to the original. Pictures can reach 8K, clips 4K per frame (up to 600 frames).
 
+### Model settings
+
+Like LM Studio, each installed model has **Settings** (the sliders icon on its Library card, and next to Load in Generate): how it loads (offloading, quantization, tiled VAE, attention backend), and what it generates with by default (resolution, frames, frame rate, steps, guidance). Press **Save** to keep them, **Save and load** to load straight away, **Recommended** to go back to the starting values (which follow your GPU). Load and Generate start from what you saved. In the Library, **Load** and **Unload** put a model in or out of memory without opening Generate.
+
 ### VRAM saving (16 GB target)
 
-Every recipe defaults to the memory-saving options and has *safe limits* on resolution, frame count and (for Wan) width x height x frames, so a clip should fit a 16 GB card. **Unlock limits (advanced)** in the Generate panel lifts them to what the pipeline itself supports (the model card's native sizes and maximum length, or any size that is a multiple of the model's size rule), remembered per model. Generate shows a live memory estimate (VRAM and system RAM) against what your PC has free right now; it warns but never blocks. Treat it as a rough guide: the real peak is recorded in History after every run.
+Every recipe defaults to the memory-saving options and carries *safe sizes* (resolution, frame count, and for Wan width x height x frames) that suit a typical 16 GB card. They are guidance, not limits: like LM Studio's memory guardrail, Reel lets you choose **any size and length up to what the model's pipeline supports** (the model card's native sizes and maximum length, or any multiple of the model's size rule, including a custom width and height), and the live **memory estimate** (VRAM and system RAM against what your PC has free right now) warns when it is Risky or Likely to fail. It never blocks. Treat it as a rough guide: the real peak is recorded in History after every run. If a bigger-than-safe run crashes or runs out of memory, the error says so and suggests safer settings.
 
 - **Offloading**: model offload by default (sequential available).
 - **Quantization**: NF4 for Wan 2.2 and for any imported model that is too big otherwise (denoiser plus large text encoders); LTX-Video's 2B transformer stays bf16 and its T5 text encoder is the official 8-bit one, encoded first and freed before denoising.

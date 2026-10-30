@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from . import recipes
+from . import model_settings, recipes, system
 from .generation import generation, load_request
 from .installer import installed_info, installs
 from .workers import WorkerBusy, manager
@@ -43,7 +43,7 @@ def worker_status() -> dict:
 def load_model(model_id: str, body: LoadRequest | None = None) -> dict:
     recipe = _installed_recipe(model_id)
     body = body or LoadRequest()
-    d = recipe["defaults"]
+    d = model_settings.effective(recipe, system.gpu_info().get("selected_gpu"))   # defaults, hardware advice, then what was saved
     params = {"quantization": body.quantization or d["quantization"], "offload": body.offload or d["offload"],
               "vae_tiling": d["vae_tiling"] if body.vae_tiling is None else body.vae_tiling,
               "attention_backend": body.attention_backend or d.get("attention_backend", "native")}

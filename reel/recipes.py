@@ -116,17 +116,33 @@ def native_errors(r: dict, kind: str) -> list[str]:
     return errs
 
 
-def unlock_limits(r: dict) -> dict:
-    """What 'Unlock limits (advanced)' allows: every size and length the pipeline supports, not just what fits 16 GB.
+# What each diffusers pipeline accepts, from the model cards and docs (see the 'unlock' notes in recipes/*.json), for recipes that
+# carry no 'unlock' block of their own: models imported from Hugging Face. Pipelines not listed get a generous guess, marked as one.
+PIPELINE_CEILINGS = {
+    "HunyuanVideo15Pipeline": {"max_width": 1280, "max_height": 1280, "max_frames": 241, "known": True,
+                               "note": "The pipeline accepts any multiple of 16. The 720p checkpoint is trained for 1280×720; Tencent's report mentions 10-second (241-frame) clips."},
+    "HunyuanVideoPipeline": {"max_width": 1280, "max_height": 1280, "max_frames": 129, "known": True,
+                             "note": "Tencent's table lists sizes up to 1280×720 at 129 frames."},
+    "LTXPipeline": {"max_width": 1280, "max_height": 1280, "max_frames": 257, "known": True,
+                    "note": "The card: works best under 720×1280 and below 257 frames."},
+    "CogVideoXPipeline": {"max_width": 720, "max_height": 480, "max_frames": 49, "known": True,
+                          "note": "CogVideoX-5b supports only 720×480 and 49 frames."},
+}
 
-    From the recipe's own 'unlock' block (checked against the model card). A recipe without one (an older import)
-    gets a generous ceiling and known=False, which the UI says plainly.
+
+def unlock_limits(r: dict) -> dict:
+    """The most the pipeline itself accepts: every size and length it supports, not just what fits a 16 GB card.
+
+    The recipe's 'limits' are the sizes known to suit a typical card; this is the ceiling above them, and Generate and the
+    model settings let you choose anything up to it (the memory estimate warns, nothing is blocked). It comes from the
+    recipe's own 'unlock' block (checked against the model card), else from PIPELINE_CEILINGS, else a generous guess marked
+    known=False, which the UI says plainly.
     """
     lim = r["limits"]
     kind = r.get("kind", "video")
     if kind == "upscale":
         return {"known": True, "note": "An upscaler's output size follows its scale."}
-    u = r.get("unlock") or {}
+    u = r.get("unlock") or PIPELINE_CEILINGS.get((r.get("adapter_config") or {}).get("pipeline"), {})
     mult = lim.get("size_multiple", 1)
     fallback_side = min(2048, -(-int(max(lim["max_width"], lim["max_height"]) * 1.5) // mult) * mult)
     out = {
