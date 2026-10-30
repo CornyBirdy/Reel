@@ -27,6 +27,24 @@ def child_env() -> dict:
     return env
 
 
+def is_native_crash(code: int | None) -> bool:
+    """True for a hard crash of the model process (Windows NTSTATUS such as 0xC0000005, or a POSIX signal)."""
+    return code is not None and (code < 0 or code >= 0xC0000000)
+
+
+def crash_message(code: int, attempts: int) -> str:
+    memory = system.memory_summary()
+    return (
+        f"The model process crashed (exit code {code}, 0x{code & 0xFFFFFFFF:X})"
+        + (" and crashed again after an automatic retry" if attempts > 1 else "")
+        + ". This is a native crash rather than a Reel bug, and it nearly always means the PC ran out of memory while "
+        "loading the model. Close other apps (browser, games, other AI tools) and try again. "
+        "Make sure the Windows pagefile is set to 'System managed size' on a drive with 40 GB or more free "
+        "(Settings > System > About > Advanced system settings > Performance > Advanced > Virtual memory). "
+        "Also keep Reel in a plain folder such as C:\\Reel rather than Downloads or OneDrive, and update the NVIDIA driver."
+        + (f" Memory just before loading: {memory}." if memory else ""))
+
+
 class GenerationError(Exception):
     pass
 
@@ -229,8 +247,7 @@ class GenerationManager:
     def _run(self, job: GenJob) -> None:
         if job.params.get("upscale"):
             return self._run_upscale(job)
-        recipe, params = job.recipe, job.params
-        mdir = model_dir(recipe["id"])
+        params = job.params
         config.OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
         tmp = config.DATA_DIR / "tmp"
         tmp.mkdir(parents=True, exist_ok=True)
@@ -242,65 +259,34 @@ class GenerationManager:
         for it in plan:
             it["path"] = str(config.OUTPUTS_DIR / it["name"])
         req_path = tmp / f"{job.id}.json"
-        request = {
-            **params, "model_id": recipe["id"], "adapter": recipe["adapter"], "kind": params["kind"],
-            "adapter_config": recipe.get("adapter_config", {}),
-            "weights_dir": str(mdir / "weights"), "outputs": [{"path": it["path"], "seed": it["seed"]} for it in plan],
-        }
-        req_path.write_text(json.dumps(request), encoding="utf-8")
         env = child_env()
-        done_evt: dict | None = None
         try:
-            py = procs.venv_python(mdir / "venv")
-            proc = procs.popen([str(py), str(config.ADAPTERS_DIR / "runner.py"), str(req_path)],
-                               env=env, cwd=config.ADAPTERS_DIR)
-            job.proc = proc
-            for evt in self._events(job, proc):
-                kind = evt.get("event")
-                if kind == "phase":
-                    job.phase, job.message = evt["phase"], evt.get("message") or evt["phase"]
-                elif kind == "item_start":
-                    job.item, job.step, job.denoise_started = evt["index"] + 1, 0, None
-                    job.phase, job.message = "denoising", f"Item {job.item} of {job.items}"
-                elif kind == "item_done":
-                    it = plan[evt["index"]]
-                    p_item = {k: v for k, v in params.items() if k != "count"}
-                    p_item["seed"] = it["seed"]
-                    out_file = Path(it["path"])
-                    if out_file.exists() and out_file.stat().st_size > 0:
-                        clip = history.add({
-                            "id": f"{job.id}-{evt['index'] + 1}" if job.items > 1 else job.id, "created": time.time(),
-                            "kind": params["kind"], "model_id": recipe["id"], "model_name": recipe["name"],
-                            "prompt": params["prompt"], "params": p_item, "file": it["name"],
-                            "seconds": evt.get("seconds"), "peak_vram_gb": evt.get("peak_vram_gb"),
-                            "device": evt.get("device_name") or evt.get("device"),
-                        })
-                        job.clips.append(clip)
-                elif kind == "progress":
-                    job.step, job.total = evt["step"], evt.get("total", job.total)
-                    if evt["step"] == 0 or job.denoise_started is None:
-                        job.denoise_started = time.time()
-                    job.phase, job.message = "denoising", f"Step {job.step} of {job.total}"
-                elif kind == "log":
-                    job.log.append(evt["message"])
-                elif kind == "error":
-                    job.error, job.error_kind = evt["message"], evt.get("kind")
-                    job.log.append(evt.get("trace", ""))
-                elif kind == "done":
-                    done_evt = evt
-            code = proc.wait()
-            finished_all = len(job.clips) == job.items
-            if job.cancel.is_set():
-                job.status = "cancelled"
-                job.message = f"Cancelled - {len(job.clips)} of {job.items} finished" if job.items > 1 else "Cancelled"
-            elif code == 0 and done_evt and finished_all:
-                job.status, job.phase, job.message = "done", "done", "Done"
-                job.step = job.total
-            else:
-                job.status = "failed"
-                if not job.error:
-                    tail = " | ".join(list(job.log)[-3:])
-                    job.error = f"The model process exited with code {code}. {tail}"
+            job.log.append(f"Before loading: {system.memory_summary()}")
+            for attempt in (1, 2):
+                kept = {c["file"] for c in job.clips}
+                todo = [it for it in plan if it["name"] not in kept]
+                code, done_evt = self._attempt(job, plan, todo, req_path, env)
+                finished_all = len(job.clips) == job.items
+                if job.cancel.is_set():
+                    job.status = "cancelled"
+                    job.message = f"Cancelled - {len(job.clips)} of {job.items} finished" if job.items > 1 else "Cancelled"
+                elif code == 0 and done_evt and finished_all:
+                    job.status, job.phase, job.message = "done", "done", "Done"
+                    job.step = job.total
+                elif is_native_crash(code) and not job.error and attempt == 1:
+                    # A hard crash (not a Python error) is usually memory pressure that has passed now the process is gone.
+                    job.log.append(f"The model process crashed (exit code {code}). Retrying once.")
+                    job.phase, job.message = "loading", "Model crashed - retrying once"
+                    job.cancel.wait(5)
+                    if not job.cancel.is_set():
+                        continue
+                    job.status, job.message = "cancelled", "Cancelled"
+                else:
+                    job.status = "failed"
+                    if not job.error:
+                        job.error = crash_message(code, attempt) if is_native_crash(code) else (
+                            f"The model process exited with code {code}. " + " | ".join(list(job.log)[-3:]))
+                break
         except Exception as exc:  # noqa: BLE001
             job.status, job.error = "failed", f"{type(exc).__name__}: {exc}"
         finally:
@@ -311,6 +297,57 @@ class GenerationManager:
                 if it["name"] not in kept:
                     Path(it["path"]).unlink(missing_ok=True)
             req_path.unlink(missing_ok=True)
+
+    def _attempt(self, job: GenJob, plan: list[dict], todo: list[dict], req_path: Path, env: dict) -> tuple[int, dict | None]:
+        """Run the model process once over the items in `todo`; returns (exit code, the 'done' event if any)."""
+        recipe, params = job.recipe, job.params
+        mdir = model_dir(recipe["id"])
+        request = {
+            **params, "model_id": recipe["id"], "adapter": recipe["adapter"], "kind": params["kind"],
+            "adapter_config": recipe.get("adapter_config", {}),
+            "weights_dir": str(mdir / "weights"), "outputs": [{"path": it["path"], "seed": it["seed"]} for it in todo],
+        }
+        req_path.write_text(json.dumps(request), encoding="utf-8")
+        done_evt: dict | None = None
+        py = procs.venv_python(mdir / "venv")
+        proc = procs.popen([str(py), str(config.ADAPTERS_DIR / "runner.py"), str(req_path)],
+                           env=env, cwd=config.ADAPTERS_DIR)
+        job.proc = proc
+        for evt in self._events(job, proc):
+            kind = evt.get("event")
+            if kind == "phase":
+                job.phase, job.message = evt["phase"], evt.get("message") or evt["phase"]
+            elif kind == "item_start":
+                job.item, job.step, job.denoise_started = plan.index(todo[evt["index"]]) + 1, 0, None
+                job.phase, job.message = "denoising", f"Item {job.item} of {job.items}"
+            elif kind == "item_done":
+                it = todo[evt["index"]]
+                n = plan.index(it) + 1
+                p_item = {k: v for k, v in params.items() if k != "count"}
+                p_item["seed"] = it["seed"]
+                out_file = Path(it["path"])
+                if out_file.exists() and out_file.stat().st_size > 0:
+                    clip = history.add({
+                        "id": f"{job.id}-{n}" if job.items > 1 else job.id, "created": time.time(),
+                        "kind": params["kind"], "model_id": recipe["id"], "model_name": recipe["name"],
+                        "prompt": params["prompt"], "params": p_item, "file": it["name"],
+                        "seconds": evt.get("seconds"), "peak_vram_gb": evt.get("peak_vram_gb"),
+                        "device": evt.get("device_name") or evt.get("device"),
+                    })
+                    job.clips.append(clip)
+            elif kind == "progress":
+                job.step, job.total = evt["step"], evt.get("total", job.total)
+                if evt["step"] == 0 or job.denoise_started is None:
+                    job.denoise_started = time.time()
+                job.phase, job.message = "denoising", f"Step {job.step} of {job.total}"
+            elif kind == "log":
+                job.log.append(evt["message"])
+            elif kind == "error":
+                job.error, job.error_kind = evt["message"], evt.get("kind")
+                job.log.append(evt.get("trace", ""))
+            elif kind == "done":
+                done_evt = evt
+        return proc.wait(), done_evt
 
 
     # -- upscaling ---------------------------------------------------------------------------
