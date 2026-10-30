@@ -119,7 +119,17 @@ class Estimate(unittest.TestCase):
             if r.get("kind") == "upscale":
                 continue
             e = self.est(rid)
-            self.assertEqual(e["status"], "ok", (rid, e))
+            if rid in self.BORDERLINE:     # the estimate honestly says "risky" for these on 32 GB of RAM; it must not say "fail"
+                self.assertIn(e["status"], ("ok", "risky"), (rid, e))
+            else:
+                self.assertEqual(e["status"], "ok", (rid, e))
+
+    BORDERLINE = {"qwen-image-edit", "wan-vace-1.3b"}   # 20B edit model; and VACE parks umT5 (11 GB) in RAM
+
+    def test_edit_models_cost_more_than_plain_generation(self):
+        plain = self.est("flux1-schnell")["breakdown"]["activations_gb"]
+        edit = self.est("flux-kontext")["breakdown"]["activations_gb"]
+        self.assertAlmostEqual(edit, 2 * plain, places=1)
 
     def test_unquantized_hunyuan_exhausts_system_ram(self):
         """The 41 GB of bf16 weights are parked in system RAM while offloaded: that is how a 32 GB PC dies."""

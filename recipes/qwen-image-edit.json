@@ -1,0 +1,176 @@
+{
+  "schema": 1,
+  "id": "qwen-image-edit",
+  "name": "Qwen-Image-Edit",
+  "family": "Qwen",
+  "version": "2509",
+  "status": "ready",
+  "kind": "image",
+  "verified": false,
+  "hf_repo": "Qwen/Qwen-Image-Edit-2509",
+  "modes": [
+    "edit"
+  ],
+  "summary": "Edit pictures with a text instruction (change the clothes, swap the background, combine up to three photos). 20B model, so it is a very large download and runs in 4-bit on a 16 GB card.",
+  "license": "Apache-2.0",
+  "license_url": "https://huggingface.co/Qwen/Qwen-Image-Edit-2509",
+  "tasks": [
+    "image-editing"
+  ],
+  "inputs": {
+    "images": {
+      "type": "image",
+      "max": 3,
+      "required": true,
+      "modes": [
+        "edit"
+      ],
+      "label": "Picture(s) to edit",
+      "help": "The first picture is the one that is changed; the others are references (a person, a product, a style)."
+    }
+  },
+  "adapter": "diffusers_auto",
+  "adapter_config": {
+    "pipeline": "QwenImageEditPlusPipeline",
+    "variant": null,
+    "guidance_arg": "true_cfg_scale",
+    "multi_image": true
+  },
+  "download_gb": 57.8,
+  "vram_gb": 14,
+  "vram_note": "Estimate from the weights' real tensor sizes with the transformer and text encoder in 4-bit; not measured. Expect a slow first load and about a minute or more per picture.",
+  "python": {
+    "torch_index": "https://download.pytorch.org/whl/cu128",
+    "torch": [
+      "torch>=2.7",
+      "torchvision"
+    ],
+    "packages": [
+      "diffusers>=0.36",
+      "transformers>=4.49",
+      "accelerate>=1.4",
+      "bitsandbytes>=0.46",
+      "sentencepiece",
+      "protobuf",
+      "ftfy",
+      "safetensors",
+      "huggingface_hub",
+      "imageio",
+      "imageio-ffmpeg",
+      "numpy",
+      "Pillow"
+    ]
+  },
+  "weights": [
+    {
+      "repo_id": "Qwen/Qwen-Image-Edit-2509",
+      "revision": "d3968ef930e841f4c73640fb8afa3b306a78167e",
+      "dest": ".",
+      "allow_patterns": [
+        "model_index.json",
+        "scheduler/*",
+        "tokenizer/*",
+        "processor/*",
+        "text_encoder/*",
+        "transformer/*",
+        "vae/*"
+      ]
+    }
+  ],
+  "limits": {
+    "max_width": 1536,
+    "max_height": 1536,
+    "max_area": 1572864,
+    "size_multiple": 16,
+    "steps": {
+      "min": 1,
+      "max": 100
+    },
+    "presets": [
+      {
+        "w": 768,
+        "h": 768
+      },
+      {
+        "w": 1024,
+        "h": 1024
+      },
+      {
+        "w": 832,
+        "h": 1248
+      },
+      {
+        "w": 1248,
+        "h": 832
+      },
+      {
+        "w": 1152,
+        "h": 896
+      },
+      {
+        "w": 896,
+        "h": 1152
+      }
+    ]
+  },
+  "native": {
+    "label": "about 1 megapixel",
+    "resolutions": [
+      {
+        "w": 1024,
+        "h": 1024,
+        "label": "1024\u00d71024"
+      }
+    ],
+    "source": "https://huggingface.co/Qwen/Qwen-Image-Edit-2509",
+    "note": "Sizes must be multiples of 16. The model card's example keeps the picture's own size; use Match input in Generate for that. Card settings: 40 steps, true CFG 4.0, negative prompt blank."
+  },
+  "unlock": {
+    "max_width": 2048,
+    "max_height": 2048,
+    "known": false,
+    "note": "Reel's own ceiling, not a model limit."
+  },
+  "defaults": {
+    "width": 1024,
+    "height": 1024,
+    "steps": 40,
+    "guidance": 4.0,
+    "negative_prompt": "",
+    "offload": "model",
+    "vae_tiling": true,
+    "quantization": "nf4"
+  },
+  "memory": {
+    "offload_options": [
+      "none",
+      "model",
+      "sequential"
+    ],
+    "quantization_options": [
+      "none",
+      "int8",
+      "nf4"
+    ],
+    "notes": "Quantization applies to the 20B transformer and the Qwen2.5-VL text encoder (both 4-bit by default). Each input picture adds image tokens, so editing costs more memory than plain generation.",
+    "estimate": {
+      "weights_gb": {
+        "transformer": 40.9,
+        "text_encoder": 16.6,
+        "vae": 0.25
+      },
+      "quantized": [
+        "transformer",
+        "text_encoder"
+      ],
+      "denoiser": "transformer",
+      "tokens": {
+        "spatial": 16
+      },
+      "hidden": 3072,
+      "doubles_tokens": true,
+      "vae_mb_per_mpx_frame": 1300,
+      "vae_tile_mpx_frames": 0.5
+    }
+  }
+}

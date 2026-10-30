@@ -59,7 +59,8 @@ function ModelCard(initial, ctx) {
       h("div", {},
         h("h3", {}, m0.name, " ", h("span", { class: "muted model-version" }, m0.version || "")),
         h("div", { class: "muted", style: { fontSize: "var(--text-sm)" } }, m0.family || "",
-          m0.license ? [" · ", m0.license_url ? h("a", { href: m0.license_url, target: "_blank", rel: "noopener" }, m0.license) : m0.license] : null)),
+          m0.license ? [" · ", m0.license_url ? h("a", { href: m0.license_url, target: "_blank", rel: "noopener" }, m0.license) : m0.license] : null,
+          m0.hf_url ? [" · ", h("a", { href: m0.hf_url, target: "_blank", rel: "noopener", title: "Open this model's page on Hugging Face" }, "Hugging Face ↗")] : null)),
       badgeSlot),
     h("p", { class: "muted" }, m0.summary || ""),
     h("div", { class: "stats" },
@@ -81,7 +82,7 @@ function ModelCard(initial, ctx) {
   function renderActions(m) {
     const job = m.install;
     const w = ctx.worker;
-    const key = [m.state, m.status, !!m.blocked_reason, job && job.status, m.source, m.fit.level, stateOf(w, m.id), w && w.state, w && w.model_id, JSON.stringify(m.settings)].join("|");
+    const key = [m.state, m.status, job && job.paused, !!m.blocked_reason, job && job.status, m.source, m.fit.level, stateOf(w, m.id), w && w.state, w && w.model_id, JSON.stringify(m.settings)].join("|");
     if (key === lastActionsKey) return;
     lastActionsKey = key;
     clear(actions);
@@ -119,7 +120,11 @@ function ModelCard(initial, ctx) {
       onclick: () => act(() => api.post(`/api/models/${m.id}/refresh`), `${m.name} settings refreshed.`) }, icon("rerun"), "Refresh settings") : null;
     switch (m.state) {
       case "installing":
-        actions.append(h("button", { class: "btn", onclick: () => act(() => api.post(`/api/models/${m.id}/cancel`)) }, icon("stop"), "Cancel install"));
+        actions.append(
+          job && job.paused
+            ? h("button", { class: "btn btn-primary", title: "Carry on exactly where it stopped", onclick: () => act(() => api.post(`/api/models/${m.id}/resume`)) }, icon("play"), "Resume")
+            : h("button", { class: "btn", title: "Freeze the download or install; Resume carries on where it stopped", onclick: () => act(() => api.post(`/api/models/${m.id}/pause`)) }, icon("pause"), "Pause"),
+          h("button", { class: "btn", onclick: () => act(() => api.post(`/api/models/${m.id}/cancel`)) }, icon("stop"), "Cancel install"));
         break;
       case "installed":
         actions.append(
@@ -171,19 +176,19 @@ function ModelCard(initial, ctx) {
       setText(li.lastChild, ` - ${p.state}`);
     });
     const weights = job.phase === "weights" && job.bytes_total > 0;
-    const indeterminate = job.status === "running" && !weights;
+    const indeterminate = job.status === "running" && !weights && !job.paused;
     bar.classList.toggle("indeterminate", indeterminate);
     if (indeterminate) { bar.removeAttribute("aria-valuenow"); barFill.style.width = ""; }
     else { bar.setAttribute("aria-valuenow", String(Math.round(job.progress * 100))); barFill.style.width = `${Math.max(0, Math.min(1, job.progress)) * 100}%`; }
     if (job.status === "running" && weights) {
       setText(metaLeft, `${fmtBytes(job.bytes_done)} of ${fmtBytes(job.bytes_total)}`);
-      setText(metaMid, [job.speed > 0 ? `${fmtBytes(job.speed)}/s` : null, job.eta ? `${fmtDuration(job.eta)} left` : null].filter(Boolean).join(" · "));
+      setText(metaMid, job.paused ? "Paused" : [job.speed > 0 ? `${fmtBytes(job.speed)}/s` : null, job.eta ? `${fmtDuration(job.eta)} left` : null].filter(Boolean).join(" · "));
     } else {
       setText(metaLeft, job.status === "running" ? job.phases.find((p) => p.state === "active")?.label ?? "" : "");
       setText(metaMid, "");
     }
     setText(metaRight, `${Math.round(job.progress * 100)}% overall`);
-    setText(msgEl, job.status === "running" ? job.message : "");
+    setText(msgEl, job.status === "running" ? (job.paused ? "Paused. Resume carries on where it stopped." : job.message) : "");
     once(noticeSlot, JSON.stringify([job.status, job.error, job.message, job.warnings]), () => {
       for (const w of job.warnings || []) noticeSlot.append(h("div", { class: "notice notice-warning" }, icon("alert"), w));
       if (job.status === "failed") noticeSlot.append(h("div", { class: "notice notice-danger", role: "alert" }, icon("error"), job.error || "Install failed."));
@@ -200,6 +205,7 @@ function ModelCard(initial, ctx) {
   function update(m) {
     const job = m.install;
     let [kind, text, ic] = m.status === "placeholder" ? ["neutral", "Placeholder", "box"] : STATE_BADGE[m.state];
+    if (m.state === "installing" && job && job.paused) [kind, text, ic] = ["warning", "Paused", "pause"];
     if (m.state === "partial" && job && job.status === "failed") [kind, text, ic] = ["danger", "Install failed", "error"];
     once(badgeSlot, [m.kind, m.verified, m.gated, m.recommended, m.native_label, ctx.hfTokenSet, kind, text].join("|"), () => {
       badgeSlot.append(kindBadge(m.kind));

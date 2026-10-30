@@ -91,6 +91,10 @@ class Job:
         self.cancel = threading.Event()
         self.proc = None
         self.weights_fraction = 0.0
+        self.paused = False          # frozen by the user (Pause); the install carries on when resumed
+        self.was_paused = False      # it was paused at some point: a step that then fails is retried
+        self.paused_total = 0.0
+        self.paused_at: float | None = None
 
     def overall(self) -> float:
         total = 0.0
@@ -108,14 +112,15 @@ class Job:
             eta = (self.bytes_total - self.bytes_done) / self.speed
         return {
             "status": self.status,
+            "paused": self.paused,
             "phase": self.phase,
             "phases": [{"id": p, "label": l, "state": self.phase_state[p]} for p, l, _w in PHASES],
             "message": self.message,
             "progress": self.overall(),
             "bytes_done": self.bytes_done,
             "bytes_total": self.bytes_total,
-            "speed": self.speed,
-            "eta": eta,
+            "speed": 0.0 if self.paused else self.speed,
+            "eta": None if self.paused else eta,
             "error": self.error,
             "warnings": self.warnings,
             "log": list(self.log)[-80:],
@@ -187,8 +192,33 @@ class InstallManager:
         job = self._jobs.get(model_id)
         if job and job.status == "running":
             job.cancel.set()
+            job.paused = False
             if job.proc:
                 procs.kill_tree(job.proc)
+
+    def pause(self, model_id: str) -> None:
+        """Freeze the running install (a download, a pip install, whatever it is doing) until resume()."""
+        job = self._jobs.get(model_id)
+        if not job or job.status != "running":
+            raise InstallError("Nothing is installing.")
+        if job.paused:
+            return
+        if job.proc and not procs.suspend_tree(job.proc):
+            raise InstallError("This PC would not let Reel pause the download. Use Cancel instead: finished files are kept and Install continues with the rest.")
+        job.paused, job.was_paused, job.paused_at = True, True, time.time()
+        job.log.append("Paused.")
+
+    def resume(self, model_id: str) -> None:
+        job = self._jobs.get(model_id)
+        if not job or job.status != "running" or not job.paused:
+            raise InstallError("This install is not paused.")
+        job.paused = False
+        if job.paused_at:
+            job.paused_total += time.time() - job.paused_at
+            job.paused_at = None
+        if job.proc:
+            procs.resume_tree(job.proc)
+        job.log.append("Resumed.")
 
     def _run(self, job: Job, recipe: dict) -> None:
         mdir = model_dir(job.model_id)
@@ -223,7 +253,17 @@ class InstallManager:
                     log(f"[{pid}] already done - skipping")
                     return
                 job.phase_state[pid] = "active"
-                fn()
+                for attempt in (1, 2, 3):
+                    try:
+                        fn()
+                        break
+                    except InstallError as exc:
+                        # A connection that sat frozen for a long time is usually dropped by the server. Finished files are
+                        # kept, so carrying on is cheap.
+                        if not (job.was_paused and attempt < 3 and not job.cancel.is_set()):
+                            raise
+                        log(f"[{pid}] stopped after the pause ({exc}); continuing")
+                        job.message = "Reconnecting after the pause"
                 job.phase_state[pid] = "done"
                 stages[pid] = True
                 (mdir / "stages.json").write_text(json.dumps(stages), encoding="utf-8")
@@ -329,6 +369,8 @@ class InstallManager:
         log("$ " + " ".join(cmd))
         proc = procs.popen(cmd, env=env)
         job.proc = proc
+        if job.paused:                 # paused between two steps: the next one starts frozen
+            procs.suspend_tree(proc)
         try:
             assert proc.stdout is not None
             for raw in proc.stdout:

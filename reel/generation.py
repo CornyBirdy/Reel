@@ -15,7 +15,7 @@ import uuid
 from collections import deque
 from pathlib import Path
 
-from . import config, diagnostics, history, procs, recipes, system, workers
+from . import config, diagnostics, history, inputs, procs, recipes, system, workers
 from .diagnostics import is_native_crash  # noqa: F401
 from .installer import installed_info, installs, model_dir
 from .workers import child_env, WorkerBusy  # noqa: F401  (child_env stays importable from here)
@@ -126,6 +126,13 @@ def validate(recipe: dict, req: dict) -> dict:
     if attention not in mem.get("attention_options", ["native"]):
         raise ValueError(f"Unsupported attention backend '{attention}' for {recipe['name']}.")
     out["attention_backend"] = attention
+    modes = recipes.modes_of(recipe)
+    mode = req.get("mode") or modes[0]
+    if mode not in modes:
+        raise ValueError(f"{recipe['name']} does not do '{mode}'. It supports: {', '.join(modes)}.")
+    out["mode"] = mode
+    if recipe.get("inputs"):
+        out["inputs"] = inputs.resolve(recipe, req.get("inputs"), mode)   # InputError is a ValueError: it reaches the person as a sentence
     return out
 
 
@@ -184,19 +191,25 @@ class GenJob:
         self.log: deque[str] = deque(maxlen=200)
         self.cancel = threading.Event()
         self.reused = False                 # the model was already loaded
+        self.pausing = False                # a pause was asked for; it takes effect at the next step
+        self.paused = False
+        self.paused_total = 0.0             # seconds spent paused (not part of "elapsed" or the time left)
+        self.paused_at: float | None = None
         self.proc = None                     # an upscale runs as its own one-shot process
         self.source_clip: dict | None = None   # the item being upscaled (upscale jobs only)
 
     def to_dict(self) -> dict:
         now = self.finished or time.time()
+        waiting = self.paused_total + ((time.time() - self.paused_at) if self.paused_at else 0.0)
         eta = None
         if self.denoise_started and self.step > 0 and self.status == "running":
-            per = (time.time() - self.denoise_started) / self.step
+            per = (time.time() - self.denoise_started - waiting) / self.step
             eta = per * (self.total - self.step) + per * self.total * (self.items - self.item)
         return {
             "id": self.id, "model_id": self.recipe["id"], "model_name": self.recipe["name"], "kind": self.params["kind"],
             "status": self.status, "phase": self.phase, "message": self.message,
-            "step": self.step, "total": self.total, "elapsed": now - self.started, "eta": eta,
+            "step": self.step, "total": self.total, "elapsed": max(now - self.started - waiting, 0.0), "eta": None if self.paused else eta,
+            "paused": self.paused, "pausing": self.pausing,
             "params": self.params, "error": self.error, "error_kind": self.error_kind,
             "error_detail": self.error_detail, "error_hint": self.error_hint, "log_name": self.log_name,
             "items": self.items, "item": self.item, "clips": self.clips, "reused": self.reused,
@@ -240,8 +253,43 @@ class GenerationManager:
         j = self.current
         if j and j.status == "running":
             j.cancel.set()
+            j.pausing = False
             if j.proc:                              # an upscale is its own process: stop it
                 procs.kill_tree(j.proc)
+
+    def pause(self) -> None:
+        """Hold the running job. A generation waits at its next step (the model stays loaded); an upscale is frozen."""
+        j = self.current
+        if not j or j.status != "running":
+            raise GenerationError("Nothing is generating.")
+        if j.paused or j.pausing:
+            return
+        if j.proc:                                  # upscale: its own process
+            if not procs.suspend_tree(j.proc):
+                raise GenerationError("This PC would not let Reel pause the upscale. Cancel it instead.")
+            j.paused, j.paused_at = True, time.time()
+        elif workers.manager.hold_generation(j.id, True):
+            j.pausing = True                        # confirmed by the worker's "paused" event
+        else:
+            raise GenerationError("The generation has not started yet. Try again in a moment, or cancel it.")
+
+    def resume(self) -> None:
+        j = self.current
+        if not j or j.status != "running" or not (j.paused or j.pausing):
+            raise GenerationError("Nothing is paused.")
+        if j.proc:
+            procs.resume_tree(j.proc)
+            self._mark_resumed(j)
+        elif workers.manager.hold_generation(j.id, False):
+            j.pausing = False                       # the worker's "resumed" event does the rest
+        else:
+            raise GenerationError("The generation is no longer running.")
+
+    @staticmethod
+    def _mark_resumed(job: "GenJob") -> None:
+        if job.paused_at:
+            job.paused_total += time.time() - job.paused_at
+        job.paused, job.pausing, job.paused_at = False, False, None
 
     def _run(self, job: GenJob) -> None:
         if job.params.get("upscale"):
@@ -299,6 +347,9 @@ class GenerationManager:
         recipe, params = job.recipe, job.params
         gen_req = {k: params[k] for k in ("kind", "prompt", "negative_prompt", "width", "height", "steps", "guidance", "frames", "fps") if k in params}
         gen_req["outputs"] = [{"path": it["path"], "seed": it["seed"]} for it in todo]
+        if recipe.get("inputs"):
+            gen_req["inputs"] = inputs.resolve(recipe, params.get("inputs"), params["mode"], files=True)   # the model process gets file paths
+            gen_req["mode"] = params["mode"]
         events.todo = todo
         with workers.manager.operation("generating", cancel=job.cancel, wait_for=job.cancel):
             job.message = "Starting the model"
@@ -527,169 +578,10 @@ class JobEvents:
             job.phase, job.message = "denoising", f"Step {job.step} of {job.total}"
         elif kind == "log":
             job.log.append(evt["message"])
-
-    def _attempt(self, job: GenJob, plan: list[dict], todo: list[dict], req_path: Path, env: dict) -> tuple[int, dict | None]:
-        """Run the model process once over the items in `todo`; returns (exit code, the 'done' event if any)."""
-        recipe, params = job.recipe, job.params
-        mdir = model_dir(recipe["id"])
-        request = {
-            **params, "model_id": recipe["id"], "adapter": recipe["adapter"], "kind": params["kind"],
-            "adapter_config": recipe.get("adapter_config", {}),
-            "weights_dir": str(mdir / "weights"), "outputs": [{"path": it["path"], "seed": it["seed"]} for it in todo],
-        }
-        req_path.write_text(json.dumps(request), encoding="utf-8")
-        done_evt: dict | None = None
-        py = procs.venv_python(mdir / "venv")
-        proc = procs.popen([str(py), str(config.ADAPTERS_DIR / "runner.py"), str(req_path)],
-                           env=env, cwd=config.ADAPTERS_DIR)
-        job.proc = proc
-        for evt in self._events(job, proc):
-            kind = evt.get("event")
-            if kind == "phase":
-                job.phase, job.message = evt["phase"], evt.get("message") or evt["phase"]
-            elif kind == "item_start":
-                job.item, job.step, job.denoise_started = plan.index(todo[evt["index"]]) + 1, 0, None
-                job.phase, job.message = "denoising", f"Item {job.item} of {job.items}"
-            elif kind == "item_done":
-                it = todo[evt["index"]]
-                n = plan.index(it) + 1
-                p_item = {k: v for k, v in params.items() if k != "count"}
-                p_item["seed"] = it["seed"]
-                out_file = Path(it["path"])
-                if out_file.exists() and out_file.stat().st_size > 0:
-                    clip = history.add({
-                        "id": f"{job.id}-{n}" if job.items > 1 else job.id, "created": time.time(),
-                        "kind": params["kind"], "model_id": recipe["id"], "model_name": recipe["name"],
-                        "prompt": params["prompt"], "params": p_item, "file": it["name"],
-                        "seconds": evt.get("seconds"), "peak_vram_gb": evt.get("peak_vram_gb"),
-                        "device": evt.get("device_name") or evt.get("device"),
-                    })
-                    job.clips.append(clip)
-            elif kind == "progress":
-                job.step, job.total = evt["step"], evt.get("total", job.total)
-                if evt["step"] == 0 or job.denoise_started is None:
-                    job.denoise_started = time.time()
-                job.phase, job.message = "denoising", f"Step {job.step} of {job.total}"
-            elif kind == "log":
-                job.log.append(evt["message"])
-            elif kind == "error":
-                job.error, job.error_kind = evt["message"], evt.get("kind")
-                job.log.append(evt.get("trace", ""))
-            elif kind == "done":
-                done_evt = evt
-        return proc.wait(), done_evt
-
-
-    # -- upscaling ---------------------------------------------------------------------------
-    def start_upscale(self, clip_id: str, scale: int, model_id: str | None = None) -> GenJob:
-        """Upscale a finished image or clip with an installed upscaler; the result is a new History item."""
-        clip = history.get(clip_id)
-        if not clip:
-            raise GenerationError("That item is not in History any more.")
-        source = config.OUTPUTS_DIR / Path(clip["file"]).name
-        if not source.exists():
-            raise GenerationError("The file for that item is missing, so it cannot be upscaled.")
-        found = recipes.load_all()[0]
-        if model_id:
-            recipe = found.get(model_id)
-            if not recipe or recipe.get("kind") != "upscale":
-                raise GenerationError("Unknown upscaler.")
-        else:
-            recipe = next((r for r in found.values() if r.get("kind") == "upscale" and installed_info(r["id"])), None)
-            if not recipe:
-                raise GenerationError("No upscaler is installed. Install one from the Library first.")
-        if installs.is_installing(recipe["id"]) or installs.is_uninstalling(recipe["id"]):
-            raise GenerationError(f"{recipe['name']} is being installed or removed.")
-        if not installed_info(recipe["id"]):
-            raise GenerationError(f"{recipe['name']} is not installed. Install it from the Library first.")
-        try:
-            params = validate_upscale(recipe, clip, scale)
-        except (ValueError, TypeError) as exc:
-            raise GenerationError(str(exc))
-        with self._lock:
-            if self.current and self.current.status == "running":
-                raise GenerationError("Something is already generating. Wait for it or cancel it.")
-            job = GenJob(recipe, params)
-            job.source_clip = clip
-            self.current = job
-        threading.Thread(target=self._run, args=(job,), daemon=True, name=f"upscale-{job.id}").start()
-        return job
-
-    def _run_upscale(self, job: GenJob) -> None:
-        recipe, params, clip = job.recipe, job.params, job.source_clip
-        up = params["upscale"]
-        mdir = model_dir(recipe["id"])
-        config.OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
-        tmp = config.DATA_DIR / "tmp"
-        tmp.mkdir(parents=True, exist_ok=True)
-        ext = "png" if params["kind"] == "image" else "mp4"
-        name = f"{time.strftime('%Y%m%d-%H%M%S')}-{job.id}.{ext}"
-        out_path = config.OUTPUTS_DIR / name
-        req_path = tmp / f"{job.id}.json"
-        request = {
-            "model_id": recipe["id"], "adapter": recipe["adapter"], "kind": params["kind"],
-            "adapter_config": recipe.get("adapter_config", {}), "weights_dir": str(mdir / "weights"),
-            "input_path": str(config.OUTPUTS_DIR / Path(clip["file"]).name), "scale": up["scale"],
-            "tile": recipe["defaults"].get("tile", 512), "fps": clip["params"].get("fps"),
-            "frames": clip["params"].get("frames"), "outputs": [{"path": str(out_path), "seed": 0}],
-        }
-        req_path.write_text(json.dumps(request), encoding="utf-8")
-        done_evt: dict | None = None
-        try:
-            py = procs.venv_python(mdir / "venv")
-            proc = procs.popen([str(py), str(config.ADAPTERS_DIR / "runner.py"), str(req_path)],
-                               env=workers.child_env(), cwd=config.ADAPTERS_DIR)
-            job.proc = proc
-            unit = "frame" if params["kind"] == "video" else "tile"
-            for evt in self._events(job, proc):
-                kind = evt.get("event")
-                if kind == "phase":
-                    job.phase, job.message = evt["phase"], evt.get("message") or evt["phase"]
-                elif kind == "item_start":
-                    job.step, job.denoise_started = 0, None
-                    job.phase, job.message = "denoising", "Upscaling"
-                elif kind == "progress":
-                    job.step, job.total = evt["step"], evt.get("total", job.total)
-                    if job.denoise_started is None:
-                        job.denoise_started = time.time()
-                    job.phase, job.message = "denoising", f"{unit.capitalize()} {job.step} of {job.total}"
-                elif kind == "item_done":
-                    if out_path.exists() and out_path.stat().st_size > 0:
-                        p_item = {**{k: v for k, v in clip["params"].items() if k != "count"},
-                                  "width": evt.get("width") or params["width"], "height": evt.get("height") or params["height"],
-                                  "upscale_scale": up["scale"], "upscaled_from": clip["id"],
-                                  "source_width": clip["params"]["width"], "source_height": clip["params"]["height"]}
-                        job.clips.append(history.add({
-                            "id": job.id, "created": time.time(), "kind": params["kind"], "model_id": recipe["id"],
-                            "model_name": f"{recipe['name']} ×{up['scale']}", "prompt": clip["prompt"], "params": p_item,
-                            "file": name, "seconds": evt.get("seconds"), "peak_vram_gb": evt.get("peak_vram_gb"),
-                            "device": evt.get("device_name") or evt.get("device"),
-                        }))
-                elif kind == "log":
-                    job.log.append(evt["message"])
-                elif kind == "error":
-                    job.error, job.error_kind = evt["message"], evt.get("kind")
-                    job.log.append(evt.get("trace", ""))
-                elif kind == "done":
-                    done_evt = evt
-            code = proc.wait()
-            if job.cancel.is_set():
-                job.status, job.message = "cancelled", "Cancelled"
-            elif code == 0 and done_evt and job.clips:
-                job.status, job.phase, job.message = "done", "done", "Done"
-                job.step = job.total
-            else:
-                job.status = "failed"
-                if not job.error:
-                    job.error = f"The upscaler process exited with code {code}. {' | '.join(list(job.log)[-3:])}"
-        except Exception as exc:  # noqa: BLE001
-            job.status, job.error = "failed", f"{type(exc).__name__}: {exc}"
-        finally:
-            job.proc = None
-            job.finished = time.time()
-            if not job.clips:                    # remove a half-written file from a run that did not finish
-                out_path.unlink(missing_ok=True)
-            req_path.unlink(missing_ok=True)
+        elif kind == "paused":
+            job.paused, job.pausing, job.paused_at = True, False, time.time()
+        elif kind == "resumed":
+            GenerationManager._mark_resumed(job)
 
 
 generation = GenerationManager()

@@ -178,7 +178,18 @@ VIDEO_FAMILIES = {
 TOKEN_HINTS = {
     "WanPipeline": (32, 4, 3072), "LTXPipeline": (32, 8, 2048), "CogVideoXPipeline": (16, 4, 3072),
     "HunyuanVideoPipeline": (16, 4, 3072), "HunyuanVideo15Pipeline": (16, 4, 2048),
+    "QwenImageEditPipeline": (16, 0, 3072), "QwenImageEditPlusPipeline": (16, 0, 3072), "FluxKontextPipeline": (16, 0, 3072),
     "StableDiffusionXLPipeline": (8, 0, 640), "FluxPipeline": (16, 0, 3072), "StableDiffusion3Pipeline": (16, 0, 1536),
+}
+# Picture-editing pipelines: they take the picture(s) to change as input and produce an image, so they run in Edit mode.
+# `max` is how many input pictures the pipeline takes; `guidance_arg` names the argument its guidance goes in.
+EDIT_FAMILIES = {
+    "QwenImageEditPipeline":     dict(label="Qwen-Image-Edit", mult=16, side=1536, steps=50, guidance=4.0, base=(1024, 1024), presets=SQ1024,
+                                      max=1, multi=False, guidance_arg="true_cfg_scale", diffusers="0.35"),
+    "QwenImageEditPlusPipeline": dict(label="Qwen-Image-Edit Plus", mult=16, side=1536, steps=40, guidance=4.0, base=(1024, 1024), presets=SQ1024,
+                                      max=3, multi=True, guidance_arg="true_cfg_scale", diffusers="0.36"),
+    "FluxKontextPipeline":       dict(label="FLUX.1 Kontext", mult=16, side=1536, steps=28, guidance=2.5, base=(1024, 1024), presets=SQ1024,
+                                      max=1, multi=False, guidance_arg=None, diffusers="0.35"),
 }
 UNSUPPORTED_MARKERS = {
     "Img2Img": "it needs an input image (image-to-image)",
@@ -230,6 +241,8 @@ def fit_size_limits(limits: dict, defaults: dict) -> None:
 
 
 def unsupported_reason(class_name: str) -> str | None:
+    if class_name in EDIT_FAMILIES:
+        return None
     for marker, why in UNSUPPORTED_MARKERS.items():
         if marker in class_name:
             return f"{class_name}: {why}. Reel currently runs text-to-image and text-to-video only."
@@ -335,9 +348,17 @@ def inspect(text: str) -> dict:
 
     tag_classes = [t.split(":", 1)[1] for t in info.get("tags", []) if t.startswith("diffusers:")]
     if "model_index.json" not in names:
+        sizes = {s["rfilename"]: s.get("size") or 0 for s in siblings}
         root_weights = [n for n in names if "/" not in n and n.endswith((".safetensors", ".ckpt", ".gguf"))]
-        hint = " It looks like a single-file checkpoint or GGUF, which Reel can't run yet." if root_weights else ""
-        result["unsupported"] = f"No model_index.json: this is not a diffusers-format repo.{hint}"
+        if root_weights:
+            biggest = max(sizes[n] for n in root_weights) / GB
+            result["unsupported"] = (
+                f"{repo} is a single-file checkpoint (its biggest file is {biggest:.0f} GB), not a diffusers-format repo, and Reel "
+                "loads diffusers-format models only. If its page lists a '-Diffusers' version, import that one instead; "
+                "otherwise it cannot be run here yet."
+                + (" At that size it would not fit a 16 GB graphics card even then." if biggest > 30 else ""))
+        else:
+            result["unsupported"] = "No model_index.json: this is not a diffusers-format repo."
         return result
 
     index = None
@@ -415,6 +436,8 @@ def inspect(text: str) -> dict:
 
 
 def _kind_for(class_name: str, info: dict) -> str | None:
+    if class_name in EDIT_FAMILIES:
+        return "image"
     if class_name in VIDEO_FAMILIES:
         return "video"
     if class_name in IMAGE_FAMILIES:
@@ -472,14 +495,15 @@ def build_recipe(repo, sha, info, class_name, kind, paths, download, comp_info, 
     license_name, license_url = _license(info)
     vram, quant = _estimate_vram(comp_info, kind)
     fast = bool(FAST_NAME.search(name))
-    fam = (VIDEO_FAMILIES if kind == "video" else IMAGE_FAMILIES).get(class_name)
+    edit = EDIT_FAMILIES.get(class_name)
+    fam = (VIDEO_FAMILIES if kind == "video" else IMAGE_FAMILIES).get(class_name) or edit
     if fam is None:
         warnings.append(f"{class_name} is not one of the architectures Reel has tested defaults for; "
                         "resolution, steps and guidance are guesses.")
     if kind == "image":
         fam = fam or dict(label=class_name, mult=16, side=1536, steps=28, guidance=4.0, base=(1024, 1024), presets=SQ1024)
         w, h = fam["base"]
-        steps, guidance = (4, 0.0) if fast else (fam["steps"], fam["guidance"])
+        steps, guidance = (4, 0.0) if fast and not edit else (fam["steps"], fam["guidance"])
         limits = {"max_width": fam["side"], "max_height": fam["side"], "max_area": 1536 * 1536, "size_multiple": fam["mult"],
                   "steps": {"min": 1, "max": 100}, "presets": _presets(fam["presets"])}
         defaults = {"width": w, "height": h, "steps": steps, "guidance": guidance,
@@ -515,6 +539,8 @@ def build_recipe(repo, sha, info, class_name, kind, paths, download, comp_info, 
         defaults["fps"] = limits["fps"]
     if gated:
         warnings.append("Gated model: accept its terms on huggingface.co and save an access token in Settings before installing.")
+    if edit:
+        packages = [(f"diffusers>={edit['diffusers']}" if x.startswith("diffusers") else x) for x in packages]
     recipe = {
         "schema": 1, "id": _slug(repo), "name": name, "family": repo.split("/", 1)[0],
         "version": fam["label"], "status": "ready", "kind": kind, "source": "user", "verified": False,
@@ -534,6 +560,18 @@ def build_recipe(repo, sha, info, class_name, kind, paths, download, comp_info, 
                    "notes": "Quantization applies to the transformer/UNet and any T5-class text encoder.",
                    "estimate": memory_profile(comp_info, class_name, kind), **memory_extra},
     }
+    if edit:
+        recipe["modes"] = ["edit"]
+        recipe["tasks"] = ["image-editing"]
+        recipe["summary"] = (f"{fam['label']} picture-editing model imported from huggingface.co/{repo}: give it "
+                             f"{'up to ' + str(edit['max']) + ' pictures' if edit['max'] > 1 else 'a picture'} and an instruction. Runs through the generic diffusers adapter.")
+        recipe["inputs"] = {"images": {"type": "image", "max": edit["max"], "required": True, "modes": ["edit"],
+                                       "label": "Picture(s) to edit" if edit["max"] > 1 else "Picture to edit"}}
+        if edit["guidance_arg"]:
+            recipe["adapter_config"]["guidance_arg"] = edit["guidance_arg"]
+        if edit["multi"]:
+            recipe["adapter_config"]["multi_image"] = True
+        recipe["memory"]["estimate"]["doubles_tokens"] = True
     return recipe, warnings
 
 
@@ -541,7 +579,7 @@ def refresh_recipe(old: dict, new: dict) -> dict:
     """Bring an imported recipe's limits, defaults and estimates up to date with the current importer,
     keeping what makes it THIS install: its id, the exact files it downloads, and the weight variant."""
     merged = {**old}
-    for key in ("limits", "defaults", "memory", "vram_gb", "vram_note", "version", "summary", "license", "license_url"):
+    for key in ("limits", "defaults", "memory", "vram_gb", "vram_note", "version", "summary", "license", "license_url", "modes", "inputs", "tasks"):
         if key in new:
             merged[key] = new[key]
     cfg = dict(new.get("adapter_config") or {})

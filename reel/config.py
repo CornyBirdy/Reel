@@ -14,6 +14,7 @@ USER_RECIPES_DIR = DATA_DIR / "recipes"  # models added from Hugging Face live h
 ADAPTERS_DIR = ROOT / "adapters"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 OUTPUTS_DIR = DATA_DIR / "outputs"
+INPUTS_DIR = DATA_DIR / "inputs"     # pictures and videos uploaded as input (edit, start/end frames, replace a person)
 LOGS_DIR = DATA_DIR / "logs"       # one log per model process: data/logs/<timestamp>-<model>.log
 SETTINGS_FILE = DATA_DIR / "settings.json"
 MODEL_SETTINGS_FILE = DATA_DIR / "model_settings.json"   # per-model load and generation defaults (Library > Settings)
@@ -58,5 +59,5 @@ def models_root() -> Path:
 
 
 def ensure_dirs() -> None:
-    for p in (DATA_DIR, OUTPUTS_DIR, LOGS_DIR, models_root()):
+    for p in (DATA_DIR, OUTPUTS_DIR, INPUTS_DIR, LOGS_DIR, models_root()):
         p.mkdir(parents=True, exist_ok=True)

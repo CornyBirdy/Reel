@@ -7,6 +7,7 @@ stdin  (commands):
   {"cmd": "load",     "id": "...", "request": LOAD REQUEST}        build the pipeline (see base.py)
   {"cmd": "generate", "id": "...", "request": GENERATE REQUEST}    one or more items with the loaded pipeline
   {"cmd": "cancel", "id": "..."}                                   stop that generation; the pipeline stays loaded
+  {"cmd": "pause", "id": "..."} / {"cmd": "resume", "id": "..."}   hold that generation at its next step / carry on
   {"cmd": "exit"}                                                  free everything and quit
 
 stdout (events; those that answer a command carry its "id"):
@@ -14,6 +15,7 @@ stdout (events; those that answer a command carry its "id"):
   loaded    {"seconds", "memory", "device_name", "attention"}      a load finished
   done      {"items", "seconds", "peak_vram_gb", ...}             a generate finished
   cancelled                                                        a generate was stopped
+  paused / resumed                                                 the run reached the pause and waits / carries on
   error     {"message", "kind": "oom|error", "trace", "fatal"}    a command failed (fatal: the worker is quitting)
   memory    {"id": null, "vram_reserved_gb", "rss_gb", ...}        every few seconds, so the UI can show what it holds
 
@@ -59,6 +61,7 @@ class Worker:
         self.commands: "queue.Queue[dict]" = queue.Queue()
         self.stop = False
         self.cancel_ids: set = set()   # generations the app asked to stop (possibly before they even started)
+        self.pause_for = None          # the generation the app asked to hold
 
     # -- stdin: commands arrive here; cancel is handled at once, even while a generation is running ----------
     def read_commands(self) -> None:
@@ -71,6 +74,15 @@ class Worker:
                     cmd = json.loads(line)
                 except json.JSONDecodeError:
                     continue
+                if cmd.get("cmd") == "pause":
+                    self.pause_for = cmd.get("id")
+                    if cmd.get("id") is None or base.CURRENT_ID == cmd.get("id"):
+                        base.PAUSE.set()
+                    continue
+                if cmd.get("cmd") == "resume":
+                    self.pause_for = None
+                    base.PAUSE.clear()
+                    continue
                 if cmd.get("cmd") == "cancel":
                     self.cancel_ids.add(cmd.get("id"))
                     if cmd.get("id") is None or base.CURRENT_ID == cmd.get("id"):
@@ -79,6 +91,7 @@ class Worker:
                 self.commands.put(cmd)
         finally:  # EOF: the app is gone
             base.CANCEL.set()
+            base.PAUSE.clear()
             self.commands.put({"cmd": "exit"})
             threading.Timer(15, lambda: os._exit(0)).start()   # a generation that ignores the cancel must not keep the GPU
 
@@ -107,11 +120,15 @@ class Worker:
         base.CANCEL.clear()
         if base.CURRENT_ID in self.cancel_ids:    # the cancel arrived before we got going
             base.CANCEL.set()
+        if base.CURRENT_ID is not None and base.CURRENT_ID == self.pause_for:     # so did the pause
+            base.PAUSE.set()
         try:
             self.adapter.generate(request)
         except Cancelled:
             emit(event="cancelled")
         finally:
+            base.PAUSE.clear()
+            self.pause_for = None
             self.adapter.free_run_memory()
             emit(event="memory", id=None, **memory_report(self.adapter.torch))
 

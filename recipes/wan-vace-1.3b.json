@@ -1,0 +1,213 @@
+{
+  "schema": 1,
+  "id": "wan-vace-1.3b",
+  "name": "Wan2.1 VACE",
+  "family": "Wan-AI",
+  "version": "1.3B",
+  "status": "ready",
+  "kind": "video",
+  "verified": false,
+  "hf_repo": "Wan-AI/Wan2.1-VACE-1.3B-diffusers",
+  "modes": [
+    "replace"
+  ],
+  "summary": "Replace a person in a video with someone from a photo. Reel finds and follows the person, then the model repaints them. 480p, up to about 5 seconds; small enough for 16 GB without 4-bit.",
+  "license": "Apache-2.0",
+  "license_url": "https://huggingface.co/Wan-AI/Wan2.1-VACE-1.3B-diffusers",
+  "tasks": [
+    "video-editing"
+  ],
+  "inputs": {
+    "video": {
+      "type": "video",
+      "max": 1,
+      "required": true,
+      "modes": [
+        "replace"
+      ],
+      "label": "Video",
+      "help": "Use a short clip (5 seconds or less) with the person fully in view."
+    },
+    "person": {
+      "type": "image",
+      "max": 3,
+      "required": true,
+      "modes": [
+        "replace"
+      ],
+      "label": "New person",
+      "help": "One to three clear photos of who should appear instead."
+    },
+    "point": {
+      "type": "point",
+      "max": 1,
+      "modes": [
+        "replace"
+      ],
+      "label": "Which person?",
+      "help": "Only needed when several people are in the video: click the one to replace. Otherwise the largest person is used."
+    }
+  },
+  "adapter": "wan_vace",
+  "adapter_config": {
+    "pipeline": "WanVACEPipeline",
+    "flow_shift": 3.0,
+    "segmenter_dir": "segmenter"
+  },
+  "download_gb": 15.6,
+  "vram_gb": 10,
+  "vram_note": "Estimate from the weights' tensor sizes plus the video latents; not measured. A person-finding model (Mask2Former, 0.2 GB) is loaded for a moment before generating.",
+  "python": {
+    "torch_index": "https://download.pytorch.org/whl/cu128",
+    "torch": [
+      "torch>=2.7",
+      "torchvision"
+    ],
+    "packages": [
+      "diffusers>=0.35",
+      "transformers>=4.49",
+      "accelerate>=1.4",
+      "bitsandbytes>=0.46",
+      "sentencepiece",
+      "protobuf",
+      "ftfy",
+      "safetensors",
+      "huggingface_hub",
+      "imageio",
+      "imageio-ffmpeg",
+      "numpy",
+      "Pillow"
+    ]
+  },
+  "weights": [
+    {
+      "repo_id": "Wan-AI/Wan2.1-VACE-1.3B-diffusers",
+      "revision": "ec4d2cb062b548996b179d493fdd05340de702a1",
+      "dest": ".",
+      "allow_patterns": [
+        "model_index.json",
+        "scheduler/*",
+        "tokenizer/*",
+        "text_encoder/*",
+        "transformer/*",
+        "vae/*"
+      ]
+    },
+    {
+      "repo_id": "facebook/mask2former-swin-tiny-coco-panoptic",
+      "revision": "df6b1142ff50c3276559d9d78f35f6a579c75a77",
+      "dest": "segmenter",
+      "allow_patterns": [
+        "config.json",
+        "preprocessor_config.json",
+        "model.safetensors"
+      ]
+    }
+  ],
+  "limits": {
+    "max_width": 832,
+    "max_height": 832,
+    "max_area_frames": 33554432,
+    "size_multiple": 16,
+    "frames": {
+      "step": 4,
+      "offset": 1,
+      "min": 5,
+      "max": 81,
+      "default": 81
+    },
+    "fps": 16,
+    "steps": {
+      "min": 1,
+      "max": 80
+    },
+    "presets": [
+      {
+        "w": 480,
+        "h": 480
+      },
+      {
+        "w": 640,
+        "h": 384
+      },
+      {
+        "w": 832,
+        "h": 480
+      },
+      {
+        "w": 480,
+        "h": 832
+      },
+      {
+        "w": 624,
+        "h": 624
+      }
+    ]
+  },
+  "native": {
+    "label": "832\u00d7480",
+    "resolutions": [
+      {
+        "w": 832,
+        "h": 480,
+        "label": "832\u00d7480 (16:9)"
+      },
+      {
+        "w": 480,
+        "h": 832,
+        "label": "480\u00d7832 (9:16)"
+      }
+    ],
+    "frames": [
+      81
+    ],
+    "fps": 16,
+    "source": "https://huggingface.co/Wan-AI/Wan2.1-VACE-1.3B-diffusers",
+    "note": "The 1.3B model is trained for 480p; sizes are multiples of 16 and frames are 4n+1 (81 is 5 seconds at 16 fps). The card uses guidance 5.0 and flow shift 3.0 for 480p."
+  },
+  "unlock": {
+    "max_width": 1280,
+    "max_height": 1280,
+    "max_frames": 161,
+    "known": false,
+    "note": "Reel's own ceiling. The 1.3B model is only trained for 480p, so larger sizes and longer clips lose quality."
+  },
+  "defaults": {
+    "width": 832,
+    "height": 480,
+    "frames": 81,
+    "steps": 30,
+    "guidance": 5.0,
+    "negative_prompt": "blurry, low quality, distorted, jittery, watermark, text, static",
+    "offload": "model",
+    "vae_tiling": true,
+    "quantization": "none"
+  },
+  "memory": {
+    "offload_options": [
+      "none",
+      "model",
+      "sequential"
+    ],
+    "quantization_options": [
+      "none"
+    ],
+    "notes": "The 1.3B transformer is only about 7 GB in bf16, so no quantization is offered. The umT5 text encoder (11 GB) is the biggest part.",
+    "estimate": {
+      "weights_gb": {
+        "transformer": 7.1,
+        "text_encoder": 11.4,
+        "vae": 0.5
+      },
+      "quantized": [],
+      "denoiser": "transformer",
+      "tokens": {
+        "spatial": 16,
+        "temporal": 4
+      },
+      "hidden": 1536,
+      "vae_mb_per_mpx_frame": 768,
+      "vae_tile_mpx_frames": 1.5
+    }
+  }
+}

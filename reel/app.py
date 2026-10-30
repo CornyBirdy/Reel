@@ -103,5 +103,7 @@ async def revalidate_static(request, call_next):
 
 
 config.OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
+config.INPUTS_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/outputs", StaticFiles(directory=config.OUTPUTS_DIR), name="outputs")
+app.mount("/inputs", StaticFiles(directory=config.INPUTS_DIR), name="inputs")
 app.mount("/static", StaticFiles(directory=config.STATIC_DIR), name="static")

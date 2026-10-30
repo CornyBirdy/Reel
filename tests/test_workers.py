@@ -85,6 +85,27 @@ class WorkerLifecycle(unittest.TestCase):
         self.assertEqual(self.pid_of(a), self.pid_of(b))
         self.assertEqual(len(history.list_clips()[0]), 2)
 
+    def test_inputs_reach_the_model_process_as_file_paths(self):
+        from reel import inputs
+        with mock.patch.object(config, "INPUTS_DIR", Path(self.tmp.name) / "inputs"):
+            ref = inputs.store(b"\x89PNG\r\n\x1a\n" + b"\0" * 32)["ref"]
+            job = self.run_job(steps=2, mode="frames", inputs={"start_image": [ref]})
+            self.assertEqual(job.status, "done", (job.error, job.error_detail))
+            written = (Path(config.OUTPUTS_DIR) / job.clips[0]["file"]).read_text()
+            self.assertIn("mode:frames", written)
+            self.assertIn(".png", written)
+            self.assertNotIn(ref, written)                 # the process is given paths, never references
+            self.assertEqual(job.clips[0]["params"]["inputs"], {"start_image": [ref]})   # History keeps the references
+            plain = self.run_job(steps=2)                  # an ordinary request carries no inputs at all
+            self.assertIn("mode:video inputs:{}", (Path(config.OUTPUTS_DIR) / plain.clips[0]["file"]).read_text())
+            bad = self.gen_error(mode="frames")            # a start frame is required in this mode
+            self.assertIn("Start frame", bad)
+
+    def gen_error(self, **kw):
+        with self.assertRaises(GenerationError) as caught:
+            self.gen.start("ltx-video", {"prompt": "x", **kw})
+        return str(caught.exception)
+
     def test_unload_ends_the_process(self):
         self.run_job(steps=2)
         w = self.manager.worker
@@ -129,6 +150,58 @@ class WorkerLifecycle(unittest.TestCase):
         self.assertEqual(again.status, "done")
         self.assertTrue(again.reused)
         self.assertEqual(self.pid_of(again), self.pid_of(ok))
+
+    def test_pause_holds_the_generation_at_its_next_step_and_resume_carries_on(self):
+        job = self.gen.start("ltx-video", {"prompt": "slow one", "steps": 5})
+        end = time.time() + 10
+        while job.step < 5 and time.time() < end:
+            time.sleep(0.05)
+        self.gen.pause()
+        self.assertTrue(job.pausing)
+        end = time.time() + 10
+        while not job.paused and time.time() < end:
+            time.sleep(0.05)
+        self.assertTrue(job.paused)
+        self.assertFalse(job.pausing)
+        self.assertEqual(self.manager.status()["state"], "generating")     # still holding the model
+        step = job.step
+        time.sleep(0.8)
+        self.assertEqual(job.step, step)                                    # it does not advance while paused
+        a = job.to_dict()["elapsed"]
+        time.sleep(0.5)
+        self.assertLess(job.to_dict()["elapsed"] - a, 0.2)                  # paused time is not counted
+        self.gen.resume()
+        end = time.time() + 10
+        while job.paused and time.time() < end:
+            time.sleep(0.05)
+        time.sleep(0.5)
+        self.assertGreater(job.step, step)
+        self.gen.cancel()
+        while job.status == "running":
+            time.sleep(0.05)
+        self.assertEqual(job.status, "cancelled")
+
+    def test_a_paused_generation_can_be_cancelled_without_unloading_the_model(self):
+        job = self.gen.start("ltx-video", {"prompt": "slow one", "steps": 5})
+        end = time.time() + 10
+        while job.step < 3 and time.time() < end:
+            time.sleep(0.05)
+        self.gen.pause()
+        while not job.paused:
+            time.sleep(0.05)
+        self.gen.cancel()
+        end = time.time() + 10
+        while job.status == "running" and time.time() < end:
+            time.sleep(0.05)
+        self.assertEqual(job.status, "cancelled")
+        self.assertTrue(self.manager.worker.alive)
+        self.assertEqual(self.manager.status()["state"], "ready")
+
+    def test_nothing_to_pause_is_an_error(self):
+        with self.assertRaises(GenerationError):
+            self.gen.pause()
+        with self.assertRaises(GenerationError):
+            self.gen.resume()
 
     def test_a_crash_is_reported_per_request_and_the_next_run_restarts_the_worker(self):
         ok = self.run_job(steps=2)

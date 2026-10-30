@@ -4,6 +4,7 @@ The prompt picks the behaviour: "crash" kills the process with SIGSEGV, "oom" ra
 time (so there is something to cancel); anything else finishes quickly. Output files contain the worker's pid, which
 shows whether two runs used the same process.
 """
+import json
 import os
 import signal
 import time
@@ -43,7 +44,8 @@ class Adapter:
                 emit(event="progress", step=s + 1, total=steps, item=i, items=len(request["outputs"]))
                 time.sleep(0.01)
             with open(item["path"], "w", encoding="utf-8") as fh:
-                fh.write(f"pid:{os.getpid()} quantization:{self.load_req.get('quantization')}")
+                fh.write(f"pid:{os.getpid()} quantization:{self.load_req.get('quantization')} mode:{request.get('mode')} "
+                         f"inputs:{json.dumps(request.get('inputs'))}")
             emit(event="item_done", index=i, items=len(request["outputs"]), output=item["path"], seed=item["seed"],
                  seconds=0.1, peak_vram_gb=None, device="cpu", device_name=None, frames=1)
         emit(event="done", items=len(request["outputs"]), seconds=0.1, peak_vram_gb=None, device="cpu", device_name=None)

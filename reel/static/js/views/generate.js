@@ -4,14 +4,33 @@ import { KEEPS_MEMORY, crashNotice, holdsText, holdsTitle, idleText, loadButton,
 import { ATTN_LABEL, OFFLOAD_LABEL, QUANT_LABEL, describeCeiling, dims, resolutionChoices, snapFrames } from "../limits.js";
 import { fetchEstimate, renderEstimate } from "../estimate.js";
 import { openModelSettings } from "../model_settings.js";
+import { filePicker, itemFromClip, measure, pointPicker } from "../inputs.js";
 
 const FORM_KEY = "reel.generate.form";
 const PHASES = {
   video: [["loading", "Load model"], ["denoising", "Generate frames"], ["decoding", "Decode video"], ["encoding", "Write mp4"]],
   image: [["loading", "Load model"], ["denoising", "Generate image"], ["decoding", "Decode image"], ["encoding", "Save PNG"]],
+  replace: [["loading", "Load model"], ["masking", "Find the person"], ["denoising", "Generate frames"], ["decoding", "Decode video"], ["encoding", "Write mp4"]],
   upscale: [["loading", "Load upscaler"], ["denoising", "Upscale"], ["encoding", "Save"]],
 };
 const KIND_LABEL = { image: "Image", video: "Video" };
+// What the form can do. A model lists the modes it supports; the first three produce a picture, the rest a video.
+const MODES = [["image", "Image", "image"], ["video", "Video", "generate"], ["edit", "Edit", "edit"], ["frames", "Frames", "load"], ["replace", "Replace", "rerun"]];
+const MODE_KIND = { image: "image", edit: "image", video: "video", frames: "video", replace: "video" };
+const MODE_LABEL = { image: "Image", video: "Video", edit: "Edit a picture", frames: "Start and end frames", replace: "Replace a person" };
+const MODE_HELP = {
+  edit: "Edit models change a picture you give them, from a written instruction. Install Qwen-Image-Edit or FLUX.1 Kontext from the Library.",
+  frames: "Frames mode makes a clip that starts on (and optionally ends on) pictures you choose. LTX-Video does it: install it from the Library.",
+  replace: "Replace mode swaps a person in a video for someone from a photo. Install Wan2.1 VACE from the Library.",
+};
+const PLACEHOLDER = {
+  image: "A watercolor fox in a misty pine forest, soft morning light, detailed fur…",
+  video: "A slow dolly shot through a rain-soaked neon alley at night, reflections on the wet street…",
+  edit: "Change the jacket to red leather and keep everything else the same…",
+  frames: "The camera slowly pushes in as the light changes from dawn to full day…",
+  replace: "A woman with short red hair in a green raincoat walks along the same street…",
+};
+const supports = (m, mode) => (m.modes || [m.kind]).includes(mode);
 const isImageUrl = (url) => /\.png$/i.test(url);
 // Element.append turns null into the text "null"; optional children are dropped here instead.
 const put = (el, ...kids) => el.append(...kids.filter((k) => k !== null && k !== undefined && k !== false));
@@ -26,7 +45,10 @@ function field(label, control, hint, id) {
 export async function mount(root) {
   let models = [];       // every installed generator (image or video)
   let upscalers = [];    // installed upscalers
-  let kind = "video";    // which kind the form is showing
+  let mode = "video";    // what the form is set up to do (see MODES)
+  let kind = "video";    // the kind of thing that produces: image or video
+  const inputVals = {};  // the pictures/video chosen for each input name: [{ref, url, kind, w, h}], or [x, y] for a point
+  let pickers = {};
   let histFilter = "all";
   let alive = true;
   let timer = null;
@@ -57,14 +79,15 @@ export async function mount(root) {
     upscalers = d.models.filter((m) => m.installed && m.kind === "upscale");
   }
   const modelById = (id) => models.find((m) => m.id === id);
-  const ofKind = () => models.filter((m) => m.kind === kind);
+  const ofMode = () => models.filter((m) => supports(m, mode));
+  const setMode = (m) => { mode = m; kind = MODE_KIND[m]; };
   let wantedModel = q.get("model") || saved.model_id;
 
-  function kindSwitch() {
+  function modeSwitch() {
     const seg = h("div", { class: "seg seg-fill", role: "group", "aria-label": "What to generate" });
-    for (const [v, label, ic] of [["image", "Image", "image"], ["video", "Video", "generate"]]) {
-      seg.append(h("button", { type: "button", "aria-pressed": String(kind === v), disabled: activeRunning() || undefined,
-        onclick: () => { if (kind === v) return; kind = v; wantedModel = null; persist(); buildForm(); renderOutput(); } }, icon(ic), label));
+    for (const [v, label, ic] of MODES) {
+      seg.append(h("button", { type: "button", "aria-pressed": String(mode === v), title: MODE_LABEL[v], disabled: activeRunning() || undefined,
+        onclick: () => { if (mode === v) return; setMode(v); wantedModel = null; persist(); buildForm(); renderOutput(); } }, icon(ic), label));
     }
     return seg;
   }
@@ -75,24 +98,25 @@ export async function mount(root) {
 
   function buildForm() {
     clear(formCard);
-    formCard.append(kindSwitch());
-    const list = ofKind();
+    formCard.append(modeSwitch());
+    const list = ofMode();
     if (!list.length) {
       model = null;
       formCard.append(h("div", { class: "empty" }, icon(kind === "image" ? "image" : "generate"),
-        h("div", {}, h("strong", {}, `No ${kind} models installed yet`), h("div", {}, `Install one from the Library, or add one from Hugging Face.`)),
+        h("div", {}, h("strong", {}, `No ${MODE_LABEL[mode].toLowerCase()} models installed yet`),
+          h("div", {}, MODE_HELP[mode] || "Install one from the Library, or add one from Hugging Face.")),
         h("a", { class: "btn btn-primary", href: "#/library" }, icon("library"), "Open Library")));
       return;
     }
     model = list.find((m) => m.id === wantedModel) || list[0];
 
     f.worker = h("div", { class: "stack-8 worker-row" });
-    f.model = h("select", { id: "g-model", class: "select", onchange: () => { model = modelById(f.model.value); applyModel(model, true); persist(); renderWorker(); } },
+    f.inputs = h("div", { class: "stack-12 input-section", hidden: true });
+    f.model = h("select", { id: "g-model", class: "select", onchange: () => { model = modelById(f.model.value); applyModel(model, true); buildInputs(); persist(); renderWorker(); } },
       list.map((m) => h("option", { value: m.id, selected: m.id === model.id },
         `${m.name} ${m.version || ""}`.trim() + (m.native_label ? ` · native ${m.native_label}` : ""))));
     f.prompt = h("textarea", { id: "g-prompt", class: "textarea", rows: 4, maxlength: 4000, oninput: persist,
-      placeholder: kind === "image" ? "A watercolor fox in a misty pine forest, soft morning light, detailed fur…"
-                                    : "A slow dolly shot through a rain-soaked neon alley at night, reflections on the wet street…" });
+      placeholder: PLACEHOLDER[mode] });
     f.negative = h("textarea", { id: "g-neg", class: "textarea", rows: 2, oninput: persist });
     f.res = h("select", { id: "g-res", class: "select", onchange: () => { syncCustom(); persist(); validate(); refreshEstimate(); } });
     f.cw = h("input", { id: "g-cw", class: "input", type: "number", oninput: () => { persist(); validate(); refreshEstimate(); } });
@@ -119,11 +143,15 @@ export async function mount(root) {
     f.goLabel = h("span", {}, "Generate");
     f.go = h("button", { class: "btn btn-primary grow", type: "button", onclick: () => start() }, icon("play"), f.goLabel);
     f.stop = h("button", { class: "btn", type: "button", hidden: true, onclick: () => api.post("/api/generate/cancel").catch((e) => toast(e.message, "danger")) }, icon("stop"), "Cancel");
+    f.pause = h("button", { class: "btn", type: "button", hidden: true, onclick: () => togglePause() });
 
     formCard.append(
       field("Model", f.model, null, "g-model"),
       f.worker,
-      field("Prompt", f.prompt, "Describe subject, action, camera and lighting. Longer, concrete prompts work best.", "g-prompt"),
+      f.inputs,
+      field("Prompt", f.prompt, mode === "edit" ? "Say what to change, as an instruction (\"make the sky stormy\"). Everything you do not mention is kept."
+        : mode === "replace" ? "Describe the new person and the scene as it should look."
+        : "Describe subject, action, camera and lighting. Longer, concrete prompts work best.", "g-prompt"),
       field("Negative prompt", f.negative, null, "g-neg"),
       h("div", { class: kind === "video" ? "grid-2" : "" },
         field("Resolution", f.res, null, "g-res"),
@@ -146,10 +174,11 @@ export async function mount(root) {
           h("div", { class: "field-hint", id: "mem-note" }))),
       f.est, f.caps, f.fit, f.warn,
       h("div", { class: "row-8 action-row" },
-        h("div", { class: "count-pick" }, h("label", { for: "g-count", class: "count-label" }, "Count"), f.count), f.go, f.stop),
+        h("div", { class: "count-pick" }, h("label", { for: "g-count", class: "count-label" }, "Count"), f.count), f.go, f.pause, f.stop),
       h("div", { class: "field-hint" }, "Several at once: the model loads once, then each one uses its own seed (seed, seed+1, …). Every finished one is saved as it completes."));
 
     applyModel(model, false);
+    buildInputs();
     for (const [k, v] of Object.entries(saved)) {
       if (saved.model_id !== model.id) break;
       if (k === "prompt") f.prompt.value = v;
@@ -332,7 +361,109 @@ export async function mount(root) {
       warn(`Width and height must be between 64 and ${dims(maxSide("width"), maxSide("height"))}: the most ${model.name}'s pipeline supports.`);
     }
     if (!activeRunning()) f.go.disabled = !ok;
+    syncPoint();
     return ok;
+  }
+
+  // ---- inputs: the pictures or video the model works from ----
+  const modeRules = () => Object.entries((model && model.inputs) || {}).filter(([, r]) => (r.modes || model.modes || [model.kind]).includes(mode));
+  let primaryRef = null;     // the picture/video the size was last matched to
+
+  function buildInputs() {
+    pickers = {};
+    clear(f.inputs);
+    const rules = modeRules();
+    f.inputs.hidden = !rules.length;
+    if (!rules.length) return;
+    for (const [name, rule] of rules) {
+      const picker = rule.type === "point"
+        ? pointPicker(name, rule, { initial: inputVals[name] || null, onChange: (p) => { inputVals[name] = p; } })
+        : filePicker(name, rule, { initial: (inputVals[name] || []).filter((i) => i.kind === rule.type), onChange: (items) => { inputVals[name] = items; inputsChanged(); } });
+      pickers[name] = picker;
+      f.inputs.append(rule.type === "point" ? h("div", { class: "field" }, h("label", {}, rule.label || name), picker.el)
+        : h("div", { class: "field" }, h("label", {}, rule.label || name, rule.required ? " *" : ""), picker.el, rule.help ? h("span", { class: "field-hint" }, rule.help) : null));
+    }
+    f.inputs.append(h("div", { class: "row-8" }, h("button", { class: "btn btn-ghost", type: "button",
+      title: "Set the width and height to the first picture's shape, at this model's usual size", onclick: () => matchSize(primaryItem()) }, icon("image"), "Match picture size")));
+    for (const [name, rule] of rules) if (rule.type !== "point" && !inputVals[name]) inputVals[name] = [];
+    primaryRef = (primaryItem() || {}).ref || null;
+    syncPoint();
+  }
+
+  const primaryItem = () => {
+    for (const [name, rule] of modeRules()) if (rule.type !== "point") { const it = (inputVals[name] || [])[0]; if (it) return it; }
+    return null;
+  };
+
+  function inputsChanged() {
+    const first = primaryItem();
+    if (first && first.ref !== primaryRef) matchSize(first);
+    primaryRef = first ? first.ref : null;
+    syncPoint();
+  }
+
+  // The person-picking frame shows the video as the model will see it: centre-cropped to the output shape.
+  function syncPoint() {
+    for (const [name, rule] of modeRules()) {
+      if (rule.type !== "point" || !pickers[name]) continue;
+      const video = modeRules().find(([n, r]) => r.type === "video" && (inputVals[n] || []).length);
+      pickers[name].setVideo(video ? inputVals[video[0]][0].url : null);
+      const [w, hh] = getSize();
+      pickers[name].setAspect(w, hh);
+    }
+  }
+
+  // Width and height in the picture's shape, at about the model's usual number of pixels.
+  function matchSize(item) {
+    if (!item || !item.w || !item.h || !model) return;
+    const mult = model.limits.size_multiple, sv = model.settings || {}, d = model.defaults;
+    const area = (sv.width ?? d.width) * (sv.height ?? d.height);
+    const ratio = item.w / item.h;
+    const hh = Math.sqrt(area / ratio);
+    const snap = (v, max) => Math.min(Math.max(Math.round(v / mult) * mult, mult * Math.ceil(64 / mult)), Math.floor(max / mult) * mult);
+    setSize(snap(hh * ratio, maxSide("width")), snap(hh, maxSide("height")));
+    syncCustom(); validate(); persist(); refreshEstimate();
+  }
+
+  // The inputs as the server wants them: references (or a point) for the ones that are filled in.
+  function inputsBody() {
+    const out = {};
+    for (const [name, rule] of modeRules()) {
+      const v = inputVals[name];
+      if (rule.type === "point") { if (v) out[name] = v; }
+      else if (v && v.length) out[name] = v.map((i) => i.ref);
+    }
+    return out;
+  }
+
+  function missingInput() {
+    for (const [name, rule] of modeRules()) {
+      if (rule.required && !(inputVals[name] || []).length) return `${rule.label || name}: add a ${rule.type === "video" ? "video" : "picture"} first.`;
+    }
+    return null;
+  }
+
+  // "Edit this picture", "Use as start frame", "Replace a person in this video": send an item from the viewer into the form.
+  const USES = {
+    edit: { mode: "edit", input: "images", label: "Edit picture", ic: "edit" },
+    start: { mode: "frames", input: "start_image", label: "Start frame", ic: "load" },
+    end: { mode: "frames", input: "end_image", label: "End frame", ic: "load" },
+    replace: { mode: "replace", input: "video", label: "Replace a person", ic: "rerun" },
+  };
+  const canUse = (use) => models.some((m) => supports(m, use.mode) && m.inputs && m.inputs[use.input]);
+
+  function useAs(clip, how) {
+    const use = USES[how];
+    const options = models.filter((m) => supports(m, use.mode) && m.inputs && m.inputs[use.input]);
+    if (!options.length) { toast("Install a model for this in the Library first.", "warning"); return; }
+    setMode(use.mode);
+    wantedModel = (options.find((m) => model && m.id === model.id) || options[0]).id;
+    inputVals[use.input] = [itemFromClip(clip)];
+    primaryRef = null;
+    buildForm(); persist(); renderOutput();
+    const first = primaryItem();
+    if (first) measure(first, () => matchSize(first));
+    formCard.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
   // ---- live memory estimate (VRAM and system RAM) against what this PC has right now ----
@@ -358,7 +489,7 @@ export async function mount(root) {
   function readForm() {
     const [w, hgt] = getSize();
     return {
-      model_id: model.id, prompt: f.prompt.value, negative_prompt: f.negative.value,
+      model_id: model.id, mode, inputs: model.inputs ? inputsBody() : undefined, prompt: f.prompt.value, negative_prompt: f.negative.value,
       width: w, height: hgt, frames: kind === "video" ? Number(f.frames.value) : undefined, steps: Number(f.steps.value),
       fps: kind === "video" ? Number(f.fps.value) || undefined : undefined,
       guidance: Number(f.guidance.value), seed: f.seed.value === "" ? null : Number(f.seed.value),
@@ -371,18 +502,28 @@ export async function mount(root) {
   function persist() {
     if (!model) return;
     saveForm({
-      kind, model_id: model.id, prompt: f.prompt.value, negative_prompt: f.negative.value, seed: f.seed.value,
+      kind, mode, model_id: model.id, prompt: f.prompt.value, negative_prompt: f.negative.value, seed: f.seed.value,
       res: f.res.value, cw: f.cw.value, ch: f.ch.value, fps: f.fps.value, frames: f.frames.value, steps: f.steps.value, guidance: f.guidance.value,
       offload: f.offload.value, quantization: f.quant.value, vae_tiling: f.tiling.checked, count: f.count.value,
       attention_backend: f.attn.value,
     });
   }
 
-  function loadSettings(clip) {
+  async function loadSettings(clip) {
     const m = modelById(clip.model_id);
     if (!m) { toast(`${clip.model_name} is not installed any more.`, "warning"); return; }
     const p = clip.params;
-    if (m.kind !== kind || !model || model.id !== m.id) { kind = m.kind; wantedModel = m.id; buildForm(); }
+    const wantMode = p.mode && supports(m, p.mode) ? p.mode : (m.modes || [m.kind])[0];
+    if (wantMode !== mode || !model || model.id !== m.id) { setMode(wantMode); wantedModel = m.id; buildForm(); }
+    // put back the pictures or video it was made from (an upload that has expired is skipped)
+    for (const [name, value] of Object.entries(p.inputs || {})) {
+      if (!Array.isArray(value)) continue;
+      if (value.length === 2 && typeof value[0] === "number") { inputVals[name] = value; continue; }
+      const got = await Promise.all(value.map((ref) => api.get(`/api/inputs/describe?ref=${encodeURIComponent(ref)}`).catch(() => null)));
+      inputVals[name] = got.filter(Boolean);
+    }
+    primaryRef = null;
+    buildInputs();
     f.prompt.value = clip.prompt; f.negative.value = p.negative_prompt || "";
     setSize(p.width, p.height);
     syncCustom();
@@ -401,7 +542,11 @@ export async function mount(root) {
     const req = body || readForm();
     if (!model) return;
     if (!body && !validate()) return;
-    if (!body) { if (!req.prompt.trim()) { toast("Write a prompt first.", "warning"); f.prompt.focus(); return; } }
+    if (!body) {
+      const missing = missingInput();
+      if (missing) { toast(missing, "warning", 5000); return; }
+      if (!req.prompt.trim()) { toast("Write a prompt first.", "warning"); f.prompt.focus(); return; }
+    }
     try {
       activeJob = await api.post("/api/generate", req);
       userPicked = false;
@@ -449,6 +594,20 @@ export async function mount(root) {
   function syncRunButtons() {
     const running = activeRunning();
     if (f.go) { f.go.hidden = running; f.stop.hidden = !running; f.go.disabled = running; }
+    if (f.pause) {
+      const held = running && (activeJob.paused || activeJob.pausing);
+      f.pause.hidden = !running;
+      clear(f.pause);
+      f.pause.append(icon(held ? "play" : "pause"), held ? "Resume" : "Pause");
+      f.pause.title = held ? "Carry on from where it stopped" : "Hold the generation at its next step. The model stays loaded and nothing is lost";
+    }
+  }
+
+  async function togglePause() {
+    if (!activeRunning()) return;
+    const held = activeJob.paused || activeJob.pausing;
+    try { await api.post(held ? "/api/generate/resume" : "/api/generate/pause"); poll(); }
+    catch (e) { toast(e.message, "danger", 6000); }
   }
 
   function renderProgress() {
@@ -456,7 +615,7 @@ export async function mount(root) {
     const job = activeJob;
     if (activeRunning()) {
       const up = !!(job.params && job.params.upscale);
-      const phases = up ? PHASES.upscale : PHASES[job.kind || "video"];
+      const phases = up ? PHASES.upscale : job.params.mode === "replace" ? PHASES.replace : PHASES[job.kind || "video"];
       const order = phases.map((p) => p[0]);
       const idx = Math.max(0, order.indexOf(job.phase === "encoding-prompt" ? "loading" : job.phase));
       const inner = up
@@ -467,13 +626,13 @@ export async function mount(root) {
       const frac = ((job.item - 1) + inner) / Math.max(job.items, 1);
       const of = job.items > 1 ? `${job.kind === "image" ? "Image" : "Clip"} ${job.item} of ${job.items} · ` : "";
       progressEl.append(h("div", { class: "progress-panel stack-12" },
-        h("div", { class: "row-between" }, h("h3", {}, up ? `Upscaling ${job.params.upscale.scale}× with ${job.model_name}` : job.items > 1 ? `Generating ${job.items} with ${job.model_name}` : `Generating with ${job.model_name}`), statusBadge("info", "Running", "play")),
+        h("div", { class: "row-between" }, h("h3", {}, up ? `Upscaling ${job.params.upscale.scale}× with ${job.model_name}` : job.items > 1 ? `Generating ${job.items} with ${job.model_name}` : `Generating with ${job.model_name}`), job.paused ? statusBadge("warning", "Paused", "pause") : job.pausing ? statusBadge("warning", "Pausing…", "pause") : statusBadge("info", "Running", "play")),
         h("ol", { class: "steps", "aria-label": "Generation steps" },
           phases.map(([id, label], i) => h("li", { class: "step", "data-state": i < idx ? "done" : i === idx ? "active" : "pending", "aria-current": i === idx ? "step" : undefined },
             icon(i < idx ? "check" : i === idx ? "play" : "clock"), h("span", {}, label)))),
-        progressBar(frac, { indeterminate: job.phase === "loading" && job.step === 0, label: up ? "Upscale progress" : "Generation progress" }),
+        progressBar(frac, { indeterminate: job.phase === "loading" && job.step === 0 && !job.paused, label: up ? "Upscale progress" : "Generation progress" }),
         h("div", { class: "progress-meta" },
-          h("span", {}, job.phase === "denoising" && !up ? `${of}Step ${job.step} of ${job.total}` : `${of}${job.message}`),
+          h("span", {}, job.paused ? `${of}Paused at step ${job.step} of ${job.total}. The model stays loaded.` : job.pausing ? `${of}Pausing at the end of this step…` : job.phase === "denoising" && !up ? `${of}Step ${job.step} of ${job.total}` : `${of}${job.message}`),
           h("span", {}, [`${fmtDuration(job.elapsed)} elapsed`, job.eta ? `~${fmtDuration(job.eta)} left` : null].filter(Boolean).join(" · "))),
         job.reused ? h("div", { class: "field-hint" }, "The model was already loaded, so this run skipped loading.") : null,
         h("p", { class: "muted" }, job.params.prompt),
@@ -534,7 +693,9 @@ export async function mount(root) {
         h("a", { class: "btn", href: clip.url, download: `reel-${clip.id}.${image ? "png" : "mp4"}` }, icon("download"), "Download"),
         upscaled ? null : h("button", { class: "btn", type: "button", onclick: () => loadSettings(clip) }, icon("load"), "Reuse settings"),
         upscaled ? null : h("button", { class: "btn", type: "button", disabled: activeRunning(), onclick: () => rerun(clip) }, icon("rerun"), "Re-run"),
-        ...upscaleButtons(clip)));
+        ...upscaleButtons(clip),
+        ...(image ? ["edit", "start", "end"] : ["replace"]).filter((k) => canUse(USES[k])).map((k) => h("button", { class: "btn", type: "button", disabled: activeRunning(),
+          title: `Open ${USES[k].label.toLowerCase()} with this ${image ? "picture" : "video"} already added`, onclick: () => useAs(clip, k) }, icon(USES[k].ic), USES[k].label))));
     renderHistory();
   }
 
@@ -632,9 +793,11 @@ export async function mount(root) {
   await loadModels();
   {
     const byQuery = models.find((m) => m.id === q.get("model"));
-    kind = (byQuery && byQuery.kind) || (["image", "video"].includes(saved.kind) ? saved.kind : null)
-      || (models.length ? models[0].kind : "image");
-    if (!models.some((m) => m.kind === kind) && models.length) kind = models[0].kind;
+    const first = (m) => (m.modes || [m.kind])[0];
+    let want = byQuery ? (supports(byQuery, saved.mode) ? saved.mode : first(byQuery))
+      : MODE_KIND[saved.mode] ? saved.mode : ["image", "video"].includes(saved.kind) ? saved.kind : (models.length ? first(models[0]) : "image");
+    if (!models.some((m) => supports(m, want)) && models.length) want = first(models[0]);
+    setMode(want);
   }
   watcher = watchWorker((w) => { worker = w; renderWorker(); });
   buildForm();

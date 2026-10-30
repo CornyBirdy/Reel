@@ -49,6 +49,7 @@ warnings.filterwarnings("ignore", message=".*MatMul8bitLt.*")
 _emit_lock = threading.Lock()
 CURRENT_ID: str | None = None   # the request the events belong to (set by worker.py around each command)
 CANCEL = threading.Event()      # set by worker.py when the app asks to stop the current generation
+PAUSE = threading.Event()       # set by worker.py while the app has paused it: the run waits at its next step
 
 
 class Cancelled(Exception):
@@ -56,8 +57,16 @@ class Cancelled(Exception):
 
 
 def check_cancel() -> None:
+    """Called at every step: stop if cancelled, and wait here while paused (the model stays loaded, the GPU idles)."""
     if CANCEL.is_set():
         raise Cancelled()
+    if PAUSE.is_set():
+        emit(event="paused")
+        while PAUSE.is_set():
+            if CANCEL.is_set():
+                raise Cancelled()
+            time.sleep(0.2)
+        emit(event="resumed")
 
 
 def emit(**event) -> None:
@@ -97,6 +106,23 @@ def online_for_kernels():
     finally:
         for mod, value in saved:
             mod.HF_HUB_OFFLINE = value
+
+
+def fit_image(img, width: int, height: int):
+    """Center-crop to the target aspect ratio, then resize, so an input is never stretched."""
+    from PIL import Image
+    src_w, src_h = img.size
+    scale = max(width / src_w, height / src_h)
+    new_w, new_h = max(round(src_w * scale), width), max(round(src_h * scale), height)
+    img = img.resize((new_w, new_h), Image.LANCZOS)
+    left, top = (new_w - width) // 2, (new_h - height) // 2
+    return img.crop((left, top, left + width, top + height))
+
+
+def open_image(path):
+    """An input picture as RGB, upright according to its EXIF orientation."""
+    from PIL import Image, ImageOps
+    return ImageOps.exif_transpose(Image.open(path)).convert("RGB")
 
 
 class BaseAdapter:
