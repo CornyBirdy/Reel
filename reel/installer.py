@@ -278,7 +278,8 @@ class InstallManager:
 
             def do_verify():
                 lines: list[str] = []
-                self._run_cmd(job, log, [str(py), str(config.ADAPTERS_DIR / "verify_env.py")], capture=lines, env=system.gpu_env())
+                self._run_cmd(job, log, [str(py), str(config.ADAPTERS_DIR / "verify_env.py"), *recipe.get("verify_modules", [])],
+                              capture=lines, env=system.gpu_env())
                 for line in reversed(lines):
                     if line.startswith("{"):
                         verify_result.update(json.loads(line))
@@ -289,7 +290,7 @@ class InstallManager:
 
             stage("env", "Creating isolated environment", do_env)
             stage("torch", "Installing PyTorch with CUDA 12.8 (this is the big one)", do_torch)
-            stage("packages", "Installing diffusers and dependencies", do_packages)
+            stage("packages", "Installing packages", do_packages)
             stage("weights", "Downloading weights from Hugging Face", do_weights)
             stages.pop("verify", None)
             stage("verify", "Verifying the environment", do_verify)
