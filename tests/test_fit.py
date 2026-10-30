@@ -27,7 +27,8 @@ class Assess(unittest.TestCase):
         self.assertEqual(self.level(self.sdxl, 24), "comfortable")
         self.assertEqual(self.level(self.sdxl, 12), "comfortable")
         self.assertEqual(self.level(self.sdxl, 9), "ok")
-        self.assertEqual(self.level(self.sdxl, 8), "low_memory")
+        self.assertEqual(self.level(self.sdxl, 8), "tight")        # 8 of an estimated 9: defaults still work
+        self.assertEqual(self.level(self.sdxl, 6), "low_memory")
         self.assertEqual(self.level(self.sdxl, 4), "too_big")
 
     def test_small_cards_are_never_called_low_memory_candidates(self):
@@ -38,8 +39,12 @@ class Assess(unittest.TestCase):
         self.assertEqual(a["level"], "no_gpu")
         self.assertIsNone(a["recommended"])
 
-    def test_low_memory_starts_with_sequential_offload_and_nf4(self):
+    def test_a_tight_card_keeps_the_recipe_defaults(self):
         rec = fit.assess(self.sdxl, gpu(8))["recommended"]
+        self.assertEqual((rec["offload"], rec["quantization"]), (self.sdxl["defaults"]["offload"], self.sdxl["defaults"]["quantization"]))
+
+    def test_low_memory_starts_with_sequential_offload_and_nf4(self):
+        rec = fit.assess(self.sdxl, gpu(6))["recommended"]
         self.assertEqual((rec["offload"], rec["quantization"]), ("sequential", "nf4"))
 
     def test_a_big_card_turns_offloading_off_for_speed(self):
@@ -60,8 +65,8 @@ class Assess(unittest.TestCase):
                 self.assertIn(rec["quantization"], mem.get("quantization_options", [rec["quantization"]]), (r["id"], gb))
 
     def test_text_names_the_card_and_the_numbers(self):
-        a = fit.assess(self.sdxl, gpu(8, "NVIDIA GeForce RTX 4060"))
-        self.assertIn("8 GB", a["label"])
+        a = fit.assess(self.sdxl, gpu(6, "NVIDIA GeForce RTX 4060"))
+        self.assertIn("6 GB", a["label"])
         self.assertIn("RTX 4060", a["detail"])
         self.assertIn("9", fit.assess(self.sdxl, gpu(4))["label"])
 

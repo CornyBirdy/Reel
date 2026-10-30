@@ -74,6 +74,14 @@ Reel/
 
 The storage folder in Settings can point the `models/` part elsewhere (for example a big second drive). Python environments cannot be relocated, so changing it does not move existing installs.
 
+### Your graphics card
+
+Reel compares each model's VRAM estimate with the card it will use and says so in the Library (**comfortable**, **should fit**, **tight**, **needs low-memory mode**, **too big**, or no NVIDIA card). Generate then starts from settings that suit the card: sequential offloading and 4-bit weights on a small one, no offloading on a big one. Settings you change yourself are kept. It is advice, not a lock: the numbers are estimates, so you can still try anything.
+
+### Upscaling
+
+Install **Real-ESRGAN x4+** from the Library, then press **Upscale 2×** or **4×** under any image or clip in Generate. It works in tiles, so VRAM use stays small, and the result is saved as a new History item next to the original. Pictures can reach 8K, clips 4K per frame (up to 600 frames).
+
 ### VRAM saving (16 GB target)
 
 Every recipe defaults to the memory-saving options and caps resolution, frame count and (for Wan) width x height x frames so a clip should fit a 16 GB card:
@@ -91,7 +99,7 @@ A model in Reel is two things:
 - a **recipe** (a JSON file): which Hugging Face repos and files to download, which Python packages it needs, its resolution/frame caps for a 16 GB card, and sensible defaults;
 - an **adapter** (a small Python class): how to actually run it. Reel ships dedicated adapters for LTX-Video and Wan 2.2, and a **generic diffusers adapter** that runs any diffusers-format text-to-image or text-to-video repo.
 
-So the set of models is not fixed: it is whatever recipes exist. Built in: SDXL 1.0 and FLUX.1 schnell (image), LTX-Video, Wan 2.2, CogVideoX and HunyuanVideo (video). Everything else comes from **Library > Add from Hugging Face**.
+So the set of models is not fixed: it is whatever recipes exist. Built in: SDXL 1.0 and FLUX.1 schnell (image), LTX-Video, Wan 2.2, CogVideoX and HunyuanVideo (video), and the Real-ESRGAN x4+ upscaler. Everything else comes from **Library > Add from Hugging Face**.
 
 Only LTX-Video has been run end to end by the Reel author; the other built-ins and anything you import are marked **Unverified** until they have been.
 

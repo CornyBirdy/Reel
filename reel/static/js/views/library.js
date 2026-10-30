@@ -62,7 +62,7 @@ function ModelCard(initial, ctx) {
     h("div", { class: "stats" },
       stat("Download", `${m0.download_gb} GB`),
       stat("VRAM needed", `~${m0.vram_gb} GB`),
-      stat("Max resolution", `${m0.limits.max_width} × ${m0.limits.max_height}`),
+      m0.kind === "upscale" ? stat("Scale", m0.limits.scales.map((x) => `${x}×`).join(" · ")) : stat("Max resolution", `${m0.limits.max_width} × ${m0.limits.max_height}`),
       m0.kind === "video" ? stat("Max frames", String(m0.limits.frames.max)) : null,
       m0.kind === "video" ? stat("Frame rate", `${m0.limits.fps} fps`) : null),
     fitSlot, fitNote, diskSlot, panel, actions);
@@ -119,7 +119,9 @@ function ModelCard(initial, ctx) {
         break;
       case "installed":
         actions.append(
-          h("a", { class: "btn btn-primary", href: `#/generate?model=${encodeURIComponent(m.id)}` }, icon("generate"), "Generate"),
+          m.kind === "upscale"
+            ? h("a", { class: "btn btn-primary", href: "#/generate", title: "Press Upscale under any image or clip" }, icon("upscale"), "Open Generate to upscale")
+            : h("a", { class: "btn btn-primary", href: `#/generate?model=${encodeURIComponent(m.id)}` }, icon("generate"), "Generate"),
           ...[remove("Uninstall", "This deletes only this model's folder: its environment and weights."), refresh()].filter(Boolean));
         break;
       case "partial":
@@ -202,13 +204,13 @@ function ModelCard(initial, ctx) {
 
     const fit = m.fit;
     once(fitSlot, JSON.stringify([fit.level, fit.label, m.vram_note]), () => {
-      const [tone, ic] = { comfortable: ["success", "check"], ok: ["success", "check"], low_memory: ["warning", "alert"],
+      const [tone, ic] = { comfortable: ["success", "check"], ok: ["success", "check"], tight: ["info", "info"], low_memory: ["warning", "alert"],
         too_big: ["danger", "error"], no_gpu: ["warning", "alert"] }[fit.level] || ["neutral", "info"];
       fitSlot.append(statusBadge(tone, fit.label, ic, fit.detail));
       if (m.vram_note) fitSlot.append(h("span", { class: "muted", style: { fontSize: "var(--text-xs)" } }, m.vram_note));
     });
     once(fitNote, JSON.stringify([fit.level, fit.detail]), () => {
-      if (["low_memory", "too_big", "no_gpu"].includes(fit.level)) fitNote.append(h("div", { class: "muted", style: { fontSize: "var(--text-sm)" } }, fit.detail));
+      if (["tight", "low_memory", "too_big", "no_gpu"].includes(fit.level)) fitNote.append(h("div", { class: "muted", style: { fontSize: "var(--text-sm)" } }, fit.detail));
     });
 
     diskSlot.hidden = m.disk.total === 0;
@@ -248,7 +250,7 @@ export async function mount(root) {
 
   function drawFilter() {
     clear(filterSeg);
-    for (const [v, label, ic] of [["all", "All", null], ["image", "Image", "image"], ["video", "Video", "generate"]]) {
+    for (const [v, label, ic] of [["all", "All", null], ["image", "Image", "image"], ["video", "Video", "generate"], ["upscale", "Upscale", "upscale"]]) {
       filterSeg.append(h("button", { type: "button", "aria-pressed": String(filter === v), onclick: () => {
         filter = v; try { localStorage.setItem(FILTER_KEY, v); } catch { /* ignore */ }
         drawFilter(); applyFilter();

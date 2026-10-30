@@ -5,9 +5,12 @@ const FORM_KEY = "reel.generate.form";
 const PHASES = {
   video: [["loading", "Load model"], ["denoising", "Generate frames"], ["decoding", "Decode video"], ["encoding", "Write mp4"]],
   image: [["loading", "Load model"], ["denoising", "Generate image"], ["decoding", "Decode image"], ["encoding", "Save PNG"]],
+  upscale: [["loading", "Load upscaler"], ["denoising", "Upscale"], ["encoding", "Save"]],
 };
 const KIND_LABEL = { image: "Image", video: "Video" };
 const isImageUrl = (url) => /\.png$/i.test(url);
+// Element.append turns null into the text "null"; optional children are dropped here instead.
+const put = (el, ...kids) => el.append(...kids.filter((k) => k !== null && k !== undefined && k !== false));
 
 const loadForm = () => { try { return JSON.parse(localStorage.getItem(FORM_KEY)) || {}; } catch { return {}; } };
 const saveForm = (v) => { try { localStorage.setItem(FORM_KEY, JSON.stringify(v)); } catch { /* ignore */ } };
@@ -22,7 +25,8 @@ function field(label, control, hint, id) {
 }
 
 export async function mount(root) {
-  let models = [];       // every installed model
+  let models = [];       // every installed generator (image or video)
+  let upscalers = [];    // installed upscalers
   let kind = "video";    // which kind the form is showing
   let histFilter = "all";
   let alive = true;
@@ -44,7 +48,8 @@ export async function mount(root) {
   // ---- data ----
   async function loadModels() {
     const d = await api.get("/api/models");
-    models = d.models.filter((m) => m.installed);
+    models = d.models.filter((m) => m.installed && m.kind !== "upscale");
+    upscalers = d.models.filter((m) => m.installed && m.kind === "upscale");
   }
   const modelById = (id) => models.find((m) => m.id === id);
   const ofKind = () => models.filter((m) => m.kind === kind);
@@ -271,6 +276,26 @@ export async function mount(root) {
     } catch (e) { toast(e.message, "danger", 9000); }
   }
 
+  // Upscale a finished image or clip. With no upscaler installed the button leads to the Library to get one.
+  function upscaleButtons(clip) {
+    if (!upscalers.length) {
+      return [h("a", { class: "btn", href: "#/library", title: "Install the Real-ESRGAN upscaler from the Library first" }, icon("upscale"), "Get the upscaler")];
+    }
+    const scales = upscalers[0].limits.scales || [2, 4];
+    return scales.map((n) => h("button", { class: "btn", type: "button", disabled: activeRunning(),
+      title: `Make this ${n}× bigger with ${upscalers[0].name}; the result is saved as a new item in History`,
+      onclick: () => upscale(clip, n) }, icon("upscale"), `Upscale ${n}×`));
+  }
+
+  async function upscale(clip, scale) {
+    try {
+      activeJob = await api.post("/api/upscale", { clip_id: clip.id, scale });
+      shownClipId = null;
+      renderOutput();
+      poll();
+    } catch (e) { toast(e.message, "danger", 9000); }
+  }
+
   async function rerun(clip) {
     if (!modelById(clip.model_id)) { toast(`${clip.model_name} is not installed any more.`, "warning"); return; }
     await start({ model_id: clip.model_id, ...clip.params });
@@ -286,22 +311,25 @@ export async function mount(root) {
     const job = activeJob;
 
     if (running) {
-      const phases = PHASES[job.kind || "video"];
+      const up = !!(job.params && job.params.upscale);
+      const phases = up ? PHASES.upscale : PHASES[job.kind || "video"];
       const order = phases.map((p) => p[0]);
       const idx = Math.max(0, order.indexOf(job.phase === "encoding-prompt" ? "loading" : job.phase));
-      const inner = job.phase === "denoising" || job.phase === "decoding"
-        ? 0.1 + 0.8 * (job.step / Math.max(job.total, 1)) + (job.phase === "decoding" ? 0.05 : 0)
-        : job.phase === "encoding" ? 0.97 : 0.05;
+      const inner = up
+        ? (job.phase === "denoising" ? 0.05 + 0.9 * (job.step / Math.max(job.total, 1)) : job.phase === "encoding" ? 0.97 : 0.03)
+        : job.phase === "denoising" || job.phase === "decoding"
+          ? 0.1 + 0.8 * (job.step / Math.max(job.total, 1)) + (job.phase === "decoding" ? 0.05 : 0)
+          : job.phase === "encoding" ? 0.97 : 0.05;
       const frac = ((job.item - 1) + inner) / Math.max(job.items, 1);
       const of = job.items > 1 ? `${job.kind === "image" ? "Image" : "Clip"} ${job.item} of ${job.items} · ` : "";
-      outputCard.append(
-        h("div", { class: "row-between" }, h("h3", {}, job.items > 1 ? `Generating ${job.items} with ${job.model_name}` : `Generating with ${job.model_name}`), statusBadge("info", "Running", "play")),
+      put(outputCard,
+        h("div", { class: "row-between" }, h("h3", {}, up ? `Upscaling ${job.params.upscale.scale}× with ${job.model_name}` : job.items > 1 ? `Generating ${job.items} with ${job.model_name}` : `Generating with ${job.model_name}`), statusBadge("info", "Running", "play")),
         h("ol", { class: "steps", "aria-label": "Generation steps" },
           phases.map(([id, label], i) => h("li", { class: "step", "data-state": i < idx ? "done" : i === idx ? "active" : "pending", "aria-current": i === idx ? "step" : undefined },
             icon(i < idx ? "check" : i === idx ? "play" : "clock"), h("span", {}, label)))),
-        progressBar(frac, { indeterminate: job.phase === "loading" && job.step === 0, label: "Generation progress" }),
+        progressBar(frac, { indeterminate: job.phase === "loading" && job.step === 0, label: up ? "Upscale progress" : "Generation progress" }),
         h("div", { class: "progress-meta" },
-          h("span", {}, job.phase === "denoising" ? `${of}Step ${job.step} of ${job.total}` : `${of}${job.message}`),
+          h("span", {}, job.phase === "denoising" && !up ? `${of}Step ${job.step} of ${job.total}` : `${of}${job.message}`),
           h("span", {}, [`${fmtDuration(job.elapsed)} elapsed`, job.eta ? `~${fmtDuration(job.eta)} left` : null].filter(Boolean).join(" · "))),
         h("p", { class: "muted" }, job.params.prompt),
         job.clips.length ? h("div", { class: "stack-8" }, h("h4", {}, `Finished so far (${job.clips.length})`), batchStrip(job, false)) : null);
@@ -326,22 +354,24 @@ export async function mount(root) {
     shownClipId = clip.id;
     const p = clip.params;
     const image = isImageUrl(clip.url);
+    const upscaled = !!p.upscale_scale;
     const media = image
       ? h("img", { class: "player", src: clip.url, alt: clip.prompt })
       : h("video", { class: "player", controls: true, loop: true, muted: true, autoplay: true, playsinline: true, src: clip.url });
-    outputCard.append(media,
+    put(outputCard, media,
       activeJob && activeJob.clips && activeJob.clips.length > 1 ? batchStrip(activeJob, true) : null,
       h("p", {}, clip.prompt),
       h("div", { class: "stats" },
-        stat("Model", clip.model_name), stat("Size", `${p.width} × ${p.height}`),
+        stat("Model", clip.model_name), stat("Size", upscaled ? `${p.source_width} × ${p.source_height} → ${p.width} × ${p.height}` : `${p.width} × ${p.height}`),
         image ? null : stat("Frames", `${p.frames} @ ${p.fps} fps`),
         stat("Seed", String(p.seed)), stat("Time", fmtDuration(clip.seconds)),
         clip.device && clip.device !== "cpu" && clip.device !== "cuda" ? stat("GPU", clip.device.replace(/^NVIDIA\s+/, "").replace(/^GeForce\s+/, "")) : null,
         clip.peak_vram_gb ? stat("Peak VRAM", `${clip.peak_vram_gb} GB`) : null),
       h("div", { class: "row-8" },
         h("a", { class: "btn", href: clip.url, download: `reel-${clip.id}.${image ? "png" : "mp4"}` }, icon("download"), "Download"),
-        h("button", { class: "btn", type: "button", onclick: () => loadSettings(clip) }, icon("load"), "Reuse settings"),
-        h("button", { class: "btn", type: "button", disabled: activeRunning(), onclick: () => rerun(clip) }, icon("rerun"), "Re-run")));
+        upscaled ? null : h("button", { class: "btn", type: "button", onclick: () => loadSettings(clip) }, icon("load"), "Reuse settings"),
+        upscaled ? null : h("button", { class: "btn", type: "button", disabled: activeRunning(), onclick: () => rerun(clip) }, icon("rerun"), "Re-run"),
+        ...upscaleButtons(clip)));
     renderHistory();
   }
 
@@ -396,8 +426,9 @@ export async function mount(root) {
         h("div", { class: "muted clip-meta" }, `${clip.model_name} · ${p.width}×${p.height}${isImageUrl(clip.url) ? "" : ` · ${p.frames}f`} · seed ${p.seed}`),
         h("div", { class: "muted clip-meta" }, `${fmtDate(clip.created)} · ${fmtDuration(clip.seconds)}`, current ? h("strong", { class: "now" }, " · Showing") : null),
         h("div", { class: "row-8" },
-          h("button", { class: "btn btn-ghost btn-icon", type: "button", title: "Reuse settings", "aria-label": "Reuse settings", onclick: () => loadSettings(clip) }, icon("load")),
-          h("button", { class: "btn btn-ghost btn-icon", type: "button", title: "Re-run with the same seed", "aria-label": "Re-run", disabled: activeRunning(), onclick: () => rerun(clip) }, icon("rerun")),
+          p.upscale_scale ? null : h("button", { class: "btn btn-ghost btn-icon", type: "button", title: "Reuse settings", "aria-label": "Reuse settings", onclick: () => loadSettings(clip) }, icon("load")),
+          p.upscale_scale ? null : h("button", { class: "btn btn-ghost btn-icon", type: "button", title: "Re-run with the same seed", "aria-label": "Re-run", disabled: activeRunning(), onclick: () => rerun(clip) }, icon("rerun")),
+          upscalers.length ? h("button", { class: "btn btn-ghost btn-icon", type: "button", title: `Upscale ${upscalers[0].limits.scales[0]}×`, "aria-label": "Upscale", disabled: activeRunning(), onclick: () => upscale(clip, upscalers[0].limits.scales[0]) }, icon("upscale")) : null,
           h("a", { class: "btn btn-ghost btn-icon", href: clip.url, download: `reel-${clip.id}.${isImageUrl(clip.url) ? "png" : "mp4"}`, title: "Download", "aria-label": "Download" }, icon("download")),
           h("button", { class: "btn btn-ghost btn-icon", type: "button", title: "Delete", "aria-label": "Delete clip", onclick: async () => {
             try { await api.del(`/api/history/${clip.id}`); if (shownClipId === clip.id) { shownClipId = null; if (activeJob?.clip?.id === clip.id) activeJob = null; } await loadHistory(); renderOutput(); }
@@ -419,7 +450,8 @@ export async function mount(root) {
         if (job.clips.length > had) await loadHistory();           // each item appears in History as it finishes
         if (job.status !== "running" && wasRunning) {
           await loadHistory();
-          if (job.status === "done") toast(job.items > 1 ? `${job.items} ${job.kind === "image" ? "images" : "clips"} finished.` : (job.kind === "image" ? "Image finished." : "Clip finished."), "success", 3000);
+          if (job.status === "done" && job.params.upscale) toast("Upscale finished. It is saved in History.", "success", 3500);
+          else if (job.status === "done") toast(job.items > 1 ? `${job.items} ${job.kind === "image" ? "images" : "clips"} finished.` : (job.kind === "image" ? "Image finished." : "Clip finished."), "success", 3000);
         }
         if (job.status !== "running" && job.clip) shownClipId = job.clip.id;
         renderOutput();

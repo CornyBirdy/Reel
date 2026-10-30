@@ -5,7 +5,8 @@ recipe turns it on). Comparing it with the card's VRAM gives one of these levels
 
     comfortable  plenty of room: defaults, or no offloading at all on a big card
     ok           should fit with the recipe's defaults
-    low_memory   smaller than the estimate: sequential offload and 4-bit weights get it going, slowly
+    tight        a little under the estimate: the defaults (model offload) usually still work, with care over the size
+    low_memory   well under the estimate: sequential offload and 4-bit weights get it going, slowly
     too_big      far smaller than the estimate: it will probably run out of memory even in low-memory mode
     no_gpu       no NVIDIA card was found
 
@@ -15,6 +16,7 @@ It is advice, not a gate: the numbers are estimates, so Reel still lets people t
 from __future__ import annotations
 
 COMFORT = 1.25        # VRAM / estimate above which there is slack to spare
+TIGHT = 0.8           # ...and below which the estimate is not met (model offload still tends to fit)
 FAST = 2.0            # ...and above which offloading can be switched off for speed
 LOW_MEMORY_FLOOR = 0.45   # below this share of the estimate even sequential offload + NF4 will not do
 MIN_VRAM_GB = 6.0     # the smallest card the heavy models are worth attempting on
@@ -59,6 +61,11 @@ def assess(recipe: dict, gpu: dict | None) -> dict:
         level = key = "ok"
         label = f"Should fit your {total:.0f} GB GPU (estimate)"
         detail = "Close to the limit: if it runs out of memory, lower the resolution or turn on more memory saving."
+    elif ratio >= TIGHT:
+        level = key = "tight"
+        label = f"Tight on your {total:.0f} GB GPU (estimate)"
+        detail = (f"It wants about {need:g} GB and your {name} has {total:.0f} GB. The default settings usually still fit; "
+                  "keep the resolution modest, and if it runs out of memory use Sequential offloading or 4-bit weights.")
     elif ratio >= LOW_MEMORY_FLOOR and total >= MIN_VRAM_GB:
         level = key = "low_memory"
         label = f"Needs low-memory mode on your {total:.0f} GB GPU"
