@@ -119,6 +119,7 @@ export async function mount(root) {
     f.goLabel = h("span", {}, "Generate");
     f.go = h("button", { class: "btn btn-primary grow", type: "button", onclick: () => start() }, icon("play"), f.goLabel);
     f.stop = h("button", { class: "btn", type: "button", hidden: true, onclick: () => api.post("/api/generate/cancel").catch((e) => toast(e.message, "danger")) }, icon("stop"), "Cancel");
+    f.pause = h("button", { class: "btn", type: "button", hidden: true, onclick: () => togglePause() });
 
     formCard.append(
       field("Model", f.model, null, "g-model"),
@@ -146,7 +147,7 @@ export async function mount(root) {
           h("div", { class: "field-hint", id: "mem-note" }))),
       f.est, f.caps, f.fit, f.warn,
       h("div", { class: "row-8 action-row" },
-        h("div", { class: "count-pick" }, h("label", { for: "g-count", class: "count-label" }, "Count"), f.count), f.go, f.stop),
+        h("div", { class: "count-pick" }, h("label", { for: "g-count", class: "count-label" }, "Count"), f.count), f.go, f.pause, f.stop),
       h("div", { class: "field-hint" }, "Several at once: the model loads once, then each one uses its own seed (seed, seed+1, …). Every finished one is saved as it completes."));
 
     applyModel(model, false);
@@ -449,6 +450,20 @@ export async function mount(root) {
   function syncRunButtons() {
     const running = activeRunning();
     if (f.go) { f.go.hidden = running; f.stop.hidden = !running; f.go.disabled = running; }
+    if (f.pause) {
+      const held = running && (activeJob.paused || activeJob.pausing);
+      f.pause.hidden = !running;
+      clear(f.pause);
+      f.pause.append(icon(held ? "play" : "pause"), held ? "Resume" : "Pause");
+      f.pause.title = held ? "Carry on from where it stopped" : "Hold the generation at its next step. The model stays loaded and nothing is lost";
+    }
+  }
+
+  async function togglePause() {
+    if (!activeRunning()) return;
+    const held = activeJob.paused || activeJob.pausing;
+    try { await api.post(held ? "/api/generate/resume" : "/api/generate/pause"); poll(); }
+    catch (e) { toast(e.message, "danger", 6000); }
   }
 
   function renderProgress() {
@@ -467,13 +482,13 @@ export async function mount(root) {
       const frac = ((job.item - 1) + inner) / Math.max(job.items, 1);
       const of = job.items > 1 ? `${job.kind === "image" ? "Image" : "Clip"} ${job.item} of ${job.items} · ` : "";
       progressEl.append(h("div", { class: "progress-panel stack-12" },
-        h("div", { class: "row-between" }, h("h3", {}, up ? `Upscaling ${job.params.upscale.scale}× with ${job.model_name}` : job.items > 1 ? `Generating ${job.items} with ${job.model_name}` : `Generating with ${job.model_name}`), statusBadge("info", "Running", "play")),
+        h("div", { class: "row-between" }, h("h3", {}, up ? `Upscaling ${job.params.upscale.scale}× with ${job.model_name}` : job.items > 1 ? `Generating ${job.items} with ${job.model_name}` : `Generating with ${job.model_name}`), job.paused ? statusBadge("warning", "Paused", "pause") : job.pausing ? statusBadge("warning", "Pausing…", "pause") : statusBadge("info", "Running", "play")),
         h("ol", { class: "steps", "aria-label": "Generation steps" },
           phases.map(([id, label], i) => h("li", { class: "step", "data-state": i < idx ? "done" : i === idx ? "active" : "pending", "aria-current": i === idx ? "step" : undefined },
             icon(i < idx ? "check" : i === idx ? "play" : "clock"), h("span", {}, label)))),
-        progressBar(frac, { indeterminate: job.phase === "loading" && job.step === 0, label: up ? "Upscale progress" : "Generation progress" }),
+        progressBar(frac, { indeterminate: job.phase === "loading" && job.step === 0 && !job.paused, label: up ? "Upscale progress" : "Generation progress" }),
         h("div", { class: "progress-meta" },
-          h("span", {}, job.phase === "denoising" && !up ? `${of}Step ${job.step} of ${job.total}` : `${of}${job.message}`),
+          h("span", {}, job.paused ? `${of}Paused at step ${job.step} of ${job.total}. The model stays loaded.` : job.pausing ? `${of}Pausing at the end of this step…` : job.phase === "denoising" && !up ? `${of}Step ${job.step} of ${job.total}` : `${of}${job.message}`),
           h("span", {}, [`${fmtDuration(job.elapsed)} elapsed`, job.eta ? `~${fmtDuration(job.eta)} left` : null].filter(Boolean).join(" · "))),
         job.reused ? h("div", { class: "field-hint" }, "The model was already loaded, so this run skipped loading.") : null,
         h("p", { class: "muted" }, job.params.prompt),

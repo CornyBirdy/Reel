@@ -86,6 +86,24 @@ def current() -> dict:
     return {"job": generation.current.to_dict() if generation.current else None}
 
 
+@router.post("/generate/pause")
+def pause_generation() -> dict:
+    try:
+        generation.pause()
+    except GenerationError as exc:
+        raise HTTPException(409, str(exc))
+    return {"ok": True}
+
+
+@router.post("/generate/resume")
+def resume_generation() -> dict:
+    try:
+        generation.resume()
+    except GenerationError as exc:
+        raise HTTPException(409, str(exc))
+    return {"ok": True}
+
+
 @router.post("/generate/cancel")
 def cancel() -> dict:
     generation.cancel()

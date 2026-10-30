@@ -49,6 +49,7 @@ warnings.filterwarnings("ignore", message=".*MatMul8bitLt.*")
 _emit_lock = threading.Lock()
 CURRENT_ID: str | None = None   # the request the events belong to (set by worker.py around each command)
 CANCEL = threading.Event()      # set by worker.py when the app asks to stop the current generation
+PAUSE = threading.Event()       # set by worker.py while the app has paused it: the run waits at its next step
 
 
 class Cancelled(Exception):
@@ -56,8 +57,16 @@ class Cancelled(Exception):
 
 
 def check_cancel() -> None:
+    """Called at every step: stop if cancelled, and wait here while paused (the model stays loaded, the GPU idles)."""
     if CANCEL.is_set():
         raise Cancelled()
+    if PAUSE.is_set():
+        emit(event="paused")
+        while PAUSE.is_set():
+            if CANCEL.is_set():
+                raise Cancelled()
+            time.sleep(0.2)
+        emit(event="resumed")
 
 
 def emit(**event) -> None:

@@ -37,6 +37,7 @@ const ICONS = {
   download: '<path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19.5h14"/>',
   trash: '<path d="M4 7h16M10 7V4.5h4V7M6.5 7l1 12.5h9l1-12.5M10 11v5M14 11v5"/>',
   play: '<path d="M8 5.5v13l11-6.5z"/>',
+  pause: '<path d="M8 5.5v13M16 5.5v13"/>',
   stop: '<rect x="6" y="6" width="12" height="12" rx="2"/>',
   rerun: '<path d="M20 11a8 8 0 0 0-14.3-4.5M4 5v4h4M4 13a8 8 0 0 0 14.3 4.5M20 19v-4h-4"/>',
   dice: '<rect x="4" y="4" width="16" height="16" rx="3"/><circle cx="9" cy="9" r=".6"/><circle cx="15" cy="9" r=".6"/><circle cx="9" cy="15" r=".6"/><circle cx="15" cy="15" r=".6"/>',

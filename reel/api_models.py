@@ -171,6 +171,26 @@ def cancel(model_id: str) -> dict:
     return {"ok": True}
 
 
+@router.post("/{model_id}/pause")
+def pause(model_id: str) -> dict:
+    _recipe_or_404(model_id)
+    try:
+        installs.pause(model_id)
+    except InstallError as exc:
+        raise HTTPException(409, str(exc))
+    return {"ok": True}
+
+
+@router.post("/{model_id}/resume")
+def resume(model_id: str) -> dict:
+    _recipe_or_404(model_id)
+    try:
+        installs.resume(model_id)
+    except InstallError as exc:
+        raise HTTPException(409, str(exc))
+    return {"ok": True}
+
+
 @router.post("/{model_id}/refresh")
 def refresh_recipe(model_id: str) -> dict:
     """Re-read an imported model from Hugging Face and update its limits, defaults and estimates."""

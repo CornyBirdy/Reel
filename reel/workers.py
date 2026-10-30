@@ -190,6 +190,9 @@ class WorkerProcess:
     def ask_cancel(self, p: Pending) -> None:
         self._write({"cmd": "cancel", "id": p.id})
 
+    def ask_pause(self, p: Pending, pause: bool) -> None:
+        self._write({"cmd": "pause" if pause else "resume", "id": p.id})
+
     def stop(self, graceful: bool = True) -> None:
         """Quit the process (it frees its GPU and RAM by exiting). Graceful first, then by force."""
         self.expected_exit = True
@@ -297,6 +300,15 @@ class WorkerManager:
             if self.worker is w:
                 self.worker = None
             self.cv.notify_all()
+
+    def hold_generation(self, tag: str, pause: bool) -> bool:
+        """Pause or resume the running generation with this tag (the job id) at its next step. False if it is not running."""
+        w = self.worker
+        p = next((p for p in list((w.pending if w else {}).values()) if p.tag == tag), None)
+        if not w or not p or not w.alive:
+            return False
+        w.ask_pause(p, pause)
+        return True
 
     def clear_crash(self) -> None:
         self.last_crash = None
