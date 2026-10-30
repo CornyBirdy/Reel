@@ -10,7 +10,7 @@ export async function mount(root) {
   async function load() {
     const [s, stored] = await Promise.all([api.get("/api/settings"), api.get("/api/settings/stored-models")]);
     clear(body);
-    body.append(updatesCard(s), changelogCard(), gpuCard(s), windowCard(s), storageCard(s, stored), tokenCard(s), systemCard(s));
+    body.append(updatesCard(s), changelogCard(), gpuCard(s), memoryCard(s), windowCard(s), storageCard(s, stored), tokenCard(s), systemCard(s));
     refreshUpdates(false);
   }
 
@@ -161,6 +161,21 @@ export async function mount(root) {
         try { await api.put("/api/settings", { set_gpu: true, gpu: sel.value === "auto" ? "" : sel.value }); toast("GPU saved. It applies to the next generation.", "success"); await load(); }
         catch (e) { toast(e.message, "danger"); }
       } }, "Save")) : null);
+  }
+
+  function memoryCard(s) {
+    const input = h("input", { id: "idle-min", class: "input", type: "number", min: 0, max: 1440, step: 5, value: s.idle_unload_minutes });
+    return h("section", { class: "card stack-16" },
+      h("h3", {}, "Models in memory"),
+      h("p", { class: "muted" }, "Reel keeps a model loaded after it generates, so the next run starts straight away. Only one model is on the GPU at a time; loading another unloads the current one, and Reel unloads everything when it closes."),
+      h("div", { class: "field" }, h("label", { for: "idle-min" }, "Unload after this many minutes idle"), input,
+        h("span", { class: "field-hint" }, "0 = never. A loaded model keeps its memory (with CPU offload that is mostly system RAM) until it is unloaded.")),
+      h("div", { class: "row-8" }, h("button", { class: "btn btn-primary", type: "button", onclick: async () => {
+        const v = Number(input.value);
+        if (!Number.isInteger(v) || v < 0 || v > 1440) { toast("Enter a whole number of minutes from 0 to 1440.", "warning"); return; }
+        try { await api.put("/api/settings", { set_idle_unload: true, idle_unload_minutes: v }); toast(v ? `Models unload after ${v} minutes idle.` : "Models stay loaded until you unload them.", "success"); }
+        catch (e) { toast(e.message, "danger"); }
+      } }, "Save")));
   }
 
   function windowCard(s) {

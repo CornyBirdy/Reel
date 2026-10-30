@@ -54,6 +54,7 @@ def validate(r: dict) -> list[str]:
         if key not in lim:
             errs.append(f"limits.{key} missing")
     errs += consistency_errors(r, kind)
+    errs += native_errors(r, kind)
     return errs
 
 
@@ -81,6 +82,81 @@ def consistency_errors(r: dict, kind: str) -> list[str]:
         if budget and dflt.get("width") and dflt["width"] * dflt["height"] * fr["default"] > budget:
             errs.append("the default size and frame count exceed limits.max_area_frames")
     return errs
+
+
+def frame_rule_ok(fr: dict, n: int) -> bool:
+    return (n - fr["offset"]) % fr["step"] == 0
+
+
+def native_errors(r: dict, kind: str) -> list[str]:
+    """The model's own sizes and lengths (recipe 'native') and the unlock ceiling must obey the pipeline's rules,
+    so a typo here cannot offer a size the pipeline would reject."""
+    lim, nat, unl = r["limits"], r.get("native"), r.get("unlock")
+    errs: list[str] = []
+    if kind == "upscale":      # it has scales, not a size or length to unlock
+        return errs
+    mult = lim.get("size_multiple", 1)
+    ceiling = unlock_limits(r)
+    if unl:
+        for key in ("max_width", "max_height"):
+            if unl.get(key, 0) < lim[key] or unl[key] % mult:
+                errs.append(f"unlock.{key} must be at least limits.{key} and a multiple of {mult}")
+        if kind == "video" and "max_frames" in unl:
+            if unl["max_frames"] < lim["frames"]["max"] or not frame_rule_ok(lim["frames"], unl["max_frames"]):
+                errs.append("unlock.max_frames must be at least limits.frames.max and follow the frame rule")
+    for pr in (nat or {}).get("resolutions", []):
+        if pr["w"] % mult or pr["h"] % mult:
+            errs.append(f"native resolution {pr['w']}x{pr['h']} is not a multiple of {mult}")
+        if pr["w"] > ceiling["max_width"] or pr["h"] > ceiling["max_height"]:
+            errs.append(f"native resolution {pr['w']}x{pr['h']} is above the unlock ceiling")
+    if kind == "video" and nat:
+        for n in nat.get("frames", []):
+            if not frame_rule_ok(lim["frames"], n) or n > ceiling["max_frames"]:
+                errs.append(f"native frame count {n} breaks the frame rule or the unlock ceiling")
+    return errs
+
+
+def unlock_limits(r: dict) -> dict:
+    """What 'Unlock limits (advanced)' allows: every size and length the pipeline supports, not just what fits 16 GB.
+
+    From the recipe's own 'unlock' block (checked against the model card). A recipe without one (an older import)
+    gets a generous ceiling and known=False, which the UI says plainly.
+    """
+    lim = r["limits"]
+    kind = r.get("kind", "video")
+    if kind == "upscale":
+        return {"known": True, "note": "An upscaler's output size follows its scale."}
+    u = r.get("unlock") or {}
+    mult = lim.get("size_multiple", 1)
+    fallback_side = min(2048, -(-int(max(lim["max_width"], lim["max_height"]) * 1.5) // mult) * mult)
+    out = {
+        "max_width": max(u.get("max_width", fallback_side), lim["max_width"]),
+        "max_height": max(u.get("max_height", fallback_side), lim["max_height"]),
+        "known": bool(u.get("known", False)),
+        "note": u.get("note") or "Reel does not know this model's real limits. This is a generous ceiling, not a promise it works.",
+    }
+    nat = r.get("native") or {}
+    for p in nat.get("resolutions", []):   # a model's own sizes are always reachable when unlocked
+        out["max_width"], out["max_height"] = max(out["max_width"], p["w"]), max(out["max_height"], p["h"])
+    if kind == "video":
+        fr = lim["frames"]
+        fallback_frames = fr["max"] + (fr["max"] - fr["offset"]) // fr["step"] // 2 * fr["step"]
+        out["max_frames"] = max(u.get("max_frames", fallback_frames), fr["max"], *nat.get("frames", []))
+    return out
+
+
+def native_label(r: dict) -> str | None:
+    return (r.get("native") or {}).get("label")
+
+
+def safe_defaults(r: dict) -> dict:
+    """The size and length a run is known to be sized for: what the recipe defaults to."""
+    if r.get("kind") == "upscale":
+        return {}
+    d = {"width": r["defaults"]["width"], "height": r["defaults"]["height"]}
+    if r.get("kind", "video") == "video":
+        d["frames"] = r["limits"]["frames"]["default"]
+    return d
 
 
 def repair_user(r: dict) -> dict:

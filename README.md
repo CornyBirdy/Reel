@@ -30,6 +30,7 @@ If something goes wrong:
 | "Port 8765 is in use" | Close the other Reel window, or set `REEL_PORT` to another number. |
 | An install fails or stalls | Press Install again: finished downloads are kept. The full log is in `data/models/<model>/install.log`. |
 | Out of VRAM while generating | Lower the resolution, set Offloading to Sequential, or use NF4 quantization (Memory options). |
+| "The model process stopped unexpectedly (exit code 0xC0000005 ...)" | A native crash, usually the PC running out of system RAM, or an incompatible CUDA / attention kernel. Close other programs, lower the resolution or frames, and try the attention backend Native. **View full log** (or `data/logs/`) shows everything the process wrote. |
 
 ## Updating
 
@@ -57,8 +58,8 @@ Environment variables: `REEL_PORT` (default 8765), `REEL_HOST` (default 127.0.0.
 | Tab | What it does |
 | --- | --- |
 | **Library** | One card per model (image or video), with download size and VRAM need, a filter, and **Add from Hugging Face**. **Install** builds an isolated venv for that model, installs PyTorch for CUDA 12.8 (needed by Blackwell / RTX 50-series), installs the diffusers stack, then downloads the weights from Hugging Face with a progress bar. **Uninstall** deletes only that model's folder. Cancelling or a dropped connection keeps every finished file and **Resume** continues with the rest (a file that was mid-download starts over). |
-| **Generate** | An Image / Video switch, then prompt, negative prompt, resolution, (frames,) seed, steps, guidance and memory options for any installed model of that type. Progress while it runs, an inline viewer, and a saved history with prompts so anything can be reused or re-run (same seed = same output). Images are saved as PNGs with the prompt and seed embedded. |
-| **Settings** | Model storage folder (with a folder picker), optional Hugging Face token, and what Reel found on this PC. |
+| **Generate** | An Image / Video switch, then prompt, negative prompt, resolution, (frames,) seed, steps, guidance and memory options for any installed model of that type. Progress while it runs, an inline viewer, and a saved history with prompts so anything can be reused or re-run (same seed = same output). Images are saved as PNGs with the prompt and seed embedded. The model stays loaded after a run (see below). |
+| **Settings** | Model storage folder (with a folder picker), how long an idle model stays loaded, optional Hugging Face token, and what Reel found on this PC. |
 
 Disk layout:
 
@@ -68,11 +69,22 @@ Reel/
   data/                      (git-ignored, created on first run)
     models/<model-id>/       venv/  weights/  install.json  install.log
     outputs/                 finished PNGs and mp4s
+    logs/                    everything each model process printed: <timestamp>-<model>.log (newest 40 kept)
     recipes/                 models you added from Hugging Face
     history.db  settings.json
 ```
 
 The storage folder in Settings can point the `models/` part elsewhere (for example a big second drive). Python environments cannot be relocated, so changing it does not move existing installs.
+
+### Keeping models loaded
+
+Loading a model takes minutes, so Reel keeps it in memory after a run and reuses it: the second clip skips loading.
+
+- Each model shows a status chip (**Unloaded / Loading / Ready / Generating**), what it holds (VRAM and system RAM), and a **Load** / **Unload** button, in the Library and above the Generate form. Pressing **Generate** loads the model first if it is not loaded.
+- Only one model is on the GPU at a time. Loading another unloads the current one, as does changing a memory option that needs a reload (quantization, offloading, tiled VAE, attention backend).
+- **A loaded model keeps its memory** until it is unloaded. With CPU offload that is mostly *system RAM*, which can slow other programs. Settings > Models in memory unloads an idle model after N minutes (default 30, 0 = never). Closing Reel unloads everything.
+- Between runs Reel frees temporary memory (garbage collection and the CUDA cache) but keeps the pipeline. **Cancel** stops the current generation and leaves the model loaded; only a model that does not answer within a minute is stopped.
+- If the model process crashes, Reel tells you which request failed (with the exit code and the log), shows it as Unloaded, and starts a fresh process the next time you press Generate or Load.
 
 ### Your graphics card
 
@@ -84,7 +96,7 @@ Install **Real-ESRGAN x4+** from the Library, then press **Upscale 2Ã—** or **4Ã
 
 ### VRAM saving (16 GB target)
 
-Every recipe defaults to the memory-saving options and caps resolution, frame count and (for Wan) width x height x frames so a clip should fit a 16 GB card:
+Every recipe defaults to the memory-saving options and has *safe limits* on resolution, frame count and (for Wan) width x height x frames, so a clip should fit a 16 GB card. **Unlock limits (advanced)** in the Generate panel lifts them to what the pipeline itself supports (the model card's native sizes and maximum length, or any size that is a multiple of the model's size rule), remembered per model. Generate shows a live memory estimate (VRAM and system RAM) against what your PC has free right now; it warns but never blocks. Treat it as a rough guide: the real peak is recorded in History after every run.
 
 - **Offloading**: model offload by default (sequential available).
 - **Quantization**: NF4 for Wan 2.2 and for any imported model that is too big otherwise (denoiser plus large text encoders); LTX-Video's 2B transformer stays bf16 and its T5 text encoder is the official 8-bit one, encoded first and freed before denoising.
@@ -99,7 +111,7 @@ A model in Reel is two things:
 - a **recipe** (a JSON file): which Hugging Face repos and files to download, which Python packages it needs, its resolution/frame caps for a 16 GB card, and sensible defaults;
 - an **adapter** (a small Python class): how to actually run it. Reel ships dedicated adapters for LTX-Video and Wan 2.2, and a **generic diffusers adapter** that runs any diffusers-format text-to-image or text-to-video repo.
 
-So the set of models is not fixed: it is whatever recipes exist. Built in: SDXL 1.0 and FLUX.1 schnell (image), LTX-Video, Wan 2.2, CogVideoX and HunyuanVideo (video), and the Real-ESRGAN x4+ upscaler. Everything else comes from **Library > Add from Hugging Face**.
+So the set of models is not fixed: it is whatever recipes exist. Built in: SDXL 1.0 and FLUX.1 schnell (image), LTX-Video, Wan 2.2, CogVideoX, HunyuanVideo 1.5 (480p) and HunyuanVideo 1.0 (video), and the Real-ESRGAN x4+ upscaler. Everything else comes from **Library > Add from Hugging Face**.
 
 Only LTX-Video has been run end to end by the Reel author; the other built-ins and anything you import are marked **Unverified** until they have been.
 
@@ -121,9 +133,11 @@ What it can run: diffusers-format repos for text-to-image and text-to-video. Wha
    (Or skip the adapter: set `"adapter": "diffusers_auto"` and `"adapter_config": {"pipeline": "<DiffusersPipelineClass>"}` to use the generic one.)
 3. Set `"status": "ready"` and name the adapter in the recipe. Run `python tools/recipe_sizes.py` to fill in the exact download size from the Hugging Face API.
 
-Each generation runs `adapters/runner.py` as a subprocess in that model's venv: JSON request in, mp4 (video) or PNG (image) out, one JSON event per line on stdout.
+Each loaded model is one long-lived process, `adapters/worker.py`, running in that model's venv. Reel sends it JSON lines on stdin (`load`, `generate`, `cancel`, `exit`) and reads one JSON event per line on stdout (phase, progress, item_done, ...); the protocol is documented at the top of that file. The worker builds the pipeline once and then serves any number of generate requests, writing the mp4 (video) or PNG (image) itself.
 
-Tests (offline, no GPU): `python -m unittest discover tests`.
+Tests (offline, no GPU, no torch): `python -m unittest discover tests`. They run the real worker process with a stand-in adapter (`tests/fake_adapter.py`).
+
+To check a real model on your PC (a second run skips loading; unloading gives the memory back): start Reel, then `python tools/worker_smoke.py hunyuanvideo-1.5-480p`. It prints what the model holds and what the PC has free before loading, after each run and after unloading.
 
 ## Design system
 

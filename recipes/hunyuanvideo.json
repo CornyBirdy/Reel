@@ -1,13 +1,13 @@
 {
   "schema": 1,
   "id": "hunyuanvideo",
-  "name": "HunyuanVideo",
+  "name": "HunyuanVideo 1.0",
   "family": "Tencent",
   "version": "13B",
   "status": "ready",
   "kind": "video",
   "verified": false,
-  "summary": "Tencent's 13B text-to-video model. Large: NF4 quantization is required on a 16 GB card. Runs through the generic diffusers adapter; not yet tested by Reel.",
+  "summary": "Tencent's original 13B text-to-video model. Large: NF4 quantization is required on a 16 GB card. Runs through the generic diffusers adapter; not yet tested by Reel.",
   "license": "Tencent Hunyuan Community License",
   "license_url": "https://huggingface.co/tencent/HunyuanVideo",
   "tasks": [
@@ -79,6 +79,73 @@
       }
     ]
   },
+  "native": {
+    "label": "960×544 / 1280×720",
+    "resolutions": [
+      {
+        "w": 960,
+        "h": 544,
+        "label": "960×544 (540p)"
+      },
+      {
+        "w": 544,
+        "h": 960,
+        "label": "544×960 (540p portrait)"
+      },
+      {
+        "w": 832,
+        "h": 624,
+        "label": "832×624 (540p, 4:3)"
+      },
+      {
+        "w": 624,
+        "h": 832,
+        "label": "624×832 (540p, 3:4)"
+      },
+      {
+        "w": 720,
+        "h": 720,
+        "label": "720×720 (540p, 1:1)"
+      },
+      {
+        "w": 1280,
+        "h": 720,
+        "label": "1280×720 (720p, recommended)"
+      },
+      {
+        "w": 720,
+        "h": 1280,
+        "label": "720×1280 (720p portrait)"
+      },
+      {
+        "w": 1104,
+        "h": 832,
+        "label": "1104×832 (720p, 4:3)"
+      },
+      {
+        "w": 832,
+        "h": 1104,
+        "label": "832×1104 (720p, 3:4)"
+      },
+      {
+        "w": 960,
+        "h": 960,
+        "label": "960×960 (720p, 1:1)"
+      }
+    ],
+    "frames": [
+      129
+    ],
+    "source": "https://huggingface.co/tencent/HunyuanVideo",
+    "note": "Tencent's table lists 129 frames at every one of these sizes (they quote 45 GB at 544×960 and 60 GB at 720×1280 without offloading). Frames follow 4n+1. The official script saves 24 fps; Reel keeps the 15 fps of the diffusers example."
+  },
+  "unlock": {
+    "max_width": 1280,
+    "max_height": 1280,
+    "max_frames": 129,
+    "known": true,
+    "note": "Native sizes go up to 1280×720 at 129 frames. Far beyond Reel's 16 GB limits: expect to need heavy offloading and a lot of system RAM."
+  },
   "defaults": {
     "width": 640,
     "height": 352,
@@ -100,7 +167,27 @@
       "int8",
       "nf4"
     ],
-    "notes": ""
+    "notes": "",
+    "estimate": {
+      "weights_gb": {
+        "transformer": 25.7,
+        "text_encoder": 15.0,
+        "text_encoder_2": 0.3,
+        "vae": 1.0
+      },
+      "quantized": [
+        "transformer",
+        "text_encoder"
+      ],
+      "denoiser": "transformer",
+      "tokens": {
+        "spatial": 16,
+        "temporal": 4
+      },
+      "hidden": 3072,
+      "vae_mb_per_mpx_frame": 768,
+      "vae_tile_mpx_frames": 1.5
+    }
   },
   "adapter_config": {
     "pipeline": "HunyuanVideoPipeline",

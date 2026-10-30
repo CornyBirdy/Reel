@@ -23,6 +23,8 @@ class SettingsUpdate(BaseModel):
     set_gpu: bool = False
     window_mode: str | None = None      # auto | native | app | browser
     set_window_mode: bool = False
+    idle_unload_minutes: int | None = None   # 0 = never
+    set_idle_unload: bool = False
     set_models_dir: bool = False
     set_hf_token: bool = False
     set_github_token: bool = False
@@ -39,6 +41,7 @@ def _view() -> dict:
         "hf_token_set": bool(s.get("hf_token")),
         "github_token_set": bool(s.get("github_token")),
         "window_mode": s.get("window_mode") or "auto",
+        "idle_unload_minutes": s.get("idle_unload_minutes", 30),
         "native_window": window.status(),
         "disk_free": system.disk_free(root),
         "gpu": system.gpu_info(refresh=True),
@@ -83,6 +86,11 @@ def update_settings(body: SettingsUpdate) -> dict:
         if (body.window_mode or "auto") not in ("auto", "native", "app", "browser"):
             raise HTTPException(400, "Unknown window mode.")
         config.save_settings(window_mode=None if body.window_mode in (None, "", "auto") else body.window_mode)
+    if body.set_idle_unload:
+        minutes = 30 if body.idle_unload_minutes is None else body.idle_unload_minutes
+        if not 0 <= minutes <= 1440:
+            raise HTTPException(400, "Use 0 (never) to 1440 minutes.")
+        config.save_settings(idle_unload_minutes=minutes)
     if body.set_github_token:
         config.save_settings(github_token=(body.github_token or "").strip() or None)
     if body.set_hf_token:

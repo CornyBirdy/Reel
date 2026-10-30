@@ -1,6 +1,7 @@
 import { h, icon, clear, toast, confirmDialog, fmtBytes, fmtDuration, progressBar, statusBadge, kindBadge } from "../ui.js";
 import { api } from "../api.js";
 import { openAddFromHF } from "./hf_dialog.js";
+import { KEEPS_MEMORY, crashNotice, holdsText, holdsTitle, idleText, loadButton, stateChip, stateOf } from "../worker.js";
 
 const FILTER_KEY = "reel.library.filter";
 const loadFilter = () => { try { return localStorage.getItem(FILTER_KEY) || "all"; } catch { return "all"; } };
@@ -46,6 +47,7 @@ function ModelCard(initial, ctx) {
   const metaEl = h("div", { class: "progress-meta" }, metaLeft, metaMid, metaRight);
   const msgEl = h("div", { class: "muted mono install-msg" });
   const noticeSlot = h("div", { class: "stack-8" });
+  const memSlot = h("div", { class: "stack-8" });
   const logEl = h("pre", { class: "log mono" });
   const logDetails = h("details", {}, h("summary", {}, "Install log"), logEl);
   const panel = h("div", { class: "stack-12 install-panel", hidden: true }, stepsEl, barSlot, metaEl, msgEl, noticeSlot, logDetails);
@@ -62,10 +64,10 @@ function ModelCard(initial, ctx) {
     h("div", { class: "stats" },
       stat("Download", `${m0.download_gb} GB`),
       stat("VRAM needed", `~${m0.vram_gb} GB`),
-      m0.kind === "upscale" ? stat("Scale", m0.limits.scales.map((x) => `${x}×`).join(" · ")) : stat("Max resolution", `${m0.limits.max_width} × ${m0.limits.max_height}`),
-      m0.kind === "video" ? stat("Max frames", String(m0.limits.frames.max)) : null,
+      m0.kind === "upscale" ? stat("Scale", m0.limits.scales.map((x) => `${x}×`).join(" · ")) : stat("Safe max size", `${m0.limits.max_width} × ${m0.limits.max_height}`),
+      m0.kind === "video" ? stat("Safe frames", String(m0.limits.frames.max)) : null,
       m0.kind === "video" ? stat("Frame rate", `${m0.limits.fps} fps`) : null),
-    fitSlot, fitNote, diskSlot, panel, actions);
+    memSlot, fitSlot, fitNote, diskSlot, panel, actions);
 
   let lastActionsKey = "";
 
@@ -77,7 +79,8 @@ function ModelCard(initial, ctx) {
 
   function renderActions(m) {
     const job = m.install;
-    const key = [m.state, m.status, !!m.blocked_reason, job && job.status, m.source, m.fit.level].join("|");
+    const w = ctx.worker;
+    const key = [m.state, m.status, !!m.blocked_reason, job && job.status, m.source, m.fit.level, stateOf(w, m.id), w && w.state, w && w.model_id].join("|");
     if (key === lastActionsKey) return;
     lastActionsKey = key;
     clear(actions);
@@ -122,6 +125,7 @@ function ModelCard(initial, ctx) {
           m.kind === "upscale"
             ? h("a", { class: "btn btn-primary", href: "#/generate", title: "Press Upscale under any image or clip" }, icon("upscale"), "Open Generate to upscale")
             : h("a", { class: "btn btn-primary", href: `#/generate?model=${encodeURIComponent(m.id)}` }, icon("generate"), "Generate"),
+          m.kind === "upscale" ? null : loadButton(m, ctx.worker, { onDone: ctx.refresh }),
           ...[remove("Uninstall", "This deletes only this model's folder: its environment and weights."), refresh()].filter(Boolean));
         break;
       case "partial":
@@ -194,12 +198,25 @@ function ModelCard(initial, ctx) {
     const job = m.install;
     let [kind, text, ic] = m.status === "placeholder" ? ["neutral", "Placeholder", "box"] : STATE_BADGE[m.state];
     if (m.state === "partial" && job && job.status === "failed") [kind, text, ic] = ["danger", "Install failed", "error"];
-    once(badgeSlot, [m.kind, m.verified, m.gated, ctx.hfTokenSet, kind, text].join("|"), () => {
+    once(badgeSlot, [m.kind, m.verified, m.gated, m.recommended, m.native_label, ctx.hfTokenSet, kind, text].join("|"), () => {
       badgeSlot.append(kindBadge(m.kind));
+      if (m.recommended) badgeSlot.append(statusBadge("success", "Recommended", "check", "The better-quality choice among this model's variants"));
+      if (m.native_label) badgeSlot.append(statusBadge("neutral", `Native ${m.native_label}`, "image", "The resolution this checkpoint was trained for. Quality is best at or near it."));
       if (m.verified === false) badgeSlot.append(statusBadge("neutral", "Unverified", "info", "Reel has not run this model itself yet. It should work, but you may be the first to try it."));
       if (m.gated) badgeSlot.append(ctx.hfTokenSet ? statusBadge("info", "Gated", "info", "Needs accepted terms on Hugging Face (token saved)")
                                                    : statusBadge("warning", "Needs HF token", "alert", "Gated model: accept its terms on Hugging Face and save a token in Settings"));
       badgeSlot.append(statusBadge(kind, text, ic));
+    });
+
+    // What is in memory: the state chip, what it holds, and when it unloads itself (the upscaler is not kept loaded).
+    const w = ctx.worker, ws = stateOf(w, m.id);
+    const holds = ws === "unloaded" ? null : holdsText(w);
+    memSlot.hidden = m.state !== "installed" || m.kind === "upscale";
+    once(memSlot, [m.state, m.kind, ws, holds, w && w.idle_unload_minutes].join("|"), () => {
+      if (m.state !== "installed" || m.kind === "upscale") return;
+      memSlot.append(h("div", { class: "row-8" }, stateChip(ws, ws === "loading" ? w.message : undefined),
+        holds ? h("span", { class: "muted mono", title: holdsTitle }, holds) : null));
+      if (ws === "ready" || ws === "generating") memSlot.append(h("div", { class: "field-hint" }, `${KEEPS_MEMORY} ${idleText(w) || ""}`.trim()));
     });
 
     const fit = m.fit;
@@ -246,7 +263,7 @@ export async function mount(root) {
   let timer = null;
   let alive = true;
   let lastData = null;
-  const ctx = { gpu: null, hfTokenSet: false, refresh };
+  const ctx = { gpu: null, hfTokenSet: false, worker: null, refresh };
 
   function drawFilter() {
     clear(filterSeg);
@@ -278,10 +295,13 @@ export async function mount(root) {
     lastData = data;
     ctx.gpu = sys.gpu.selected_gpu || null;
     ctx.hfTokenSet = settings.hf_token_set;
+    ctx.worker = data.worker;
     const installed = data.models.filter((m) => m.state === "installed");
     const used = data.models.reduce((a, m) => a + m.disk.total, 0);
     setText(summary, `${installed.length} of ${data.models.length} installed · ${fmtBytes(used)} used · ${fmtBytes(data.disk_free)} free in ${data.models_dir}`);
-    once(notices, JSON.stringify([sys.gpu.cuda_12_8_ok, sys.gpu.driver, data.recipe_problems]), () => {
+    once(notices, JSON.stringify([sys.gpu.cuda_12_8_ok, sys.gpu.driver, data.recipe_problems, data.worker.last_crash]), () => {
+      const crash = crashNotice(data.worker, refresh);
+      if (crash) notices.append(crash);
       if (sys.gpu.cuda_12_8_ok === false) {
         notices.append(h("div", { class: "notice notice-warning" }, icon("alert"),
           `NVIDIA driver ${sys.gpu.driver} is too old for CUDA 12.8 (RTX 50-series needs 570 or newer). Update the driver before generating.`));
@@ -305,7 +325,8 @@ export async function mount(root) {
     const want = ordered.map((m) => cards.get(m.id).el);
     if (want.some((el, i) => grid.children[i] !== el) || grid.children.length !== want.length) grid.append(...want);
     applyFilter();
-    schedule(data.models.some((m) => m.state === "installing" || m.state === "uninstalling") ? 1000 : 5000);
+    const moving = ["loading", "generating", "unloading"].includes(data.worker.state);
+    schedule(moving || data.models.some((m) => m.state === "installing" || m.state === "uninstalling") ? 1000 : 5000);
   }
 
   function schedule(ms) { clearTimeout(timer); if (alive) timer = setTimeout(refresh, ms); }

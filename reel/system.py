@@ -90,6 +90,21 @@ def gpu_env() -> dict:
     return {"CUDA_VISIBLE_DEVICES": chosen["uuid"], "CUDA_DEVICE_ORDER": "PCI_BUS_ID"}
 
 
+def ram_info() -> dict:
+    """{"total_gb", "available_gb"} of system RAM ({} if it cannot be read). Same reader the model processes use."""
+    global _sysinfo
+    if _sysinfo is None:
+        import importlib.util
+        from . import config
+        spec = importlib.util.spec_from_file_location("reel_sysinfo", config.ADAPTERS_DIR / "sysinfo.py")
+        _sysinfo = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_sysinfo)
+    return _sysinfo.host_memory()
+
+
+_sysinfo = None
+
+
 def memory_info() -> dict | None:
     """Physical RAM and commit (RAM + pagefile) in bytes: ram_total, ram_free, commit_total, commit_free. None if unknown."""
     try:

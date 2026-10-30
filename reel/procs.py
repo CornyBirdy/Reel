@@ -1,4 +1,4 @@
-"""Subprocess helpers shared by the installer and the generation runner."""
+"""Subprocess helpers shared by the installer and the model workers."""
 
 from __future__ import annotations
 
@@ -15,11 +15,11 @@ def venv_python(venv_dir: Path) -> Path:
     return venv_dir / ("Scripts/python.exe" if IS_WINDOWS else "bin/python")
 
 
-def popen(cmd: list[str], env: dict | None = None, cwd: Path | None = None) -> subprocess.Popen:
-    """Start a child whose combined stdout/stderr we stream line by line."""
+def popen(cmd: list[str], env: dict | None = None, cwd: Path | None = None, pipe_stdin: bool = False) -> subprocess.Popen:
+    """Start a child whose combined stdout/stderr we stream line by line. pipe_stdin: keep a pipe to send it commands."""
     full_env = {**os.environ, "PYTHONUNBUFFERED": "1", "PYTHONUTF8": "1", **(env or {})}
     kwargs: dict = dict(
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.PIPE if pipe_stdin else subprocess.DEVNULL,
         text=True, encoding="utf-8", errors="replace", bufsize=1,
         env=full_env, cwd=str(cwd) if cwd else None,
     )

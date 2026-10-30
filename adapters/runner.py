@@ -1,4 +1,6 @@
-"""Entry point Reel runs inside a model's venv: `python runner.py REQUEST.json`."""
+"""One-shot entry point for adapters that do not stay loaded (the upscaler): `python runner.py REQUEST.json`.
+
+Diffusion models run in the long-lived worker.py instead."""
 import importlib
 import json
 import sys
@@ -17,7 +19,8 @@ def main(request_path: str) -> int:
         return 0
     except BaseException as exc:  # noqa: BLE001 - report everything to the app
         name = type(exc).__name__
-        kind = "oom" if "OutOfMemory" in name or "out of memory" in str(exc).lower() else "error"
+        text = str(exc).lower()
+        kind = "oom" if "OutOfMemory" in name or name == "MemoryError" or "out of memory" in text or "allocate memory" in text else "error"
         emit(event="error", kind=kind, message=f"{name}: {exc}", trace=traceback.format_exc()[-2000:])
         return 1
 

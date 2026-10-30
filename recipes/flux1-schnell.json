@@ -126,6 +126,24 @@
       }
     ]
   },
+  "native": {
+    "label": "1024×1024",
+    "resolutions": [
+      {
+        "w": 1024,
+        "h": 1024,
+        "label": "1024×1024"
+      }
+    ],
+    "source": "https://huggingface.co/black-forest-labs/FLUX.1-schnell",
+    "note": "Dimensions must be multiples of 16. Schnell is distilled for 4 steps with guidance 0."
+  },
+  "unlock": {
+    "max_width": 2048,
+    "max_height": 2048,
+    "known": false,
+    "note": "Reel's own ceiling, not a model limit: the pipeline accepts any multiple of 16."
+  },
   "defaults": {
     "width": 1024,
     "height": 1024,
@@ -147,6 +165,25 @@
       "int8",
       "nf4"
     ],
-    "notes": "Quantization applies to the transformer/UNet and any T5-class text encoder."
+    "notes": "Quantization applies to the transformer/UNet and any T5-class text encoder.",
+    "estimate": {
+      "weights_gb": {
+        "transformer": 23.8,
+        "text_encoder": 0.25,
+        "text_encoder_2": 9.5,
+        "vae": 0.2
+      },
+      "quantized": [
+        "transformer",
+        "text_encoder_2"
+      ],
+      "denoiser": "transformer",
+      "tokens": {
+        "spatial": 16
+      },
+      "hidden": 3072,
+      "vae_mb_per_mpx_frame": 1300,
+      "vae_tile_mpx_frames": 0.5
+    }
   }
 }

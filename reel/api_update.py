@@ -7,7 +7,7 @@ import threading
 
 from fastapi import APIRouter, HTTPException
 
-from . import updater
+from . import updater, workers
 from .generation import generation
 from .installer import installs
 
@@ -36,6 +36,7 @@ def apply() -> dict:
     busy = _busy()
     if busy:
         raise HTTPException(409, f"Wait until you are idle: {busy}.")
+    workers.manager.unload("updating Reel")    # the model process has the program files open
     try:
         return updater.apply()
     except updater.UpdateError as exc:
@@ -47,6 +48,7 @@ def restart() -> dict:
     busy = _busy()
     if busy:
         raise HTTPException(409, f"Wait until you are idle: {busy}.")
+    workers.manager.shutdown()
     auto = os.environ.get("REEL_LAUNCHER") == "bat"
     if auto:  # start.bat sees exit code 75, re-checks dependencies and starts Reel again
         threading.Timer(0.6, lambda: os._exit(RESTART_EXIT_CODE)).start()

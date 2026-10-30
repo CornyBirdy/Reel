@@ -57,14 +57,12 @@ class Validate(unittest.TestCase):
         self.bad("sdxl-base", seed=2**33)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class CrashRetry(unittest.TestCase):
     """A hard crash of the model process (e.g. Windows 0xC0000005) is retried once, then explained."""
 
-    def run_job(self, exit_codes):
+    CRASH = {"kind": "failed", "failure": {"message": "The model process crashed (exit code 0xC0000005).", "detail": "", "hint": "Native crash.", "kind": "crash"}}
+
+    def run_job(self, results):
         import tempfile
         from unittest import mock
         from reel import config, generation
@@ -74,15 +72,14 @@ class CrashRetry(unittest.TestCase):
         job = generation.GenJob(recipe, params)
         calls = []
 
-        def fake_attempt(self_, j, plan, todo, req_path, env):
+        def fake_attempt(self_, j, plan, todo, events):
             calls.append([it["name"] for it in todo])
-            code = exit_codes[len(calls) - 1]
-            if code == 0:
+            result = results[len(calls) - 1]
+            if result["kind"] == "done":
                 j.clips.extend({"file": it["name"]} for it in todo)
-                return 0, {"event": "done"}
-            if len(calls) == 1 and len(exit_codes) > 1:
+            elif len(calls) == 1 and len(results) > 1:
                 j.clips.append({"file": todo[0]["name"]})   # one item finished before the crash
-            return code, None
+            return result
 
         with tempfile.TemporaryDirectory() as tmp, \
                 mock.patch.object(config, "OUTPUTS_DIR", Path(tmp) / "out"), \
@@ -100,14 +97,26 @@ class CrashRetry(unittest.TestCase):
         self.assertFalse(is_native_crash(1))
 
     def test_retries_only_the_unfinished_items_and_succeeds(self):
-        job, calls = self.run_job([3221225477, 0])
+        job, calls = self.run_job([self.CRASH, {"kind": "done"}])
         self.assertEqual(job.status, "done")
         self.assertEqual(len(calls), 2)
         self.assertEqual(len(calls[1]), 1)
 
     def test_second_crash_gives_a_readable_error(self):
-        job, calls = self.run_job([3221225477, 3221225477])
+        job, calls = self.run_job([self.CRASH, self.CRASH])
         self.assertEqual(job.status, "failed")
         self.assertEqual(len(calls), 2)
-        self.assertIn("ran out of memory", job.error)
         self.assertIn("0xC0000005", job.error)
+        self.assertIn("ran out of memory", job.error_hint)
+        self.assertIn("crashed again after an automatic retry", job.error_hint)
+        self.assertIn("pagefile", job.error_hint)
+
+    def test_a_python_error_is_not_retried(self):
+        err = {"kind": "failed", "failure": {"message": "ValueError: bad", "detail": "Traceback...", "hint": "", "kind": "error"}}
+        job, calls = self.run_job([err, {"kind": "done"}])
+        self.assertEqual(job.status, "failed")
+        self.assertEqual(len(calls), 1)
+
+
+if __name__ == "__main__":
+    unittest.main()

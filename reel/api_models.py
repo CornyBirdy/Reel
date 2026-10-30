@@ -7,7 +7,7 @@ import time
 
 from fastapi import APIRouter, HTTPException
 
-from . import config, fit, hf, recipes, system
+from . import config, fit, hf, recipes, system, workers
 from .installer import InstallError, installs, installed_info, model_dir
 
 router = APIRouter(prefix="/api/models", tags=["models"])
@@ -69,6 +69,8 @@ def describe(recipe: dict, gpu: dict | None = None) -> dict:
         "tasks": recipe.get("tasks", []),
         "download_gb": recipe["download_gb"], "vram_gb": recipe["vram_gb"], "vram_note": recipe.get("vram_note"),
         "limits": recipe["limits"], "defaults": recipe["defaults"], "memory": recipe.get("memory", {}),
+        "native": recipe.get("native"), "native_label": recipes.native_label(recipe), "unlock": recipes.unlock_limits(recipe),
+        "recommended": bool(recipe.get("recommended")),
         "state": state, "installed": state == "installed", "installed_info": info,
         "disk": disk_usage(mid), "install": job.to_dict() if job else None,
         "blocked_reason": blocked,
@@ -83,6 +85,7 @@ def list_models() -> dict:
     gpu = system.gpu_info().get("selected_gpu")
     return {
         "models": [describe(r, gpu) for r in found.values()],
+        "worker": workers.manager.status(),
         "recipe_problems": problems,
         "models_dir": str(root),
         "disk_free": system.disk_free(root),
@@ -96,9 +99,18 @@ def _recipe_or_404(model_id: str) -> dict:
     return r
 
 
+def _release_worker(model_id: str) -> None:
+    """A loaded model has its environment and weights open; free them before they are changed or deleted."""
+    try:
+        workers.manager.unload(f"{model_id} is being changed", model_id=model_id)
+    except workers.WorkerBusy as exc:
+        raise HTTPException(409, str(exc))
+
+
 @router.post("/{model_id}/install")
 def install(model_id: str) -> dict:
     _recipe_or_404(model_id)
+    _release_worker(model_id)
     try:
         installs.start(model_id)
     except InstallError as exc:
@@ -146,6 +158,7 @@ def remove_recipe(model_id: str) -> dict:
 @router.delete("/{model_id}")
 def uninstall(model_id: str) -> dict:
     _recipe_or_404(model_id)
+    _release_worker(model_id)
     try:
         installs.uninstall(model_id)
     except InstallError as exc:
