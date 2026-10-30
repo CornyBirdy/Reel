@@ -6,8 +6,9 @@ import threading
 import time
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
-from . import config, fit, hf, recipes, system, workers
+from . import config, fit, generation, hf, model_settings, recipes, system, workers
 from .installer import InstallError, installs, installed_info, model_dir
 
 router = APIRouter(prefix="/api/models", tags=["models"])
@@ -70,7 +71,7 @@ def describe(recipe: dict, gpu: dict | None = None) -> dict:
         "download_gb": recipe["download_gb"], "vram_gb": recipe["vram_gb"], "vram_note": recipe.get("vram_note"),
         "limits": recipe["limits"], "defaults": recipe["defaults"], "memory": recipe.get("memory", {}),
         "native": recipe.get("native"), "native_label": recipes.native_label(recipe), "unlock": recipes.unlock_limits(recipe),
-        "recommended": bool(recipe.get("recommended")),
+        "recommended": bool(recipe.get("recommended")), "settings": model_settings.get(mid),
         "state": state, "installed": state == "installed", "installed_info": info,
         "disk": disk_usage(mid), "install": job.to_dict() if job else None,
         "blocked_reason": blocked,
@@ -105,6 +106,51 @@ def _release_worker(model_id: str) -> None:
         workers.manager.unload(f"{model_id} is being changed", model_id=model_id)
     except workers.WorkerBusy as exc:
         raise HTTPException(409, str(exc))
+
+
+@router.get("/{model_id}/settings")
+def get_settings(model_id: str) -> dict:
+    """Saved settings for a model, and what it starts from when nothing is saved."""
+    recipe = _recipe_or_404(model_id)
+    gpu = system.gpu_info().get("selected_gpu")
+    saved = model_settings.get(model_id)
+    base = {k: v for k, v in model_settings.effective(recipe, gpu).items() if k not in saved}
+    return {"saved": saved, "effective": model_settings.effective(recipe, gpu), "default": {**base, **{k: None for k in saved}}}
+
+
+class SettingsBody(BaseModel):
+    quantization: str | None = None
+    offload: str | None = None
+    vae_tiling: bool | None = None
+    attention_backend: str | None = None
+    width: int | None = None
+    height: int | None = None
+    frames: int | None = None
+    fps: int | None = None
+    steps: int | None = None
+    guidance: float | None = None
+
+
+@router.put("/{model_id}/settings")
+def put_settings(model_id: str, body: SettingsBody) -> dict:
+    """Save a model's settings. They are checked the way a generation is, so a saved value can always be used."""
+    recipe = _recipe_or_404(model_id)
+    if recipe.get("kind") == "upscale":
+        raise HTTPException(409, f"{recipe['name']} has no settings to save.")
+    values = model_settings.clean(body.model_dump())
+    try:
+        generation.validate(recipe, {"prompt": "x", **values})
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(400, str(exc))
+    model_settings.save(model_id, values)
+    return get_settings(model_id)
+
+
+@router.delete("/{model_id}/settings")
+def reset_settings(model_id: str) -> dict:
+    _recipe_or_404(model_id)
+    model_settings.reset(model_id)
+    return get_settings(model_id)
 
 
 @router.post("/{model_id}/install")

@@ -36,13 +36,14 @@ class Validate(unittest.TestCase):
     def test_image_size_rules(self):
         self.ok("sdxl-base", width=1000, height=1024)       # 1000 is a multiple of 8: allowed
         self.bad("sdxl-base", width=1020, height=1024)      # 1020 is not
-        self.bad("sdxl-base", width=1600, height=1024)      # over the side cap
+        self.ok("sdxl-base", width=1600, height=1024)       # above the safe size: allowed, the memory estimate warns
+        self.bad("sdxl-base", width=2056, height=1024)      # above what the pipeline supports
         self.bad("flux1-schnell", width=1500, height=1000)  # not a multiple of 16
 
     def test_video_rules_still_apply(self):
         self.assertEqual(self.ok("ltx-video", frames=97)["kind"], "video")
         self.bad("ltx-video", frames=96)
-        self.bad("wan-2.2", width=1280, height=704, frames=81)
+        self.ok("wan-2.2", width=1280, height=704, frames=81)       # above the safe budget: allowed
 
     def test_count_defaults_to_one_and_is_capped_per_kind(self):
         self.assertEqual(self.ok("sdxl-base")["count"], 1)

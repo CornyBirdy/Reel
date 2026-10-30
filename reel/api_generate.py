@@ -27,7 +27,7 @@ class GenerateRequest(BaseModel):
     vae_tiling: bool | None = None
     quantization: str | None = None
     fps: int | None = None
-    unlock: bool | None = None
+    unlock: bool | None = None       # older History entries send this; sizes are no longer gated, so it is ignored
     attention_backend: str | None = None
 
 

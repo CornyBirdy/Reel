@@ -1,6 +1,9 @@
 import { h, icon, clear, toast, fmtDuration, fmtDate, progressBar, statusBadge, viewLog } from "../ui.js";
 import { api } from "../api.js";
 import { KEEPS_MEMORY, crashNotice, holdsText, holdsTitle, idleText, loadButton, stateChip, stateOf, watchWorker } from "../worker.js";
+import { ATTN_LABEL, OFFLOAD_LABEL, QUANT_LABEL, describeCeiling, dims, resolutionChoices, snapFrames } from "../limits.js";
+import { fetchEstimate, renderEstimate } from "../estimate.js";
+import { openModelSettings } from "../model_settings.js";
 
 const FORM_KEY = "reel.generate.form";
 const PHASES = {
@@ -13,23 +16,8 @@ const isImageUrl = (url) => /\.png$/i.test(url);
 // Element.append turns null into the text "null"; optional children are dropped here instead.
 const put = (el, ...kids) => el.append(...kids.filter((k) => k !== null && k !== undefined && k !== false));
 
-const UNLOCK_KEY = "reel.generate.unlock";   // { model_id: true } - the toggle is remembered per model
-const loadUnlock = () => { try { return JSON.parse(localStorage.getItem(UNLOCK_KEY)) || {}; } catch { return {}; } };
-const saveUnlock = (v) => { try { localStorage.setItem(UNLOCK_KEY, JSON.stringify(v)); } catch { /* ignore */ } };
-const ATTN_LABEL = {
-  auto: "Auto (per the diffusers docs for this GPU)", native: "Native (PyTorch)", sage_hub: "SageAttention (sage_hub)",
-  flash_hub: "FlashAttention-2 (flash_hub)", _flash_3_hub: "FlashAttention-3 (_flash_3_hub, H100)", sage_blackwell_hub: "SageAttention 3 (sage_blackwell_hub, RTX 50)",
-};
-const STATUS_KIND = { ok: "success", risky: "warning", fail: "danger", unknown: "neutral" };
-const STATUS_LABEL = { ok: "OK", risky: "Risky", fail: "Likely to fail", unknown: "Unknown" };
-
 const loadForm = () => { try { return JSON.parse(localStorage.getItem(FORM_KEY)) || {}; } catch { return {}; } };
 const saveForm = (v) => { try { localStorage.setItem(FORM_KEY, JSON.stringify(v)); } catch { /* ignore */ } };
-
-const snapFrames = (v, fr) => {
-  const n = Math.round((v - fr.offset) / fr.step) * fr.step + fr.offset;
-  return Math.max(fr.min, Math.min(fr.max, n));
-};
 
 function field(label, control, hint, id) {
   return h("div", { class: "field" }, h("label", { for: id }, label), control, hint ? h("span", { class: "field-hint" }, hint) : null);
@@ -46,7 +34,7 @@ export async function mount(root) {
   let shownClipId = null;
   let history = { clips: [], total: 0 };
   const saved = loadForm();
-  const unlockMap = loadUnlock();
+  let userPicked = false;   // the viewer shows something chosen from History: a finished run must not take it over
   let estTimer = null, estSeq = 0;
   let worker = null;     // what is loaded right now (GET /api/worker)
   let watcher = null;
@@ -54,7 +42,9 @@ export async function mount(root) {
 
   // ---- layout ----
   const formCard = h("section", { class: "card stack-16 gen-form" });
-  const outputCard = h("section", { class: "card stack-16 gen-output", "aria-live": "polite" });
+  const progressEl = h("div", { class: "stack-12", "aria-live": "polite" });   // the running job (or why it failed)
+  const viewerEl = h("div", { class: "stack-16" });                              // the item being looked at: independent of the job
+  const outputCard = h("section", { class: "card stack-16 gen-output" }, progressEl, viewerEl);
   const historyEl = h("section", { class: "stack-16" });
   root.append(h("div", { class: "view" },
     h("div", { class: "page-head" }, h("h1", {}, "Generate"), h("p", {}, "Describe what you want, pick an installed model, and render it on this PC.")),
@@ -112,11 +102,6 @@ export async function mount(root) {
     f.framesOut = h("span", { class: "mono" });
     f.framesHint = h("span", { class: "field-hint" });
     f.fps = h("input", { id: "g-fps", class: "input", type: "number", min: 1, max: 60, oninput: () => { syncFrames(); persist(); } });
-    f.unlock = h("input", { id: "g-unlock", type: "checkbox", onchange: () => {
-      unlockMap[model.id] = f.unlock.checked; saveUnlock(unlockMap);
-      applyLimits(); persist(); validate(); refreshEstimate();
-    } });
-    f.unlockNote = h("span", { class: "field-hint" });
     f.est = h("div", { class: "stack-8 mem-est", "aria-live": "polite" });
     f.seed = h("input", { id: "g-seed", class: "input input-mono", type: "number", min: 0, max: 4294967295, placeholder: "Random", oninput: persist });
     f.steps = h("input", { id: "g-steps", class: "input", type: "number", oninput: persist });
@@ -145,7 +130,6 @@ export async function mount(root) {
         kind === "video" ? h("div", { class: "field" },
           h("label", { for: "g-frames" }, "Frames: ", f.framesOut), f.frames, f.framesHint) : null),
       f.custom,
-      h("div", { class: "field" }, h("label", { class: "check" }, f.unlock, "Unlock limits (advanced)"), f.unlockNote),
       h("div", { class: kind === "video" ? "grid-2" : "grid-3" },
         field("Seed", h("div", { class: "row-8" },
           h("div", { class: "grow" }, f.seed),
@@ -175,7 +159,7 @@ export async function mount(root) {
       else if (k === "cw" && v) f.cw.value = v;
       else if (k === "ch" && v) f.ch.value = v;
       else if (k === "fps" && kind === "video" && v) f.fps.value = v;
-      else if (k === "frames" && kind === "video") { f.frames.value = snapFrames(Number(v), model.limits.frames); }
+      else if (k === "frames" && kind === "video") { f.frames.value = snapFrames(Number(v), { ...model.limits.frames, max: maxFrames() }); }
       else if (k === "steps") f.steps.value = v;
       else if (k === "guidance") f.guidance.value = v;
       else if (k === "offload" && [...f.offload.options].some((o) => o.value === v)) f.offload.value = v;
@@ -203,6 +187,8 @@ export async function mount(root) {
       stateChip(st, st === "loading" ? w.message : undefined),
       holds ? h("span", { class: "muted mono", title: holdsTitle }, holds) : null,
       h("span", { class: "grow" }),
+      h("button", { class: "btn btn-icon", type: "button", title: "Model settings: how it loads and what it generates with by default", "aria-label": "Model settings",
+        onclick: () => openModelSettings(model, { onSaved: afterSettingsSaved }) }, icon("settings")),
       loadButton(model, w, { onDone: () => watcher && watcher.poke(), memory: memorySettings, compact: true })));
     const notes = [];
     if (st === "unloaded" && !other) notes.push("Generate loads it automatically. Loading takes a while the first time; later runs reuse it.");
@@ -221,38 +207,47 @@ export async function mount(root) {
     if (crash && w.last_crash.model_id === model.id) f.worker.append(crash);
   }
 
+  // Saved model settings changed: start the form from them (they are this model's defaults), and refresh the worker row.
+  async function afterSettingsSaved() {
+    await loadModels();
+    const fresh = modelById(model.id);
+    if (fresh) { model = fresh; applyModel(model, true); persist(); }
+    if (watcher) watcher.poke();
+  }
+
   function applyModel(m, reset) {
     const lim = m.limits, d = m.defaults, mem = m.memory || {};
-    f.unlock.checked = !!unlockMap[m.id];            // remembered per model
-    fillResolutions(`${d.width}x${d.height}`, true);
+    const sv = m.settings || {};                     // what was saved in the model's settings; otherwise the recipe's own values
+    fillResolutions();
+    setSize(sv.width ?? d.width, sv.height ?? d.height);
     if (kind === "video") {
-      f.fps.value = d.fps ?? lim.fps;                // the recipe's own frame rate (e.g. 24 for HunyuanVideo 1.5)
+      f.fps.value = sv.fps ?? d.fps ?? lim.fps;      // the recipe's own frame rate (e.g. 24 for HunyuanVideo 1.5)
       applyFrameRange();
-      f.frames.value = lim.frames.default;
+      f.frames.value = sv.frames ?? lim.frames.default;
     }
-    f.steps.min = lim.steps?.min ?? 1; f.steps.max = lim.steps?.max ?? 100; f.steps.value = d.steps;
-    f.guidance.value = d.guidance;
+    f.steps.min = lim.steps?.min ?? 1; f.steps.max = lim.steps?.max ?? 100; f.steps.value = sv.steps ?? d.steps;
+    f.guidance.value = sv.guidance ?? d.guidance;
     f.negative.value = d.negative_prompt || "";
     clear(f.offload);
-    for (const o of mem.offload_options || ["model"]) f.offload.append(h("option", { value: o }, { none: "None (fastest, most VRAM)", model: "Model offload", sequential: "Sequential (slowest, least VRAM)" }[o] || o));
+    for (const o of mem.offload_options || ["model"]) f.offload.append(h("option", { value: o }, OFFLOAD_LABEL[o] || o));
     // Start from what suits this PC's GPU: low-memory settings on a small card, no offloading on a big one.
     const rec = (m.fit && m.fit.recommended) || {};
     const pick = (select, wanted, fallback) => ([...select.options].some((o) => o.value === wanted) ? wanted : fallback);
-    f.offload.value = pick(f.offload, rec.offload, d.offload);
+    f.offload.value = pick(f.offload, sv.offload ?? rec.offload, d.offload);
     clear(f.quant);
-    for (const o of mem.quantization_options || ["none"]) f.quant.append(h("option", { value: o }, { none: "Off (bf16)", int8: "8-bit", nf4: "4-bit NF4" }[o] || o));
-    f.quant.value = pick(f.quant, rec.quantization, d.quantization);
+    for (const o of mem.quantization_options || ["none"]) f.quant.append(h("option", { value: o }, QUANT_LABEL[o] || o));
+    f.quant.value = pick(f.quant, sv.quantization ?? rec.quantization, d.quantization);
     clear(f.fit);
     if (m.fit && ["low_memory", "too_big", "no_gpu"].includes(m.fit.level)) {
       f.fit.append(h("div", { class: `notice ${m.fit.level === "low_memory" ? "notice-info" : "notice-warning"}` }, icon(m.fit.level === "low_memory" ? "info" : "alert"),
         h("div", {}, h("strong", {}, m.fit.label), h("div", {}, m.fit.detail))));
     }
-    f.tiling.checked = d.vae_tiling;
+    f.tiling.checked = sv.vae_tiling ?? d.vae_tiling;
     f.attnField.hidden = !mem.attention_options;
     f.attnHint.textContent = mem.attention_note || "How the denoiser computes attention. Native is PyTorch's own and always works.";
     clear(f.attn);
     for (const o of mem.attention_options || []) f.attn.append(h("option", { value: o }, ATTN_LABEL[o] || o));
-    if (mem.attention_options) f.attn.value = d.attention_backend || "native";
+    if (mem.attention_options) f.attn.value = pick(f.attn, sv.attention_backend, d.attention_backend || "native");
     fillCount(f.count.value);
     const note = document.getElementById("mem-note");
     if (note) note.textContent = mem.notes || "";
@@ -260,29 +255,20 @@ export async function mount(root) {
     syncCustom(); syncFrames(); validate(); refreshEstimate();
   }
 
-  const isUnlocked = () => !!(model && f.unlock.checked);
-  const maxSide = (key) => (isUnlocked() ? model.unlock[`max_${key}`] : model.limits[`max_${key}`]);
-  const maxFrames = () => (isUnlocked() ? model.unlock.max_frames : model.limits.frames.max);
+  // Anything up to what the pipeline supports can be chosen; the memory estimate does the warning.
+  const maxSide = (key) => model.unlock[`max_${key}`];
+  const maxFrames = () => model.unlock.max_frames;
 
-  // Safe presets, the model's native sizes, and (when unlocked) native sizes above the safe caps plus a custom size.
-  function fillResolutions(want, fresh) {
-    const lim = model.limits, nat = model.native?.resolutions || [];
-    const key = (p) => `${p.w}x${p.h}`;
-    const natKeys = new Set(nat.map(key));
-    const fitsSafe = (p) => p.w <= lim.max_width && p.h <= lim.max_height;
-    const label = (p, extra) => `${p.w} × ${p.h}${natKeys.has(key(p)) ? " · native" : ""}${extra || ""}`;
-    const have = new Set(lim.presets.map(key));
+  function fillResolutions() {
     clear(f.res);
-    for (const p of lim.presets) f.res.append(h("option", { value: key(p) }, label(p)));
-    for (const p of nat) {
-      if (have.has(key(p))) continue;
-      if (fitsSafe(p)) f.res.append(h("option", { value: key(p) }, label(p)));
-      else if (isUnlocked()) f.res.append(h("option", { value: key(p) }, label(p, " · above safe limits")));
-    }
-    if (isUnlocked()) f.res.append(h("option", { value: "custom" }, "Custom size…"));
-    const ok = [...f.res.options].some((o) => o.value === want);
-    f.res.value = ok ? want : `${model.defaults.width}x${model.defaults.height}`;
-    if (!ok && !fresh && want === "custom") f.res.value = `${model.defaults.width}x${model.defaults.height}`;
+    for (const o of resolutionChoices(model)) f.res.append(h("option", { value: o.value }, o.label));
+  }
+
+  // Select a size from the list, or "custom" with the numbers typed in.
+  function setSize(w, hh) {
+    const want = `${w}x${hh}`;
+    if ([...f.res.options].some((o) => o.value === want)) f.res.value = want;
+    else { f.res.value = "custom"; f.cw.value = w; f.ch.value = hh; }
   }
 
   function applyFrameRange() {
@@ -290,29 +276,12 @@ export async function mount(root) {
     f.frames.min = fr.min; f.frames.max = maxFrames(); f.frames.step = fr.step;
   }
 
-  // The unlock toggle changed: widen or narrow what the form offers, keeping the current choices where they still fit.
-  function applyLimits() {
-    fillResolutions(f.res.value);
-    if (kind === "video") { applyFrameRange(); }
-    describeLimits();
-    syncCustom(); syncFrames();
-  }
-
   function describeLimits() {
-    const m = model, lim = m.limits, nat = m.native, u = m.unlock;
-    const dims = (w, hh) => `${w} × ${hh}`;
-    if (kind === "video") {
-      const budget = lim.max_area_frames ? " The width × height × frames total is also capped." : "";
-      f.caps.textContent = `Safe limits for ${m.name}: up to ${dims(lim.max_width, lim.max_height)} and ${lim.frames.max} frames, sized for a 16 GB GPU.${budget}`
-        + (nat ? ` Native: ${nat.resolutions.map((r) => dims(r.w, r.h)).slice(0, 3).join(", ")}${nat.frames ? `, ${nat.frames.join(" or ")} frames` : ""}${nat.fps ? ` at ${nat.fps} fps` : ""}.` : "");
-      f.framesHint.textContent = nat?.frames?.length ? `Native: ${nat.frames.join(" or ")} frames (${lim.frames.step}n+${lim.frames.offset})` : `${lim.frames.step}n+${lim.frames.offset} frames`;
-    } else {
-      f.caps.textContent = `Safe limits for ${m.name}: up to ${dims(lim.max_width, lim.max_height)} and ${((lim.max_area || lim.max_width * lim.max_height) / 1e6).toFixed(1)} megapixels, sized for a 16 GB GPU.`;
-    }
-    const up = kind === "video" ? `${dims(u.max_width, u.max_height)} and ${u.max_frames} frames` : dims(u.max_width, u.max_height);
-    f.unlockNote.textContent = isUnlocked()
-      ? `Unlocked: up to ${up}, any size in multiples of ${lim.size_multiple}. ${u.note}${u.known ? "" : " (Reel is guessing this ceiling.)"} Too big a run can run out of memory or crash.`
-      : `Allow every size${kind === "video" ? " and length" : ""} the model supports (up to ${up}), not only what is sized for a 16 GB GPU.`;
+    f.caps.textContent = describeCeiling(model, kind);
+    const nat = model.native, lim = model.limits;
+    f.framesHint.textContent = kind === "video"
+      ? (nat?.frames?.length ? `Native: ${nat.frames.join(" or ")} frames (${lim.frames.step}n+${lim.frames.offset})` : `${lim.frames.step}n+${lim.frames.offset} frames`) + `, up to ${maxFrames()}`
+      : "";
   }
 
   function syncCustom() {
@@ -349,38 +318,19 @@ export async function mount(root) {
     f.framesOut.textContent = `${n} · ${(n / fps).toFixed(1)} s`;
   }
 
-  // Blocks only what the pipeline would reject; going above the safe limits is a warning, never a block.
+  // Blocks only what the pipeline itself would reject. Going above the typical safe size is allowed: the estimate warns.
   function validate() {
     clear(f.warn);
     if (!model) return true;
-    const lim = model.limits, mult = lim.size_multiple;
+    const mult = model.limits.size_multiple;
     const [w, hgt] = getSize();
-    const unlocked = isUnlocked();
-    const warn = (msg, kindName = "warning") => f.warn.append(h("div", { class: `notice notice-${kindName}` }, icon("alert"), msg));
     let ok = true;
-    let beyond = false;
-    if (!w || !hgt || w % mult || hgt % mult) {
+    const warn = (msg) => f.warn.append(h("div", { class: "notice notice-warning" }, icon("alert"), msg));
+    if (!w || !hgt || w % mult || hgt % mult) { ok = false; warn(`Width and height must be multiples of ${mult}.`); }
+    else if (w < 64 || hgt < 64 || w > maxSide("width") || hgt > maxSide("height")) {
       ok = false;
-      warn(`Width and height must be multiples of ${mult}.`);
-    } else if (w < 64 || hgt < 64 || w > maxSide("width") || hgt > maxSide("height")) {
-      ok = false;
-      warn(`Width and height must be between 64 and ${maxSide("width")} × ${maxSide("height")} for ${model.name}.${unlocked ? "" : " Turn on Unlock limits (advanced) to go higher."}`);
-    } else {
-      if (w > lim.max_width || hgt > lim.max_height) beyond = true;
-      if (kind === "video") {
-        const frames = Number(f.frames.value);
-        const budget = lim.max_area_frames;
-        if (frames > lim.frames.max) beyond = true;
-        if (budget && w * hgt * frames > budget) {
-          if (unlocked) beyond = true;
-          else { ok = false; warn(`${w} × ${hgt} with ${frames} frames is over the safe size for ${model.name}. Lower the resolution or the frame count, or turn on Unlock limits (advanced).`); }
-        }
-      } else if (lim.max_area && w * hgt > lim.max_area) {
-        if (unlocked) beyond = true;
-        else { ok = false; warn(`${w} × ${hgt} is over the safe size for ${model.name}. Lower the resolution, or turn on Unlock limits (advanced).`); }
-      }
+      warn(`Width and height must be between 64 and ${dims(maxSide("width"), maxSide("height"))}: the most ${model.name}'s pipeline supports.`);
     }
-    if (ok && unlocked && beyond) warn(`Above the safe limits for ${model.name}. It may run out of memory or crash; the memory estimate below shows how likely that is.`);
     if (!activeRunning()) f.go.disabled = !ok;
     return ok;
   }
@@ -397,32 +347,12 @@ export async function mount(root) {
     if (!w || !hgt) return;
     const seq = ++estSeq;
     try {
-      const e = await api.post("/api/estimate", {
-        model_id: model.id, width: w, height: hgt, frames: kind === "video" ? Number(f.frames.value) : undefined,
+      const e = await fetchEstimate(model.id, {
+        width: w, height: hgt, frames: kind === "video" ? Number(f.frames.value) : undefined,
         offload: f.offload.value, quantization: f.quant.value, vae_tiling: f.tiling.checked,
       });
-      if (seq === estSeq && alive) renderEstimate(e);
+      if (seq === estSeq && alive) renderEstimate(f.est, e);
     } catch { /* the estimate is a convenience: never get in the way */ }
-  }
-
-  function renderEstimate(e) {
-    clear(f.est);
-    const row = (name, used, cap, level, title) => h("div", { class: "est-row", title },
-      h("span", { class: "est-name" }, name),
-      h("span", { class: "mono est-nums" }, cap ? `~${used} GB of ${cap} GB free` : `~${used} GB`),
-      statusBadge(STATUS_KIND[level], STATUS_LABEL[level]));
-    const b = e.breakdown || {};
-    const vramTip = b.weights_gb !== undefined ? `Weights on the GPU ~${b.weights_gb} GB, activations ~${b.activations_gb} GB, VAE decode ~${b.vae_decode_gb} GB` : "Scaled from the model's listed VRAM need";
-    f.est.append(
-      h("div", { class: "field-label" }, "Memory estimate"),
-      row("GPU memory", e.vram_gb, e.vram_cap_gb, e.vram, vramTip),
-      row("System RAM", e.ram_gb, e.ram_cap_gb, e.ram, "Python and CUDA libraries, the model's weights while they wait on the CPU, and the decoded frames"));
-    if (e.status === "fail") f.est.append(h("div", { class: "notice notice-danger" }, icon("alert"),
-      "This will probably run out of memory or crash on this PC. You can still try it. To bring it down: lower the resolution or frame count, use NF4 quantization, or set Offloading to Sequential."));
-    else if (e.status === "risky") f.est.append(h("div", { class: "notice notice-warning" }, icon("alert"),
-      "Close to what this PC has free right now. It may work, but other programs using memory could make it fail."));
-    for (const n of e.notes || []) f.est.append(h("div", { class: "field-hint" }, n));
-    f.est.append(h("div", { class: "field-hint" }, "A rough estimate; the real peak is recorded in History after each run."));
   }
 
   function readForm() {
@@ -430,7 +360,7 @@ export async function mount(root) {
     return {
       model_id: model.id, prompt: f.prompt.value, negative_prompt: f.negative.value,
       width: w, height: hgt, frames: kind === "video" ? Number(f.frames.value) : undefined, steps: Number(f.steps.value),
-      fps: kind === "video" ? Number(f.fps.value) || undefined : undefined, unlock: isUnlocked(),
+      fps: kind === "video" ? Number(f.fps.value) || undefined : undefined,
       guidance: Number(f.guidance.value), seed: f.seed.value === "" ? null : Number(f.seed.value),
       offload: f.offload.value, quantization: f.quant.value, vae_tiling: f.tiling.checked,
       attention_backend: f.attnField.hidden ? undefined : f.attn.value,
@@ -454,9 +384,7 @@ export async function mount(root) {
     const p = clip.params;
     if (m.kind !== kind || !model || model.id !== m.id) { kind = m.kind; wantedModel = m.id; buildForm(); }
     f.prompt.value = clip.prompt; f.negative.value = p.negative_prompt || "";
-    if (p.unlock && !f.unlock.checked) { f.unlock.checked = true; unlockMap[m.id] = true; saveUnlock(unlockMap); applyLimits(); }
-    if ([...f.res.options].some((o) => o.value === `${p.width}x${p.height}`)) f.res.value = `${p.width}x${p.height}`;
-    else if (isUnlocked()) { f.res.value = "custom"; f.cw.value = p.width; f.ch.value = p.height; }
+    setSize(p.width, p.height);
     syncCustom();
     if (kind === "video") { f.frames.value = p.frames; if (p.fps) f.fps.value = p.fps; }
     f.steps.value = p.steps;
@@ -476,7 +404,7 @@ export async function mount(root) {
     if (!body) { if (!req.prompt.trim()) { toast("Write a prompt first.", "warning"); f.prompt.focus(); return; } }
     try {
       activeJob = await api.post("/api/generate", req);
-      shownClipId = null;
+      userPicked = false;
       renderOutput();
       poll();
     } catch (e) { toast(e.message, "danger", 9000); }
@@ -496,7 +424,7 @@ export async function mount(root) {
   async function upscale(clip, scale) {
     try {
       activeJob = await api.post("/api/upscale", { clip_id: clip.id, scale });
-      shownClipId = null;
+      userPicked = false;
       renderOutput();
       poll();
     } catch (e) { toast(e.message, "danger", 9000); }
@@ -510,13 +438,23 @@ export async function mount(root) {
   const activeRunning = () => !!activeJob && activeJob.status === "running";
 
   // ---- output panel ----
+  // The progress of the running job and the item being looked at are independent: you can open anything from History
+  // while another image or clip generates, and a finished run does not pull the viewer away from what you chose.
   function renderOutput() {
-    clear(outputCard);
+    syncRunButtons();
+    renderProgress();
+    renderViewer();
+  }
+
+  function syncRunButtons() {
     const running = activeRunning();
     if (f.go) { f.go.hidden = running; f.stop.hidden = !running; f.go.disabled = running; }
-    const job = activeJob;
+  }
 
-    if (running) {
+  function renderProgress() {
+    clear(progressEl);
+    const job = activeJob;
+    if (activeRunning()) {
       const up = !!(job.params && job.params.upscale);
       const phases = up ? PHASES.upscale : PHASES[job.kind || "video"];
       const order = phases.map((p) => p[0]);
@@ -528,7 +466,7 @@ export async function mount(root) {
           : job.phase === "encoding" ? 0.97 : 0.05;
       const frac = ((job.item - 1) + inner) / Math.max(job.items, 1);
       const of = job.items > 1 ? `${job.kind === "image" ? "Image" : "Clip"} ${job.item} of ${job.items} · ` : "";
-      put(outputCard,
+      progressEl.append(h("div", { class: "progress-panel stack-12" },
         h("div", { class: "row-between" }, h("h3", {}, up ? `Upscaling ${job.params.upscale.scale}× with ${job.model_name}` : job.items > 1 ? `Generating ${job.items} with ${job.model_name}` : `Generating with ${job.model_name}`), statusBadge("info", "Running", "play")),
         h("ol", { class: "steps", "aria-label": "Generation steps" },
           phases.map(([id, label], i) => h("li", { class: "step", "data-state": i < idx ? "done" : i === idx ? "active" : "pending", "aria-current": i === idx ? "step" : undefined },
@@ -539,12 +477,12 @@ export async function mount(root) {
           h("span", {}, [`${fmtDuration(job.elapsed)} elapsed`, job.eta ? `~${fmtDuration(job.eta)} left` : null].filter(Boolean).join(" · "))),
         job.reused ? h("div", { class: "field-hint" }, "The model was already loaded, so this run skipped loading.") : null,
         h("p", { class: "muted" }, job.params.prompt),
-        job.clips.length ? h("div", { class: "stack-8" }, h("h4", {}, `Finished so far (${job.clips.length})`), batchStrip(job, false)) : null);
+        job.clips.length ? h("div", { class: "stack-8" }, h("h4", {}, `Finished so far (${job.clips.length})`), batchStrip(job, true)) : null,
+        h("div", { class: "field-hint" }, "You can look at anything in History while this runs.")));
       return;
     }
-
     if (job && job.status === "failed") {
-      outputCard.append(h("div", { class: "notice notice-danger", role: "alert" }, icon("error"),
+      progressEl.append(h("div", { class: "notice notice-danger", role: "alert" }, icon("error"),
         h("div", { class: "stack-8 grow" },
           h("strong", {}, "Generation failed"),
           h("div", {}, job.error || "Unknown error"),
@@ -553,13 +491,26 @@ export async function mount(root) {
           job.log_name ? h("div", { class: "row-8" },
             h("button", { class: "btn", type: "button", onclick: () => viewLog(job.log_name) }, icon("log"), "View full log")) : null)));
     } else if (job && job.status === "cancelled") {
-      outputCard.append(h("div", { class: "notice notice-info" }, icon("info"), job.message || "Cancelled."));
+      progressEl.append(h("div", { class: "notice notice-info" }, icon("info"), job.message || "Cancelled."));
     }
+  }
 
-    const clip = history.clips.find((c) => c.id === shownClipId) || (job && job.clip);
+  function renderViewer() {
+    clear(viewerEl);
+    const job = activeJob;
+    const clip = history.clips.find((c) => c.id === shownClipId) || (!activeRunning() && job && job.clip);
     if (clip) { showClip(clip); return; }
-    outputCard.append(h("div", { class: "empty" }, icon(kind === "image" ? "image" : "generate"),
-      h("div", {}, h("strong", {}, kind === "image" ? "Your image appears here" : "Your clip appears here"), h("div", {}, "Pick a model, write a prompt and press Generate."))));
+    viewerEl.append(h("div", { class: "empty" }, icon(kind === "image" ? "image" : "generate"),
+      h("div", {}, h("strong", {}, activeRunning() ? "Pick something from History to view" : kind === "image" ? "Your image appears here" : "Your clip appears here"),
+        h("div", {}, activeRunning() ? "The result appears here when it is done." : "Pick a model, write a prompt and press Generate."))));
+  }
+
+  // Look at an item. While a run is going the progress stays where it is, and the run's own result will not replace this.
+  function view(clipId) {
+    shownClipId = clipId;
+    userPicked = true;
+    if (!activeRunning()) activeJob = null;      // a finished run's notice goes away once you look at something else
+    renderOutput();
   }
 
   function showClip(clip) {
@@ -570,8 +521,8 @@ export async function mount(root) {
     const media = image
       ? h("img", { class: "player", src: clip.url, alt: clip.prompt })
       : h("video", { class: "player", controls: true, loop: true, muted: true, autoplay: true, playsinline: true, src: clip.url });
-    put(outputCard, media,
-      activeJob && activeJob.clips && activeJob.clips.length > 1 ? batchStrip(activeJob, true) : null,
+    put(viewerEl, media,
+      !activeRunning() && activeJob && activeJob.clips && activeJob.clips.length > 1 ? batchStrip(activeJob, true) : null,
       h("p", {}, clip.prompt),
       h("div", { class: "stats" },
         stat("Model", clip.model_name), stat("Size", upscaled ? `${p.source_width} × ${p.source_height} → ${p.width} × ${p.height}` : `${p.width} × ${p.height}`),
@@ -596,7 +547,7 @@ export async function mount(root) {
       const on = c.id === shownClipId;
       return interactive
         ? h("button", { type: "button", class: "batch-thumb", role: "listitem", "aria-current": on ? "true" : undefined, "aria-label": `Result ${i + 1} of ${job.clips.length}, seed ${c.params.seed}`,
-            title: `Seed ${c.params.seed}`, onclick: () => { shownClipId = c.id; renderOutput(); } }, img)
+            title: `Seed ${c.params.seed}`, onclick: () => view(c.id) }, img)
         : h("div", { class: "batch-thumb", role: "listitem", title: `Seed ${c.params.seed}` }, img);
     }));
   }
@@ -629,7 +580,7 @@ export async function mount(root) {
     const p = clip.params;
     const current = clip.id === shownClipId;
     return h("article", { class: "item clip", "aria-current": current ? "true" : undefined },
-      h("button", { class: "clip-thumb", type: "button", "aria-label": `Show: ${clip.prompt.slice(0, 60)}`, onclick: () => { activeJob = null; shownClipId = clip.id; renderOutput(); outputCard.scrollIntoView({ behavior: "smooth", block: "nearest" }); } },
+      h("button", { class: "clip-thumb", type: "button", "aria-label": `Show: ${clip.prompt.slice(0, 60)}`, onclick: () => { view(clip.id); outputCard.scrollIntoView({ behavior: "smooth", block: "nearest" }); } },
         isImageUrl(clip.url)
           ? h("img", { src: clip.url, alt: "", loading: "lazy" })
           : h("video", { src: `${clip.url}#t=0.1`, preload: "metadata", muted: true, playsinline: true, tabindex: -1 })),
@@ -665,8 +616,13 @@ export async function mount(root) {
           if (job.status === "done" && job.params.upscale) toast("Upscale finished. It is saved in History.", "success", 3500);
           else if (job.status === "done") toast(job.items > 1 ? `${job.items} ${job.kind === "image" ? "images" : "clips"} finished.` : (job.kind === "image" ? "Image finished." : "Clip finished."), "success", 3000);
         }
-        if (job.status !== "running" && job.clip) shownClipId = job.clip.id;
-        renderOutput();
+        if (job.status !== "running") {
+          if (job.clip && !userPicked) shownClipId = job.clip.id;     // show the result unless you chose something else meanwhile
+          renderOutput();
+        } else {
+          syncRunButtons();
+          renderProgress();                                           // the viewer is left alone: a playing video must not restart
+        }
       }
     } catch { /* server busy: try again */ }
     if (alive && activeRunning()) timer = setTimeout(poll, 1000);
@@ -684,7 +640,7 @@ export async function mount(root) {
   buildForm();
   await loadHistory();
   const { job } = await api.get("/api/generate/current").catch(() => ({ job: null }));
-  if (job && (job.status === "running" || job.status === "failed")) activeJob = job;
+  if (job && (job.status === "running" || job.status === "failed")) { activeJob = job; if (history.clips.length) shownClipId = history.clips[0].id; }
   else if (job && job.status === "done" && job.clip && history.clips.some((c) => c.id === job.clip.id)) { activeJob = job; shownClipId = job.clip.id; }
   else if (history.clips.length) shownClipId = history.clips[0].id;
   renderOutput();

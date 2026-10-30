@@ -5,17 +5,20 @@
 import copy
 import sys
 import unittest
+from unittest import mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from reel import estimate, recipes  # noqa: E402
-from reel.generation import unlocked_run_hint, validate  # noqa: E402
+from reel.generation import oversize_hint, validate  # noqa: E402
 
 GPU_16 = {"total_gb": 16.0, "free_gb": 15.0}
 RAM_32 = {"total_gb": 32.0, "available_gb": 28.0}   # a 32 GB PC with a browser open
 
 
-class Unlock(unittest.TestCase):
+class Limits(unittest.TestCase):
+    """Sizes above the recipe's safe limits are allowed (the estimate warns); only the pipeline's own rules and ceiling block."""
+
     @classmethod
     def setUpClass(cls):
         cls.all, _ = recipes.load_all()
@@ -28,33 +31,28 @@ class Unlock(unittest.TestCase):
             validate(self.all[rid], {"prompt": "x", **kw})
         return str(cm.exception)
 
-    def test_sizes_above_the_safe_limit_need_the_toggle(self):
-        msg = self.bad("wan-2.2", width=1280, height=704, frames=121)
-        self.assertIn("Unlock limits", msg)
-        out = self.ok("wan-2.2", width=1280, height=704, frames=121, unlock=True)
-        self.assertTrue(out["unlock"])
+    def test_sizes_above_the_safe_limit_are_allowed_and_flagged(self):
+        out = self.ok("wan-2.2", width=1280, height=704, frames=121)
         self.assertTrue(out["beyond_safe"])
+        self.assertNotIn("unlock", out)
 
-    def test_unlocked_but_within_the_safe_limits_is_not_beyond_safe(self):
-        out = self.ok("ltx-video", width=704, height=480, frames=97, unlock=True)
-        self.assertTrue(out["unlock"])
-        self.assertFalse(out["beyond_safe"])
+    def test_within_the_safe_limits_is_not_beyond_safe(self):
+        self.assertFalse(self.ok("ltx-video", width=704, height=480, frames=97)["beyond_safe"])
 
-    def test_frames_up_to_the_models_maximum_when_unlocked(self):
-        self.bad("ltx-video", frames=257)
-        self.assertEqual(self.ok("ltx-video", frames=257, unlock=True)["frames"], 257)
-        self.bad("ltx-video", frames=265, unlock=True)      # above the card's 257
+    def test_frames_up_to_the_models_maximum(self):
+        self.assertEqual(self.ok("ltx-video", frames=257)["frames"], 257)
+        self.assertIn("257", self.bad("ltx-video", frames=265))      # above the card's 257
 
     def test_the_pipelines_own_rules_never_relax(self):
-        self.bad("ltx-video", frames=256, unlock=True)                 # LTX frames are 8n+1
-        self.bad("ltx-video", width=1000, height=480, unlock=True)     # multiples of 32
-        self.bad("hunyuanvideo", frames=130, unlock=True)              # Hunyuan frames are 4n+1
-        self.bad("wan-2.2", width=1280, height=1312, frames=49, unlock=True)  # above the ceiling
+        self.bad("ltx-video", frames=256)                 # LTX frames are 8n+1
+        self.bad("ltx-video", width=1000, height=480)     # multiples of 32
+        self.bad("hunyuanvideo", frames=130)              # Hunyuan frames are 4n+1
+        self.bad("wan-2.2", width=1280, height=1312, frames=49)  # above the ceiling
 
-    def test_image_models_need_the_toggle_above_the_safe_size(self):
-        self.bad("sdxl-base", width=2048, height=2048)
-        self.assertTrue(self.ok("sdxl-base", width=2048, height=2048, unlock=True)["beyond_safe"])
-        self.ok("sdxl-base", width=2040, height=1024, unlock=True)      # custom size, multiple of 8
+    def test_image_models_take_any_size_up_to_their_ceiling(self):
+        self.assertTrue(self.ok("sdxl-base", width=2048, height=2048)["beyond_safe"])
+        self.ok("sdxl-base", width=2040, height=1024)       # custom size, multiple of 8
+        self.bad("sdxl-base", width=2056, height=1024)
 
     def test_fps_comes_from_the_recipe_unless_given(self):
         self.assertEqual(self.ok("ltx-video")["fps"], 24)
@@ -64,11 +62,12 @@ class Unlock(unittest.TestCase):
 
     def test_a_crash_on_an_unlocked_run_is_explained_with_safer_settings(self):
         r = self.all["wan-2.2"]
-        params = self.ok("wan-2.2", width=1280, height=704, frames=121, unlock=True)
-        hint = unlocked_run_hint(r, params)
+        params = self.ok("wan-2.2", width=1280, height=704, frames=121)
+        hint = oversize_hint(r, params)
         self.assertIn("running out of memory", hint)
+        self.assertIn("bigger than the safe size", hint)
         self.assertIn("832×480 with 49 frames", hint)       # the recipe's safe default
-        self.assertEqual(unlocked_run_hint(r, self.ok("wan-2.2")), "")
+        self.assertEqual(oversize_hint(r, self.ok("wan-2.2")), "")
 
 
 class RecipeSanity(unittest.TestCase):
@@ -89,6 +88,7 @@ class RecipeSanity(unittest.TestCase):
 
     def test_a_recipe_without_an_unlock_block_gets_a_ceiling_marked_unknown(self):
         del self.recipe["unlock"]
+        self.recipe["adapter_config"] = {"pipeline": "SomeNewVideoPipeline"}
         u = recipes.unlock_limits(self.recipe)
         self.assertFalse(u["known"])
         self.assertGreaterEqual(u["max_width"], self.recipe["limits"]["max_width"])
@@ -97,7 +97,7 @@ class RecipeSanity(unittest.TestCase):
 
     def test_every_shipped_video_recipe_has_a_frame_rate_and_native_info(self):
         for rid, r in recipes.load_all()[0].items():
-            if r.get("kind") == "video":
+            if r.get("kind") == "video" and r.get("source") == "builtin":     # imports from Hugging Face carry no card data
                 self.assertIn("fps", r["limits"], rid)
                 self.assertTrue(r.get("native", {}).get("resolutions"), rid)
 
@@ -199,17 +199,16 @@ class HunyuanVideo15(unittest.TestCase):
         self.assertTrue(self.r["recommended"])
         self.assertNotIn("recommended", self.all["hunyuanvideo"])
 
-    def test_native_defaults_validate_and_720p_needs_the_unlock(self):
+    def test_native_defaults_validate_and_720p_is_allowed_but_flagged(self):
         out = validate(self.r, {"prompt": "x"})
         self.assertEqual((out["width"], out["height"], out["frames"], out["fps"]), (848, 480, 121, 24))
         self.assertEqual(out["attention_backend"], "auto")
+        self.assertFalse(out["beyond_safe"])
+        self.assertTrue(validate(self.r, {"prompt": "x", "width": 1280, "height": 720})["beyond_safe"])
         with self.assertRaises(ValueError):
-            validate(self.r, {"prompt": "x", "width": 1280, "height": 720})
-        self.assertTrue(validate(self.r, {"prompt": "x", "width": 1280, "height": 720, "unlock": True})["beyond_safe"])
+            validate(self.r, {"prompt": "x", "width": 856, "height": 480})   # multiples of 16
         with self.assertRaises(ValueError):
-            validate(self.r, {"prompt": "x", "width": 856, "height": 480, "unlock": True})   # multiples of 16
-        with self.assertRaises(ValueError):
-            validate(self.r, {"prompt": "x", "frames": 120, "unlock": True})                  # 4n+1
+            validate(self.r, {"prompt": "x", "frames": 120})                  # 4n+1
 
     def test_every_native_bucket_is_safe_at_the_native_length(self):
         for res in self.r["native"]["resolutions"]:
@@ -303,3 +302,83 @@ class AttentionBackend(unittest.TestCase):
         self.assertEqual(r["defaults"]["fps"], 24)
         self.assertIn("kernels", r["python"]["packages"])
         self.assertEqual(recipes.validate(r), [])
+
+
+class ImportedRecipes(unittest.TestCase):
+    """The 720p checkpoint imported before these limits existed was stuck at 832x480 and 49 frames."""
+
+    def stale_import(self):
+        r = copy.deepcopy(recipes.load_all()[0]["hunyuanvideo-1.5-480p"])
+        for k in ("native", "unlock", "recommended"):
+            r.pop(k, None)
+        r["id"], r["name"], r["source"] = "hunyuanvideo-1.5-diffusers-720p-t2v", "HunyuanVideo-1.5-Diffusers-720p_t2v", "user"
+        r["limits"].update(max_width=832, max_height=480, max_area_frames=832 * 480 * 49)
+        r["limits"]["frames"].update(max=49, default=33)
+        r["limits"]["presets"] = [{"w": 640, "h": 352}, {"w": 832, "h": 480}]
+        r["defaults"].update(width=832, height=480)
+        return r
+
+    def test_the_pipelines_ceiling_applies_without_refreshing_the_recipe(self):
+        r = self.stale_import()
+        u = recipes.unlock_limits(r)
+        self.assertEqual((u["max_width"], u["max_height"], u["max_frames"], u["known"]), (1280, 1280, 241, True))
+        out = validate(r, {"prompt": "x", "width": 1280, "height": 720, "frames": 121})
+        self.assertEqual((out["width"], out["height"], out["frames"]), (1280, 720, 121))
+        self.assertTrue(out["beyond_safe"])
+
+    def test_nothing_is_blocked_by_the_old_caps(self):
+        r = self.stale_import()
+        validate(r, {"prompt": "x", "width": 1104, "height": 832, "frames": 73})
+
+
+class SavedModelSettings(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        from reel import config, model_settings
+        self.ms, self.config = model_settings, config
+        self.tmp = tempfile.TemporaryDirectory()
+        self.patch = mock.patch.object(config, "MODEL_SETTINGS_FILE", Path(self.tmp.name) / "model_settings.json")
+        self.patch.start()
+        self.recipe = recipes.load_all()[0]["hunyuanvideo-1.5-480p"]
+
+    def tearDown(self):
+        self.patch.stop()
+        self.tmp.cleanup()
+
+    def test_what_was_saved_wins_over_the_defaults_and_the_hardware_advice(self):
+        base = self.ms.effective(self.recipe, None)
+        self.assertEqual((base["width"], base["height"], base["frames"], base["fps"]), (848, 480, 121, 24))
+        self.ms.save(self.recipe["id"], {"width": 1280, "height": 720, "frames": 97, "offload": "sequential", "bogus": 1})
+        got = self.ms.effective(self.recipe, None)
+        self.assertEqual((got["width"], got["height"], got["frames"], got["offload"]), (1280, 720, 97, "sequential"))
+        self.assertEqual(got["quantization"], base["quantization"])        # untouched keys still come from the recipe
+        self.assertNotIn("bogus", self.ms.get(self.recipe["id"]))
+
+    def test_reset_returns_to_the_defaults_and_other_models_are_unaffected(self):
+        self.ms.save(self.recipe["id"], {"width": 1280, "height": 720})
+        self.ms.save("ltx-video", {"steps": 12})
+        self.ms.reset(self.recipe["id"])
+        self.assertEqual(self.ms.get(self.recipe["id"]), {})
+        self.assertEqual(self.ms.get("ltx-video"), {"steps": 12})
+
+    def test_values_arrive_as_their_types(self):
+        self.ms.save(self.recipe["id"], {"width": "1280", "guidance": "6", "vae_tiling": 0})
+        got = self.ms.get(self.recipe["id"])
+        self.assertEqual((got["width"], got["guidance"], got["vae_tiling"]), (1280, 6.0, False))
+
+    def test_the_settings_api_checks_what_it_saves_the_way_a_generation_is_checked(self):
+        from fastapi import HTTPException
+        from reel import api_models
+        rid = self.recipe["id"]
+        out = api_models.put_settings(rid, api_models.SettingsBody(width=1280, height=720, frames=97, offload="sequential"))
+        self.assertEqual(out["saved"], {"width": 1280, "height": 720, "frames": 97, "offload": "sequential"})
+        self.assertEqual(out["effective"]["width"], 1280)
+        with self.assertRaises(HTTPException) as cm:
+            api_models.put_settings(rid, api_models.SettingsBody(width=1281, height=720))      # not a multiple of 16
+        self.assertEqual(cm.exception.status_code, 400)
+        with self.assertRaises(HTTPException):
+            api_models.put_settings(rid, api_models.SettingsBody(frames=100))                  # not 4n+1
+        self.assertEqual(self.ms.get(rid)["width"], 1280)                                      # a bad save changes nothing
+        self.assertEqual(api_models.reset_settings(rid)["saved"], {})
+        with self.assertRaises(HTTPException):
+            api_models.put_settings("realesrgan-x4plus", api_models.SettingsBody(width=64))    # upscalers have none

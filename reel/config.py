@@ -16,6 +16,7 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 OUTPUTS_DIR = DATA_DIR / "outputs"
 LOGS_DIR = DATA_DIR / "logs"       # one log per model process: data/logs/<timestamp>-<model>.log
 SETTINGS_FILE = DATA_DIR / "settings.json"
+MODEL_SETTINGS_FILE = DATA_DIR / "model_settings.json"   # per-model load and generation defaults (Library > Settings)
 DEFAULT_MODELS_DIR = DATA_DIR / "models"
 
 _lock = threading.Lock()
