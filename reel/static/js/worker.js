@@ -36,6 +36,12 @@ export function loadingNote(worker) {
   const s = worker.loading_seconds;
   return h("div", { class: "stack-8" },
     h("div", { class: "field-hint" }, `${worker.message || "Loading"}${s != null ? ` · ${fmtDuration(s)}` : ""}`),
+    s != null && s > 90 && /PyTorch/.test(worker.message || "") && worker.python
+      ? h("div", { class: "notice notice-warning" }, icon("alert"), h("div", { class: "stack-8" },
+          h("div", {}, "Starting PyTorch is taking very long. That is Windows loading its large DLLs, often slowed by antivirus scanning the model folder. The first start is the slowest."),
+          h("div", {}, "To time it outside Reel, run this in a Command Prompt:"),
+          h("pre", { class: "log mono", tabindex: 0 }, `"${worker.python}" -c "import time; t=time.time(); import torch; print(torch.__version__, round(time.time()-t), 'seconds')"`)))
+      : null,
     s != null && s > 300 ? h("div", { class: "field-hint" }, "Still loading. A big model takes several minutes the first time (it reads tens of GB from disk). The log says which step it is on, and Cancel load stops it.") : null,
     worker.log_name ? h("div", { class: "row-8" }, h("button", { class: "btn btn-ghost", type: "button", onclick: () => viewLog(worker.log_name) }, icon("log"), "View log")) : null);
 }
