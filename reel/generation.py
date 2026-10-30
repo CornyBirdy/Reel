@@ -70,8 +70,8 @@ def validate(recipe: dict, req: dict) -> dict:
         if v % mult:
             raise ValueError(f"{key} must be a multiple of {mult}.")
         if not 64 <= v <= cap:
-            raise ValueError(f"{key.capitalize()} must be between 64 and {cap} for {recipe['name']}: that is its size limit "
-                             f"for a 16 GB GPU. Pick a size from the Resolution list.")
+            raise ValueError(f"{key.capitalize()} must be between 64 and {cap} for {recipe['name']}: that is its size limit. "
+                             "Pick a size from the Resolution list.")
         out[key] = v
 
     if kind == "video":
@@ -85,13 +85,13 @@ def validate(recipe: dict, req: dict) -> dict:
         budget = lim.get("max_area_frames")
         if budget and out["width"] * out["height"] * frames > budget:
             raise ValueError(
-                f"{out['width']}×{out['height']} with {frames} frames is over {recipe['name']}'s 16 GB budget. "
+                f"{out['width']}×{out['height']} with {frames} frames is over {recipe['name']}'s size budget. "
                 "Lower the resolution or the frame count.")
         out["fps"] = lim["fps"]
     else:
         budget = lim.get("max_area")
         if budget and out["width"] * out["height"] > budget:
-            raise ValueError(f"{out['width']}×{out['height']} is over {recipe['name']}'s 16 GB size budget. Lower the resolution.")
+            raise ValueError(f"{out['width']}×{out['height']} is over {recipe['name']}'s size budget. Lower the resolution.")
 
     steps = int(req.get("steps", dflt["steps"]))
     sl = lim.get("steps", {"min": 1, "max": 100})
@@ -128,6 +128,26 @@ def validate(recipe: dict, req: dict) -> dict:
     return out
 
 
+def validate_upscale(recipe: dict, clip: dict, scale) -> dict:
+    """Check an upscale request against the upscaler's limits and describe the job (same shape as a generation)."""
+    lim = recipe["limits"]
+    scale = int(scale)
+    if scale not in lim["scales"]:
+        raise ValueError(f"Scale must be one of {', '.join(f'{x}×' for x in lim['scales'])}.")
+    p = clip["params"]
+    kind = clip["kind"]
+    w, h = int(p["width"]) * scale, int(p["height"]) * scale
+    cap = lim.get("max_video_pixels") if kind == "video" else lim["max_output_pixels"]
+    if cap and w * h > cap:
+        raise ValueError(f"{w}×{h} is bigger than {recipe['name']} will make ({cap / 1e6:.1f} megapixels"
+                         f"{' per frame' if kind == 'video' else ''}). Try a smaller scale.")
+    frames = int(p.get("frames") or 1) if kind == "video" else 1
+    if kind == "video" and frames > lim.get("max_frames", 10**9):
+        raise ValueError(f"{recipe['name']} handles clips up to {lim['max_frames']} frames.")
+    return {"kind": kind, "prompt": clip["prompt"], "steps": frames if kind == "video" else 1, "count": 1,
+            "width": w, "height": h, "seed": p.get("seed"), "upscale": {"scale": scale, "source": clip["id"]}}
+
+
 class GenJob:
     def __init__(self, recipe: dict, params: dict):
         self.id = uuid.uuid4().hex[:12]
@@ -149,6 +169,7 @@ class GenJob:
         self.log: deque[str] = deque(maxlen=200)
         self.cancel = threading.Event()
         self.proc = None
+        self.source_clip: dict | None = None   # the item being upscaled (upscale jobs only)
 
     def to_dict(self) -> dict:
         now = self.finished or time.time()
@@ -202,8 +223,31 @@ class GenerationManager:
             if j.proc:
                 procs.kill_tree(j.proc)
 
+    @staticmethod
+    def _events(job: GenJob, proc):
+        """The model process's JSON event lines; anything else it prints goes to the job's log."""
+        assert proc.stdout is not None
+        for raw in proc.stdout:
+            line = raw.rstrip()
+            if not line:
+                continue
+            evt = None
+            at = line.find('{"event"')  # a stray tqdm bar can precede the JSON on the same line
+            if at >= 0:
+                try:
+                    evt = json.loads(line[at:])
+                except json.JSONDecodeError:
+                    pass
+            if evt is None:
+                if not job.log or job.log[-1] != line:  # collapse repeated library warnings
+                    job.log.append(line)
+                continue
+            yield evt
+
     def _run(self, job: GenJob) -> None:
-        recipe, params = job.recipe, job.params
+        if job.params.get("upscale"):
+            return self._run_upscale(job)
+        params = job.params
         config.OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
         tmp = config.DATA_DIR / "tmp"
         tmp.mkdir(parents=True, exist_ok=True)
@@ -257,34 +301,19 @@ class GenerationManager:
     def _attempt(self, job: GenJob, plan: list[dict], todo: list[dict], req_path: Path, env: dict) -> tuple[int, dict | None]:
         """Run the model process once over the items in `todo`; returns (exit code, the 'done' event if any)."""
         recipe, params = job.recipe, job.params
+        mdir = model_dir(recipe["id"])
         request = {
             **params, "model_id": recipe["id"], "adapter": recipe["adapter"], "kind": params["kind"],
             "adapter_config": recipe.get("adapter_config", {}),
-            "weights_dir": str(model_dir(recipe["id"]) / "weights"),
-            "outputs": [{"path": it["path"], "seed": it["seed"]} for it in todo],
+            "weights_dir": str(mdir / "weights"), "outputs": [{"path": it["path"], "seed": it["seed"]} for it in todo],
         }
         req_path.write_text(json.dumps(request), encoding="utf-8")
         done_evt: dict | None = None
-        py = procs.venv_python(model_dir(recipe["id"]) / "venv")
+        py = procs.venv_python(mdir / "venv")
         proc = procs.popen([str(py), str(config.ADAPTERS_DIR / "runner.py"), str(req_path)],
                            env=env, cwd=config.ADAPTERS_DIR)
         job.proc = proc
-        assert proc.stdout is not None
-        for raw in proc.stdout:
-            line = raw.rstrip()
-            if not line:
-                continue
-            evt = None
-            at = line.find('{"event"')  # a stray tqdm bar can precede the JSON on the same line
-            if at >= 0:
-                try:
-                    evt = json.loads(line[at:])
-                except json.JSONDecodeError:
-                    pass
-            if evt is None:
-                if not job.log or job.log[-1] != line:  # collapse repeated library warnings
-                    job.log.append(line)
-                continue
+        for evt in self._events(job, proc):
             kind = evt.get("event")
             if kind == "phase":
                 job.phase, job.message = evt["phase"], evt.get("message") or evt["phase"]
@@ -319,6 +348,118 @@ class GenerationManager:
             elif kind == "done":
                 done_evt = evt
         return proc.wait(), done_evt
+
+
+    # -- upscaling ---------------------------------------------------------------------------
+    def start_upscale(self, clip_id: str, scale: int, model_id: str | None = None) -> GenJob:
+        """Upscale a finished image or clip with an installed upscaler; the result is a new History item."""
+        clip = history.get(clip_id)
+        if not clip:
+            raise GenerationError("That item is not in History any more.")
+        source = config.OUTPUTS_DIR / Path(clip["file"]).name
+        if not source.exists():
+            raise GenerationError("The file for that item is missing, so it cannot be upscaled.")
+        found = recipes.load_all()[0]
+        if model_id:
+            recipe = found.get(model_id)
+            if not recipe or recipe.get("kind") != "upscale":
+                raise GenerationError("Unknown upscaler.")
+        else:
+            recipe = next((r for r in found.values() if r.get("kind") == "upscale" and installed_info(r["id"])), None)
+            if not recipe:
+                raise GenerationError("No upscaler is installed. Install one from the Library first.")
+        if installs.is_installing(recipe["id"]) or installs.is_uninstalling(recipe["id"]):
+            raise GenerationError(f"{recipe['name']} is being installed or removed.")
+        if not installed_info(recipe["id"]):
+            raise GenerationError(f"{recipe['name']} is not installed. Install it from the Library first.")
+        try:
+            params = validate_upscale(recipe, clip, scale)
+        except (ValueError, TypeError) as exc:
+            raise GenerationError(str(exc))
+        with self._lock:
+            if self.current and self.current.status == "running":
+                raise GenerationError("Something is already generating. Wait for it or cancel it.")
+            job = GenJob(recipe, params)
+            job.source_clip = clip
+            self.current = job
+        threading.Thread(target=self._run, args=(job,), daemon=True, name=f"upscale-{job.id}").start()
+        return job
+
+    def _run_upscale(self, job: GenJob) -> None:
+        recipe, params, clip = job.recipe, job.params, job.source_clip
+        up = params["upscale"]
+        mdir = model_dir(recipe["id"])
+        config.OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = config.DATA_DIR / "tmp"
+        tmp.mkdir(parents=True, exist_ok=True)
+        ext = "png" if params["kind"] == "image" else "mp4"
+        name = f"{time.strftime('%Y%m%d-%H%M%S')}-{job.id}.{ext}"
+        out_path = config.OUTPUTS_DIR / name
+        req_path = tmp / f"{job.id}.json"
+        request = {
+            "model_id": recipe["id"], "adapter": recipe["adapter"], "kind": params["kind"],
+            "adapter_config": recipe.get("adapter_config", {}), "weights_dir": str(mdir / "weights"),
+            "input_path": str(config.OUTPUTS_DIR / Path(clip["file"]).name), "scale": up["scale"],
+            "tile": recipe["defaults"].get("tile", 512), "fps": clip["params"].get("fps"),
+            "frames": clip["params"].get("frames"), "outputs": [{"path": str(out_path), "seed": 0}],
+        }
+        req_path.write_text(json.dumps(request), encoding="utf-8")
+        done_evt: dict | None = None
+        try:
+            py = procs.venv_python(mdir / "venv")
+            proc = procs.popen([str(py), str(config.ADAPTERS_DIR / "runner.py"), str(req_path)],
+                               env=child_env(), cwd=config.ADAPTERS_DIR)
+            job.proc = proc
+            unit = "frame" if params["kind"] == "video" else "tile"
+            for evt in self._events(job, proc):
+                kind = evt.get("event")
+                if kind == "phase":
+                    job.phase, job.message = evt["phase"], evt.get("message") or evt["phase"]
+                elif kind == "item_start":
+                    job.step, job.denoise_started = 0, None
+                    job.phase, job.message = "denoising", "Upscaling"
+                elif kind == "progress":
+                    job.step, job.total = evt["step"], evt.get("total", job.total)
+                    if job.denoise_started is None:
+                        job.denoise_started = time.time()
+                    job.phase, job.message = "denoising", f"{unit.capitalize()} {job.step} of {job.total}"
+                elif kind == "item_done":
+                    if out_path.exists() and out_path.stat().st_size > 0:
+                        p_item = {**{k: v for k, v in clip["params"].items() if k != "count"},
+                                  "width": evt.get("width") or params["width"], "height": evt.get("height") or params["height"],
+                                  "upscale_scale": up["scale"], "upscaled_from": clip["id"],
+                                  "source_width": clip["params"]["width"], "source_height": clip["params"]["height"]}
+                        job.clips.append(history.add({
+                            "id": job.id, "created": time.time(), "kind": params["kind"], "model_id": recipe["id"],
+                            "model_name": f"{recipe['name']} ×{up['scale']}", "prompt": clip["prompt"], "params": p_item,
+                            "file": name, "seconds": evt.get("seconds"), "peak_vram_gb": evt.get("peak_vram_gb"),
+                            "device": evt.get("device_name") or evt.get("device"),
+                        }))
+                elif kind == "log":
+                    job.log.append(evt["message"])
+                elif kind == "error":
+                    job.error, job.error_kind = evt["message"], evt.get("kind")
+                    job.log.append(evt.get("trace", ""))
+                elif kind == "done":
+                    done_evt = evt
+            code = proc.wait()
+            if job.cancel.is_set():
+                job.status, job.message = "cancelled", "Cancelled"
+            elif code == 0 and done_evt and job.clips:
+                job.status, job.phase, job.message = "done", "done", "Done"
+                job.step = job.total
+            else:
+                job.status = "failed"
+                if not job.error:
+                    job.error = f"The upscaler process exited with code {code}. {' | '.join(list(job.log)[-3:])}"
+        except Exception as exc:  # noqa: BLE001
+            job.status, job.error = "failed", f"{type(exc).__name__}: {exc}"
+        finally:
+            job.proc = None
+            job.finished = time.time()
+            if not job.clips:                    # remove a half-written file from a run that did not finish
+                out_path.unlink(missing_ok=True)
+            req_path.unlink(missing_ok=True)
 
 
 generation = GenerationManager()

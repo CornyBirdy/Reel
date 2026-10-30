@@ -5,9 +5,12 @@ const FORM_KEY = "reel.generate.form";
 const PHASES = {
   video: [["loading", "Load model"], ["denoising", "Generate frames"], ["decoding", "Decode video"], ["encoding", "Write mp4"]],
   image: [["loading", "Load model"], ["denoising", "Generate image"], ["decoding", "Decode image"], ["encoding", "Save PNG"]],
+  upscale: [["loading", "Load upscaler"], ["denoising", "Upscale"], ["encoding", "Save"]],
 };
 const KIND_LABEL = { image: "Image", video: "Video" };
 const isImageUrl = (url) => /\.png$/i.test(url);
+// Element.append turns null into the text "null"; optional children are dropped here instead.
+const put = (el, ...kids) => el.append(...kids.filter((k) => k !== null && k !== undefined && k !== false));
 
 const loadForm = () => { try { return JSON.parse(localStorage.getItem(FORM_KEY)) || {}; } catch { return {}; } };
 const saveForm = (v) => { try { localStorage.setItem(FORM_KEY, JSON.stringify(v)); } catch { /* ignore */ } };
@@ -22,7 +25,8 @@ function field(label, control, hint, id) {
 }
 
 export async function mount(root) {
-  let models = [];       // every installed model
+  let models = [];       // every installed generator (image or video)
+  let upscalers = [];    // installed upscalers
   let kind = "video";    // which kind the form is showing
   let histFilter = "all";
   let alive = true;
@@ -44,7 +48,8 @@ export async function mount(root) {
   // ---- data ----
   async function loadModels() {
     const d = await api.get("/api/models");
-    models = d.models.filter((m) => m.installed);
+    models = d.models.filter((m) => m.installed && m.kind !== "upscale");
+    upscalers = d.models.filter((m) => m.installed && m.kind === "upscale");
   }
   const modelById = (id) => models.find((m) => m.id === id);
   const ofKind = () => models.filter((m) => m.kind === kind);
@@ -93,6 +98,7 @@ export async function mount(root) {
     f.tiling = h("input", { id: "g-tiling", type: "checkbox", onchange: persist });
     f.caps = h("div", { class: "field-hint" });
     f.warn = h("div", { class: "stack-8" });
+    f.fit = h("div", { class: "stack-8" });
     f.count = h("select", { id: "g-count", class: "select count-select", "aria-label": "How many to generate", onchange: () => { syncGoLabel(); persist(); } });
     f.goLabel = h("span", {}, "Generate");
     f.go = h("button", { class: "btn btn-primary grow", type: "button", onclick: () => start() }, icon("play"), f.goLabel);
@@ -119,7 +125,7 @@ export async function mount(root) {
           h("div", { class: "grid-2" }, field("Offloading", f.offload, null, "g-offload"), field("Quantization", f.quant, null, "g-quant")),
           h("label", { class: "check" }, f.tiling, "Tiled VAE decode"),
           h("div", { class: "field-hint", id: "mem-note" }))),
-      f.caps, f.warn,
+      f.caps, f.fit, f.warn,
       h("div", { class: "row-8 action-row" },
         h("div", { class: "count-pick" }, h("label", { for: "g-count", class: "count-label" }, "Count"), f.count), f.go, f.stop),
       h("div", { class: "field-hint" }, "Several at once: the model loads once, then each one uses its own seed (seed, seed+1, …). Every finished one is saved as it completes."));
@@ -156,19 +162,27 @@ export async function mount(root) {
     f.negative.value = d.negative_prompt || "";
     clear(f.offload);
     for (const o of mem.offload_options || ["model"]) f.offload.append(h("option", { value: o }, { none: "None (fastest, most VRAM)", model: "Model offload", sequential: "Sequential (slowest, least VRAM)" }[o] || o));
-    f.offload.value = d.offload;
+    // Start from what suits this PC's GPU: low-memory settings on a small card, no offloading on a big one.
+    const rec = (m.fit && m.fit.recommended) || {};
+    const pick = (select, wanted, fallback) => ([...select.options].some((o) => o.value === wanted) ? wanted : fallback);
+    f.offload.value = pick(f.offload, rec.offload, d.offload);
     clear(f.quant);
     for (const o of mem.quantization_options || ["none"]) f.quant.append(h("option", { value: o }, { none: "Off (bf16)", int8: "8-bit", nf4: "4-bit NF4" }[o] || o));
-    f.quant.value = d.quantization;
+    f.quant.value = pick(f.quant, rec.quantization, d.quantization);
+    clear(f.fit);
+    if (m.fit && ["low_memory", "too_big", "no_gpu"].includes(m.fit.level)) {
+      f.fit.append(h("div", { class: `notice ${m.fit.level === "low_memory" ? "notice-info" : "notice-warning"}` }, icon(m.fit.level === "low_memory" ? "info" : "alert"),
+        h("div", {}, h("strong", {}, m.fit.label), h("div", {}, m.fit.detail))));
+    }
     f.tiling.checked = d.vae_tiling;
     fillCount(f.count.value);
     const note = document.getElementById("mem-note");
     if (note) note.textContent = mem.notes || "";
     if (kind === "video") {
       const budget = lim.max_area_frames ? " The width × height × frames total is also capped." : "";
-      f.caps.textContent = `${m.name} is capped at ${lim.max_width} × ${lim.max_height} and ${lim.frames.max} frames to fit a 16 GB GPU.${budget}`;
+      f.caps.textContent = `${m.name} is capped at ${lim.max_width} × ${lim.max_height} and ${lim.frames.max} frames (sized for a 16 GB GPU).${budget}`;
     } else {
-      f.caps.textContent = `${m.name} is capped at ${lim.max_width} × ${lim.max_height} (and ${((lim.max_area || lim.max_width * lim.max_height) / 1e6).toFixed(1)} megapixels) to fit a 16 GB GPU.`;
+      f.caps.textContent = `${m.name} is capped at ${lim.max_width} × ${lim.max_height} (and ${((lim.max_area || lim.max_width * lim.max_height) / 1e6).toFixed(1)} megapixels), sized for a 16 GB GPU.`;
     }
     syncFrames(); validate();
   }
@@ -204,11 +218,11 @@ export async function mount(root) {
       const budget = model.limits.max_area_frames;
       if (budget && w * hgt * frames > budget) {
         ok = false;
-        f.warn.append(h("div", { class: "notice notice-warning" }, icon("alert"), `${w} × ${hgt} with ${frames} frames is over the 16 GB budget. Lower the resolution or the frame count.`));
+        f.warn.append(h("div", { class: "notice notice-warning" }, icon("alert"), `${w} × ${hgt} with ${frames} frames is over this model's size budget. Lower the resolution or the frame count.`));
       }
     } else if (model.limits.max_area && w * hgt > model.limits.max_area) {
       ok = false;
-      f.warn.append(h("div", { class: "notice notice-warning" }, icon("alert"), `${w} × ${hgt} is over the 16 GB size budget. Lower the resolution.`));
+      f.warn.append(h("div", { class: "notice notice-warning" }, icon("alert"), `${w} × ${hgt} is over this model's size budget. Lower the resolution.`));
     }
     if (!activeRunning()) f.go.disabled = !ok;
     return ok;
@@ -262,6 +276,26 @@ export async function mount(root) {
     } catch (e) { toast(e.message, "danger", 9000); }
   }
 
+  // Upscale a finished image or clip. With no upscaler installed the button leads to the Library to get one.
+  function upscaleButtons(clip) {
+    if (!upscalers.length) {
+      return [h("a", { class: "btn", href: "#/library", title: "Install the Real-ESRGAN upscaler from the Library first" }, icon("upscale"), "Get the upscaler")];
+    }
+    const scales = upscalers[0].limits.scales || [2, 4];
+    return scales.map((n) => h("button", { class: "btn", type: "button", disabled: activeRunning(),
+      title: `Make this ${n}× bigger with ${upscalers[0].name}; the result is saved as a new item in History`,
+      onclick: () => upscale(clip, n) }, icon("upscale"), `Upscale ${n}×`));
+  }
+
+  async function upscale(clip, scale) {
+    try {
+      activeJob = await api.post("/api/upscale", { clip_id: clip.id, scale });
+      shownClipId = null;
+      renderOutput();
+      poll();
+    } catch (e) { toast(e.message, "danger", 9000); }
+  }
+
   async function rerun(clip) {
     if (!modelById(clip.model_id)) { toast(`${clip.model_name} is not installed any more.`, "warning"); return; }
     await start({ model_id: clip.model_id, ...clip.params });
@@ -277,22 +311,25 @@ export async function mount(root) {
     const job = activeJob;
 
     if (running) {
-      const phases = PHASES[job.kind || "video"];
+      const up = !!(job.params && job.params.upscale);
+      const phases = up ? PHASES.upscale : PHASES[job.kind || "video"];
       const order = phases.map((p) => p[0]);
       const idx = Math.max(0, order.indexOf(job.phase === "encoding-prompt" ? "loading" : job.phase));
-      const inner = job.phase === "denoising" || job.phase === "decoding"
-        ? 0.1 + 0.8 * (job.step / Math.max(job.total, 1)) + (job.phase === "decoding" ? 0.05 : 0)
-        : job.phase === "encoding" ? 0.97 : 0.05;
+      const inner = up
+        ? (job.phase === "denoising" ? 0.05 + 0.9 * (job.step / Math.max(job.total, 1)) : job.phase === "encoding" ? 0.97 : 0.03)
+        : job.phase === "denoising" || job.phase === "decoding"
+          ? 0.1 + 0.8 * (job.step / Math.max(job.total, 1)) + (job.phase === "decoding" ? 0.05 : 0)
+          : job.phase === "encoding" ? 0.97 : 0.05;
       const frac = ((job.item - 1) + inner) / Math.max(job.items, 1);
       const of = job.items > 1 ? `${job.kind === "image" ? "Image" : "Clip"} ${job.item} of ${job.items} · ` : "";
-      outputCard.append(
-        h("div", { class: "row-between" }, h("h3", {}, job.items > 1 ? `Generating ${job.items} with ${job.model_name}` : `Generating with ${job.model_name}`), statusBadge("info", "Running", "play")),
+      put(outputCard,
+        h("div", { class: "row-between" }, h("h3", {}, up ? `Upscaling ${job.params.upscale.scale}× with ${job.model_name}` : job.items > 1 ? `Generating ${job.items} with ${job.model_name}` : `Generating with ${job.model_name}`), statusBadge("info", "Running", "play")),
         h("ol", { class: "steps", "aria-label": "Generation steps" },
           phases.map(([id, label], i) => h("li", { class: "step", "data-state": i < idx ? "done" : i === idx ? "active" : "pending", "aria-current": i === idx ? "step" : undefined },
             icon(i < idx ? "check" : i === idx ? "play" : "clock"), h("span", {}, label)))),
-        progressBar(frac, { indeterminate: job.phase === "loading" && job.step === 0, label: "Generation progress" }),
+        progressBar(frac, { indeterminate: job.phase === "loading" && job.step === 0, label: up ? "Upscale progress" : "Generation progress" }),
         h("div", { class: "progress-meta" },
-          h("span", {}, job.phase === "denoising" ? `${of}Step ${job.step} of ${job.total}` : `${of}${job.message}`),
+          h("span", {}, job.phase === "denoising" && !up ? `${of}Step ${job.step} of ${job.total}` : `${of}${job.message}`),
           h("span", {}, [`${fmtDuration(job.elapsed)} elapsed`, job.eta ? `~${fmtDuration(job.eta)} left` : null].filter(Boolean).join(" · "))),
         h("p", { class: "muted" }, job.params.prompt),
         job.clips.length ? h("div", { class: "stack-8" }, h("h4", {}, `Finished so far (${job.clips.length})`), batchStrip(job, false)) : null);
@@ -302,7 +339,7 @@ export async function mount(root) {
     if (job && job.status === "failed") {
       outputCard.append(h("div", { class: "notice notice-danger", role: "alert" }, icon("error"),
         h("div", { class: "stack-8" }, h("strong", {}, "Generation failed"), h("div", { class: "mono" }, job.error || "Unknown error"),
-          job.error_kind === "oom" ? h("div", {}, "Out of VRAM. Lower the resolution (or frame count), set offloading to Sequential, or use NF4 quantization.") : null)));
+          job.error_kind === "oom" ? h("div", {}, "Out of VRAM. Lower the resolution (or frame count), set offloading to Sequential, or use NF4 quantization under Memory options.") : null)));
     } else if (job && job.status === "cancelled") {
       outputCard.append(h("div", { class: "notice notice-info" }, icon("info"), job.message || "Cancelled."));
     }
@@ -317,22 +354,24 @@ export async function mount(root) {
     shownClipId = clip.id;
     const p = clip.params;
     const image = isImageUrl(clip.url);
+    const upscaled = !!p.upscale_scale;
     const media = image
       ? h("img", { class: "player", src: clip.url, alt: clip.prompt })
       : h("video", { class: "player", controls: true, loop: true, muted: true, autoplay: true, playsinline: true, src: clip.url });
-    outputCard.append(media,
+    put(outputCard, media,
       activeJob && activeJob.clips && activeJob.clips.length > 1 ? batchStrip(activeJob, true) : null,
       h("p", {}, clip.prompt),
       h("div", { class: "stats" },
-        stat("Model", clip.model_name), stat("Size", `${p.width} × ${p.height}`),
+        stat("Model", clip.model_name), stat("Size", upscaled ? `${p.source_width} × ${p.source_height} → ${p.width} × ${p.height}` : `${p.width} × ${p.height}`),
         image ? null : stat("Frames", `${p.frames} @ ${p.fps} fps`),
         stat("Seed", String(p.seed)), stat("Time", fmtDuration(clip.seconds)),
         clip.device && clip.device !== "cpu" && clip.device !== "cuda" ? stat("GPU", clip.device.replace(/^NVIDIA\s+/, "").replace(/^GeForce\s+/, "")) : null,
         clip.peak_vram_gb ? stat("Peak VRAM", `${clip.peak_vram_gb} GB`) : null),
       h("div", { class: "row-8" },
         h("a", { class: "btn", href: clip.url, download: `reel-${clip.id}.${image ? "png" : "mp4"}` }, icon("download"), "Download"),
-        h("button", { class: "btn", type: "button", onclick: () => loadSettings(clip) }, icon("load"), "Reuse settings"),
-        h("button", { class: "btn", type: "button", disabled: activeRunning(), onclick: () => rerun(clip) }, icon("rerun"), "Re-run")));
+        upscaled ? null : h("button", { class: "btn", type: "button", onclick: () => loadSettings(clip) }, icon("load"), "Reuse settings"),
+        upscaled ? null : h("button", { class: "btn", type: "button", disabled: activeRunning(), onclick: () => rerun(clip) }, icon("rerun"), "Re-run"),
+        ...upscaleButtons(clip)));
     renderHistory();
   }
 
@@ -387,8 +426,9 @@ export async function mount(root) {
         h("div", { class: "muted clip-meta" }, `${clip.model_name} · ${p.width}×${p.height}${isImageUrl(clip.url) ? "" : ` · ${p.frames}f`} · seed ${p.seed}`),
         h("div", { class: "muted clip-meta" }, `${fmtDate(clip.created)} · ${fmtDuration(clip.seconds)}`, current ? h("strong", { class: "now" }, " · Showing") : null),
         h("div", { class: "row-8" },
-          h("button", { class: "btn btn-ghost btn-icon", type: "button", title: "Reuse settings", "aria-label": "Reuse settings", onclick: () => loadSettings(clip) }, icon("load")),
-          h("button", { class: "btn btn-ghost btn-icon", type: "button", title: "Re-run with the same seed", "aria-label": "Re-run", disabled: activeRunning(), onclick: () => rerun(clip) }, icon("rerun")),
+          p.upscale_scale ? null : h("button", { class: "btn btn-ghost btn-icon", type: "button", title: "Reuse settings", "aria-label": "Reuse settings", onclick: () => loadSettings(clip) }, icon("load")),
+          p.upscale_scale ? null : h("button", { class: "btn btn-ghost btn-icon", type: "button", title: "Re-run with the same seed", "aria-label": "Re-run", disabled: activeRunning(), onclick: () => rerun(clip) }, icon("rerun")),
+          upscalers.length ? h("button", { class: "btn btn-ghost btn-icon", type: "button", title: `Upscale ${upscalers[0].limits.scales[0]}×`, "aria-label": "Upscale", disabled: activeRunning(), onclick: () => upscale(clip, upscalers[0].limits.scales[0]) }, icon("upscale")) : null,
           h("a", { class: "btn btn-ghost btn-icon", href: clip.url, download: `reel-${clip.id}.${isImageUrl(clip.url) ? "png" : "mp4"}`, title: "Download", "aria-label": "Download" }, icon("download")),
           h("button", { class: "btn btn-ghost btn-icon", type: "button", title: "Delete", "aria-label": "Delete clip", onclick: async () => {
             try { await api.del(`/api/history/${clip.id}`); if (shownClipId === clip.id) { shownClipId = null; if (activeJob?.clip?.id === clip.id) activeJob = null; } await loadHistory(); renderOutput(); }
@@ -400,6 +440,7 @@ export async function mount(root) {
   async function poll() {
     clearTimeout(timer);
     if (!alive) return;
+    if (document.hidden) { if (activeRunning()) timer = setTimeout(poll, 2000); return; }
     try {
       const { job } = await api.get("/api/generate/current");
       if (job && (!activeJob || activeJob.id === job.id || job.status === "running")) {
@@ -409,7 +450,8 @@ export async function mount(root) {
         if (job.clips.length > had) await loadHistory();           // each item appears in History as it finishes
         if (job.status !== "running" && wasRunning) {
           await loadHistory();
-          if (job.status === "done") toast(job.items > 1 ? `${job.items} ${job.kind === "image" ? "images" : "clips"} finished.` : (job.kind === "image" ? "Image finished." : "Clip finished."), "success", 3000);
+          if (job.status === "done" && job.params.upscale) toast("Upscale finished. It is saved in History.", "success", 3500);
+          else if (job.status === "done") toast(job.items > 1 ? `${job.items} ${job.kind === "image" ? "images" : "clips"} finished.` : (job.kind === "image" ? "Image finished." : "Clip finished."), "success", 3000);
         }
         if (job.status !== "running" && job.clip) shownClipId = job.clip.id;
         renderOutput();
@@ -434,5 +476,7 @@ export async function mount(root) {
   else if (history.clips.length) shownClipId = history.clips[0].id;
   renderOutput();
   if (activeRunning()) poll();
-  return { unmount() { alive = false; clearTimeout(timer); } };
+  const onWake = () => { if (alive && activeRunning()) poll(); else if (alive) renderOutput(); };
+  document.addEventListener("reel:wake", onWake);
+  return { unmount() { alive = false; clearTimeout(timer); document.removeEventListener("reel:wake", onWake); } };
 }

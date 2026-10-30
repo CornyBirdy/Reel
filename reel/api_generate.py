@@ -37,6 +37,21 @@ def generate(body: GenerateRequest) -> dict:
     return job.to_dict()
 
 
+class UpscaleRequest(BaseModel):
+    clip_id: str
+    scale: int = 2
+    model_id: str | None = None
+
+
+@router.post("/upscale")
+def upscale(body: UpscaleRequest) -> dict:
+    try:
+        job = generation.start_upscale(body.clip_id, body.scale, body.model_id)
+    except GenerationError as exc:
+        raise HTTPException(409, str(exc))
+    return job.to_dict()
+
+
 @router.get("/generate/current")
 def current() -> dict:
     return {"job": generation.current.to_dict() if generation.current else None}
