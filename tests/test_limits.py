@@ -115,7 +115,9 @@ class Estimate(unittest.TestCase):
         return estimate.estimate(r, params, gpu, ram)
 
     def test_each_recipes_defaults_are_ok_on_a_16gb_card_with_32gb_ram(self):
-        for rid in self.all:
+        for rid, r in self.all.items():
+            if r.get("kind") == "upscale":
+                continue
             e = self.est(rid)
             self.assertEqual(e["status"], "ok", (rid, e))
 

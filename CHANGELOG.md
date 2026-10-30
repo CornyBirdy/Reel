@@ -10,6 +10,26 @@
 - A per-model **attention backend** (Memory options). HunyuanVideo 1.5 defaults to Auto, which follows the diffusers docs for your GPU; if that kernel cannot be loaded on this PC Reel logs why and uses PyTorch's native attention. Guidance now takes effect on HunyuanVideo 1.5 (it is set on the pipeline's guider, not passed as an argument), and progress is reported for it.
 - **Models stay loaded.** A model is loaded once and reused: the second run skips loading. A status chip (Unloaded / Loading / Ready / Generating), what the model holds (VRAM and RAM) and Load / Unload buttons in the Library and in Generate. Pressing Generate loads automatically. Only one model is on the GPU at a time; an idle model is unloaded after 30 minutes (Settings, 0 = never) and everything is unloaded when Reel closes. Cancel stops the generation without unloading the model. If the model process crashes, Reel says which request failed and starts a fresh process on the next Generate.
 - Frame rate comes from the model (24 fps for HunyuanVideo 1.5, 8 for CogVideoX, ...) and can be changed.
+- If the model process crashes outright (Windows error 3221225477 / 0xC0000005, usually out of memory while loading a large model), Reel now retries once automatically, only for the items that had not finished. If it crashes again, the error explains the likely cause and what to change, and shows the free RAM and pagefile just before loading.
+
+## 0.2.0 - 2026-10-30
+
+**Upscale**
+- New **Real-ESRGAN x4+** upscaler in the Library. Press **Upscale 2×** or **4×** under any image or clip in Generate (or the upscale icon in History) and the result is saved as a new History item; the original is kept. Images keep their embedded prompt; clips keep their frame rate.
+- It works in tiles, so the VRAM it needs stays small whatever the size, and it retries with smaller tiles if the card runs out. Limits: 8K per picture and 4K per frame for clips, up to 600 frames.
+- Like every model it has its own PyTorch environment (about 8 GB of disk); the weights themselves are 67 MB.
+
+**Works on more PCs**
+- Every model in the Library now says how well it suits **your** graphics card (comfortable, tight, needs low-memory mode, too big, or no NVIDIA card), and installing one that is far too big asks first.
+- Generate starts from memory settings that suit your card: sequential offloading and 4-bit weights where the card is small, no offloading where it is big. Anything you set yourself is kept.
+- The messages no longer assume a 16 GB card. The size caps are still sized for 16 GB, and say so.
+
+**Fixed**
+- The window was blank after coming back from the taskbar, most often while a download was running, until you minimised and restored it again. It now redraws itself on restore, and the Library stops polling while the window is minimised.
+- A stray "null" line above the prompt of a finished image or clip.
+
+**App**
+- Settings now has the full **changelog**.
 
 ## 0.1.0 - 2026-10-29
 

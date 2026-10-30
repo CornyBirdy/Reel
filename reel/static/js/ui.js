@@ -53,6 +53,7 @@ const ICONS = {
   load: '<path d="M4 12h12M11 7l5 5-5 5M20 4v16"/>',
   image: '<rect x="3.5" y="4.5" width="17" height="15" rx="3"/><circle cx="9" cy="10" r="1.6"/><path d="M4 17l5-4.5 4 3.5 3-2.5 4 3.5"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
+  upscale: '<path d="M14 4h6v6M20 4l-7 7M10 20H4v-6M4 20l7-7"/>',
   search: '<circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/>',
   back: '<path d="M10 6l-6 6 6 6M4 12h16"/>',
   eject: '<path d="M12 5.5 20 14H4zM5 18.5h14"/>',
@@ -154,6 +155,7 @@ export function statusBadge(kind, text, iconName, title) {
 }
 
 export function kindBadge(kind) {
+  if (kind === "upscale") return statusBadge("neutral", "Upscaler", "upscale");
   return statusBadge("neutral", kind === "image" ? "Image" : "Video", kind === "image" ? "image" : "generate");
 }
 

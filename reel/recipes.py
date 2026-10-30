@@ -15,7 +15,7 @@ from .config import ADAPTERS_DIR, RECIPES_DIR, USER_RECIPES_DIR
 
 MODEL_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 STATUSES = {"ready", "placeholder"}
-KINDS = {"image", "video"}
+KINDS = {"image", "video", "upscale"}
 
 
 def validate_base(r: dict) -> list[str]:
@@ -47,7 +47,9 @@ def validate(r: dict) -> list[str]:
         if Path(dest).is_absolute() or ".." in Path(dest).parts:
             errs.append(f"weights dest '{dest}' must stay inside the model folder")
     lim = r["limits"]
-    required = ["max_width", "max_height", "size_multiple", "presets"] + (["frames", "fps"] if kind == "video" else [])
+    required = {"upscale": ["scales", "native_scale", "max_output_pixels"],
+                "video": ["max_width", "max_height", "size_multiple", "presets", "frames", "fps"]
+                }.get(kind, ["max_width", "max_height", "size_multiple", "presets"])
     for key in required:
         if key not in lim:
             errs.append(f"limits.{key} missing")
@@ -60,6 +62,10 @@ def consistency_errors(r: dict, kind: str) -> list[str]:
     """A recipe's defaults and presets must satisfy its own limits (otherwise the default form can never run)."""
     lim, dflt = r["limits"], r["defaults"]
     errs: list[str] = []
+    if kind == "upscale":
+        if dflt.get("scale") not in lim.get("scales", []):
+            errs.append("defaults.scale must be one of limits.scales")
+        return errs
     mult = lim.get("size_multiple", 1)
     for key in ("width", "height"):
         v, cap = dflt.get(key), lim.get(f"max_{key}")
@@ -87,6 +93,8 @@ def native_errors(r: dict, kind: str) -> list[str]:
     so a typo here cannot offer a size the pipeline would reject."""
     lim, nat, unl = r["limits"], r.get("native"), r.get("unlock")
     errs: list[str] = []
+    if kind == "upscale":      # it has scales, not a size or length to unlock
+        return errs
     mult = lim.get("size_multiple", 1)
     ceiling = unlock_limits(r)
     if unl:
@@ -116,6 +124,8 @@ def unlock_limits(r: dict) -> dict:
     """
     lim = r["limits"]
     kind = r.get("kind", "video")
+    if kind == "upscale":
+        return {"known": True, "note": "An upscaler's output size follows its scale."}
     u = r.get("unlock") or {}
     mult = lim.get("size_multiple", 1)
     fallback_side = min(2048, -(-int(max(lim["max_width"], lim["max_height"]) * 1.5) // mult) * mult)
@@ -141,6 +151,8 @@ def native_label(r: dict) -> str | None:
 
 def safe_defaults(r: dict) -> dict:
     """The size and length a run is known to be sized for: what the recipe defaults to."""
+    if r.get("kind") == "upscale":
+        return {}
     d = {"width": r["defaults"]["width"], "height": r["defaults"]["height"]}
     if r.get("kind", "video") == "video":
         d["frames"] = r["limits"]["frames"]["default"]
@@ -199,6 +211,8 @@ def get(model_id: str) -> dict | None:
 def find_by_repo(repo_id: str) -> dict | None:
     """An existing recipe that downloads from this Hugging Face repo, if any."""
     for r in load_all()[0].values():
+        if r.get("kind") == "upscale":   # a shared repo of many files, not a model someone could be adding
+            continue
         if any(w.get("repo_id", "").lower() == repo_id.lower() for w in r["weights"]):
             return r
     return None

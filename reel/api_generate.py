@@ -55,7 +55,7 @@ def generate(body: GenerateRequest) -> dict:
 def estimate_memory(body: EstimateRequest) -> dict:
     """Rough VRAM and system-RAM need of a request against what this PC has now. It warns; it never blocks."""
     recipe = recipes.get(body.model_id)
-    if not recipe:
+    if not recipe or recipe.get("kind") == "upscale":
         raise HTTPException(404, "Unknown model.")
     d = recipe["defaults"]
     params = {"width": body.width, "height": body.height, "frames": body.frames,
@@ -64,6 +64,21 @@ def estimate_memory(body: EstimateRequest) -> dict:
     gpu = system.gpu_info().get("selected_gpu")
     gpu_gb = {"total_gb": gpu["vram_total_mb"] / 1024, "free_gb": (gpu["vram_total_mb"] - gpu["vram_used_mb"]) / 1024} if gpu else None
     return estimate.estimate(recipe, params, gpu_gb, system.ram_info() or None, worker=workers.manager.held_memory())
+
+
+class UpscaleRequest(BaseModel):
+    clip_id: str
+    scale: int = 2
+    model_id: str | None = None
+
+
+@router.post("/upscale")
+def upscale(body: UpscaleRequest) -> dict:
+    try:
+        job = generation.start_upscale(body.clip_id, body.scale, body.model_id)
+    except GenerationError as exc:
+        raise HTTPException(409, str(exc))
+    return job.to_dict()
 
 
 @router.get("/generate/current")

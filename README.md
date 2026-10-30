@@ -86,6 +86,14 @@ Loading a model takes minutes, so Reel keeps it in memory after a run and reuses
 - Between runs Reel frees temporary memory (garbage collection and the CUDA cache) but keeps the pipeline. **Cancel** stops the current generation and leaves the model loaded; only a model that does not answer within a minute is stopped.
 - If the model process crashes, Reel tells you which request failed (with the exit code and the log), shows it as Unloaded, and starts a fresh process the next time you press Generate or Load.
 
+### Your graphics card
+
+Reel compares each model's VRAM estimate with the card it will use and says so in the Library (**comfortable**, **should fit**, **tight**, **needs low-memory mode**, **too big**, or no NVIDIA card). Generate then starts from settings that suit the card: sequential offloading and 4-bit weights on a small one, no offloading on a big one. Settings you change yourself are kept. It is advice, not a lock: the numbers are estimates, so you can still try anything.
+
+### Upscaling
+
+Install **Real-ESRGAN x4+** from the Library, then press **Upscale 2×** or **4×** under any image or clip in Generate. It works in tiles, so VRAM use stays small, and the result is saved as a new History item next to the original. Pictures can reach 8K, clips 4K per frame (up to 600 frames).
+
 ### VRAM saving (16 GB target)
 
 Every recipe defaults to the memory-saving options and has *safe limits* on resolution, frame count and (for Wan) width x height x frames, so a clip should fit a 16 GB card. **Unlock limits (advanced)** in the Generate panel lifts them to what the pipeline itself supports (the model card's native sizes and maximum length, or any size that is a multiple of the model's size rule), remembered per model. Generate shows a live memory estimate (VRAM and system RAM) against what your PC has free right now; it warns but never blocks. Treat it as a rough guide: the real peak is recorded in History after every run.
@@ -103,7 +111,7 @@ A model in Reel is two things:
 - a **recipe** (a JSON file): which Hugging Face repos and files to download, which Python packages it needs, its resolution/frame caps for a 16 GB card, and sensible defaults;
 - an **adapter** (a small Python class): how to actually run it. Reel ships dedicated adapters for LTX-Video and Wan 2.2, and a **generic diffusers adapter** that runs any diffusers-format text-to-image or text-to-video repo.
 
-So the set of models is not fixed: it is whatever recipes exist. Built in: SDXL 1.0 and FLUX.1 schnell (image), LTX-Video, Wan 2.2, CogVideoX, HunyuanVideo 1.5 (480p) and HunyuanVideo 1.0 (video). Everything else comes from **Library > Add from Hugging Face**.
+So the set of models is not fixed: it is whatever recipes exist. Built in: SDXL 1.0 and FLUX.1 schnell (image), LTX-Video, Wan 2.2, CogVideoX, HunyuanVideo 1.5 (480p) and HunyuanVideo 1.0 (video), and the Real-ESRGAN x4+ upscaler. Everything else comes from **Library > Add from Hugging Face**.
 
 Only LTX-Video has been run end to end by the Reel author; the other built-ins and anything you import are marked **Unverified** until they have been.
 

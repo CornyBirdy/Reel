@@ -1,6 +1,7 @@
 """Report what a model environment can do. Runs inside the model's venv; prints one JSON line."""
-import json
 import importlib
+import json
+import sys
 
 out = {"ok": True, "warnings": []}
 try:
@@ -24,7 +25,8 @@ except Exception as exc:  # noqa: BLE001
     out["ok"] = False
     out["error"] = f"torch import failed: {exc}"
 
-for mod in ("diffusers", "transformers", "accelerate", "imageio_ffmpeg", "bitsandbytes"):
+# A recipe can name the packages it needs (the upscaler has no diffusers); otherwise the diffusion stack is checked.
+for mod in (sys.argv[1:] or ("diffusers", "transformers", "accelerate", "imageio_ffmpeg", "bitsandbytes")):
     try:
         m = importlib.import_module(mod)
         out[mod] = getattr(m, "__version__", "ok")

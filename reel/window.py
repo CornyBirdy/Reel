@@ -13,6 +13,7 @@ import inspect
 import os
 import sys
 import threading
+import time
 from pathlib import Path
 
 from . import config
@@ -176,6 +177,113 @@ def _icon_soon(window) -> None:
         t.start()
 
 
+# --- coming back from minimised -----------------------------------------------------------------
+# WebView2 can return from the taskbar without redrawing: the window is there but blank until it is
+# minimised and restored again. Nudging the control's visibility and bounds, and asking the page to
+# lay itself out once more, makes it paint. This runs on the "restored"/"maximized" events and, as a
+# second route (pywebview does not report every way out of minimised), from a small watcher that
+# notices the window leaving the minimised state.
+REPAINT_DELAYS = (0.05, 0.4, 1.2)  # the first nudge can land before the compositor is back
+_repaint_lock = threading.Lock()
+_last_repaint = [0.0]
+
+
+def _nudge_native(window) -> None:
+    """Touch the WebView2 control so it redraws. Must run on the window's UI thread."""
+    form = getattr(window, "native", None)
+    if form is None:
+        return
+    view = getattr(getattr(form, "browser", None), "web_view", None)
+    controller = getattr(view, "CoreWebView2Controller", None) if view is not None else None
+    steps = []
+    if controller is not None:
+        steps += [
+            lambda: controller.NotifyParentWindowPositionChanged(),
+            lambda: setattr(controller, "IsVisible", False),
+            lambda: setattr(controller, "IsVisible", True),
+            lambda: setattr(controller, "Bounds", controller.Bounds),
+        ]
+    if view is not None:
+        steps += [lambda: setattr(view, "Visible", False), lambda: setattr(view, "Visible", True),
+                  lambda: view.Invalidate(True)]
+    steps += [lambda: form.Invalidate(True), lambda: form.Refresh()]
+    for step in steps:
+        try:
+            step()
+        except Exception as exc:  # noqa: BLE001 - each route is a best effort
+            _diag(f"repaint step failed ({type(exc).__name__}: {exc})")
+
+
+def _repaint(window) -> None:
+    """Make the page redraw after the window came back from minimised (any thread)."""
+    form = getattr(window, "native", None)
+    try:
+        from System import Action  # noqa: PLC0415 - pythonnet, Windows only
+        if form is not None and getattr(form, "InvokeRequired", False):
+            form.Invoke(Action(lambda: _nudge_native(window)))
+        else:
+            _nudge_native(window)
+    except ImportError:
+        _nudge_native(window)
+    except Exception as exc:  # noqa: BLE001
+        _diag(f"repaint failed ({type(exc).__name__}: {exc})")
+    try:  # the page itself re-measures and repaints too
+        window.evaluate_js("window.dispatchEvent(new Event('resize')); document.body && void document.body.offsetHeight;")
+    except Exception as exc:  # noqa: BLE001
+        _diag(f"repaint script failed ({type(exc).__name__}: {exc})")
+
+
+def _repaint_soon(window, delays=REPAINT_DELAYS) -> None:
+    """Repaint a few times over the next second; calls arriving close together are folded into one run."""
+    with _repaint_lock:
+        now = time.monotonic()
+        if now - _last_repaint[0] < 0.3:
+            return
+        _last_repaint[0] = now
+    _diag("restored from minimised: repainting")
+    for delay in delays:
+        t = threading.Timer(delay, _repaint, args=(window,))
+        t.daemon = True
+        t.start()
+
+
+def _watch_restore(window, interval: float = 0.25) -> None:
+    """Windows only: repaint whenever the window stops being minimised, whatever pywebview reported."""
+    if sys.platform != "win32":
+        return
+
+    def watch():
+        try:
+            u = _user32()
+            import ctypes
+            from ctypes import wintypes
+            u.IsIconic.argtypes = [wintypes.HWND]
+            u.IsIconic.restype = wintypes.BOOL
+            u.IsWindow.argtypes = [wintypes.HWND]
+            u.IsWindow.restype = wintypes.BOOL
+        except Exception as exc:  # noqa: BLE001
+            _diag(f"restore watcher not started ({type(exc).__name__}: {exc})")
+            return
+        hwnd, was_min = None, False
+        while True:
+            time.sleep(interval)
+            try:
+                if not hwnd or not u.IsWindow(hwnd):
+                    hwnd = _find_hwnd(TITLE)
+                    if not hwnd:
+                        continue
+                now_min = bool(u.IsIconic(hwnd))
+                if was_min and not now_min:
+                    _repaint_soon(window)
+                was_min = now_min
+            except Exception as exc:  # noqa: BLE001
+                _diag(f"restore watcher: {type(exc).__name__}: {exc}")
+                return
+
+    t = threading.Thread(target=watch, daemon=True, name="reel-restore-watch")
+    t.start()
+
+
 def run_native(url: str, *, webview=None, log=print, storage: Path | None = None) -> bool:
     """Show Reel in a native window and block until it is closed. False = could not open one."""
     try:
@@ -205,9 +313,15 @@ def run_native(url: str, *, webview=None, log=print, storage: Path | None = None
             zoomable=True,
         )))
         try:
-            window.events.shown += lambda: (shown.append(True), _icon_soon(window))
+            window.events.shown += lambda: (shown.append(True), _icon_soon(window), _watch_restore(window))
         except Exception:  # noqa: BLE001
             pass
+        for name in ("restored", "maximized"):   # back from the taskbar: WebView2 may need a nudge to draw
+            try:
+                event = getattr(window.events, name)
+                event += lambda: _repaint_soon(window)
+            except Exception:  # noqa: BLE001 - this pywebview does not have the event
+                pass
         wv.start(**_filter_kwargs(wv.start, dict(
             gui="edgechromium" if sys.platform == "win32" else None,
             private_mode=False,            # keep localStorage: theme choice, form values

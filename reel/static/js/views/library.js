@@ -37,6 +37,7 @@ function ModelCard(initial, ctx) {
   const m0 = initial;
   const badgeSlot = h("div", { class: "row-8 badges" });
   const fitSlot = h("div", { class: "row-8" });
+  const fitNote = h("div");
   const diskSlot = h("div", { class: "muted icon-line" });
   const stepsEl = h("ol", { class: "steps", "aria-label": "Install steps" });
   const bar = progressBar(0, { label: `${m0.name} install progress` });
@@ -63,10 +64,10 @@ function ModelCard(initial, ctx) {
     h("div", { class: "stats" },
       stat("Download", `${m0.download_gb} GB`),
       stat("VRAM needed", `~${m0.vram_gb} GB`),
-      stat("Safe max size", `${m0.limits.max_width} × ${m0.limits.max_height}`),
+      m0.kind === "upscale" ? stat("Scale", m0.limits.scales.map((x) => `${x}×`).join(" · ")) : stat("Safe max size", `${m0.limits.max_width} × ${m0.limits.max_height}`),
       m0.kind === "video" ? stat("Safe frames", String(m0.limits.frames.max)) : null,
       m0.kind === "video" ? stat("Frame rate", `${m0.limits.fps} fps`) : null),
-    memSlot, fitSlot, diskSlot, panel, actions);
+    memSlot, fitSlot, fitNote, diskSlot, panel, actions);
 
   let lastActionsKey = "";
 
@@ -79,7 +80,7 @@ function ModelCard(initial, ctx) {
   function renderActions(m) {
     const job = m.install;
     const w = ctx.worker;
-    const key = [m.state, m.status, !!m.blocked_reason, job && job.status, m.source, stateOf(w, m.id), w && w.state, w && w.model_id].join("|");
+    const key = [m.state, m.status, !!m.blocked_reason, job && job.status, m.source, m.fit.level, stateOf(w, m.id), w && w.state, w && w.model_id].join("|");
     if (key === lastActionsKey) return;
     lastActionsKey = key;
     clear(actions);
@@ -90,7 +91,14 @@ function ModelCard(initial, ctx) {
     }
     const install = (label) => h("button", {
       class: "btn btn-primary", disabled: !!m.blocked_reason, title: m.blocked_reason || undefined,
-      onclick: () => act(() => api.post(`/api/models/${m.id}/install`)),
+      onclick: async () => {
+        // A model this PC can't really run: say so before a 10-30 GB download, but let people decide.
+        if (["too_big", "no_gpu"].includes(m.fit.level)) {
+          const ok = await confirmDialog({ title: `Install ${m.name} anyway?`, confirmLabel: "Install anyway", body: m.fit.detail });
+          if (!ok) return;
+        }
+        act(() => api.post(`/api/models/${m.id}/install`));
+      },
     }, icon("download"), label);
     const blockedNote = () => m.blocked_reason
       ? h("span", { class: "muted", style: { fontSize: "var(--text-sm)" } }, m.blocked_reason) : null;
@@ -114,8 +122,10 @@ function ModelCard(initial, ctx) {
         break;
       case "installed":
         actions.append(
-          h("a", { class: "btn btn-primary", href: `#/generate?model=${encodeURIComponent(m.id)}` }, icon("generate"), "Generate"),
-          loadButton(m, ctx.worker, { onDone: ctx.refresh }),
+          m.kind === "upscale"
+            ? h("a", { class: "btn btn-primary", href: "#/generate", title: "Press Upscale under any image or clip" }, icon("upscale"), "Open Generate to upscale")
+            : h("a", { class: "btn btn-primary", href: `#/generate?model=${encodeURIComponent(m.id)}` }, icon("generate"), "Generate"),
+          m.kind === "upscale" ? null : loadButton(m, ctx.worker, { onDone: ctx.refresh }),
           ...[remove("Uninstall", "This deletes only this model's folder: its environment and weights."), refresh()].filter(Boolean));
         break;
       case "partial":
@@ -198,24 +208,26 @@ function ModelCard(initial, ctx) {
       badgeSlot.append(statusBadge(kind, text, ic));
     });
 
-    // What is in memory: the state chip, what it holds, and when it unloads itself.
+    // What is in memory: the state chip, what it holds, and when it unloads itself (the upscaler is not kept loaded).
     const w = ctx.worker, ws = stateOf(w, m.id);
     const holds = ws === "unloaded" ? null : holdsText(w);
-    memSlot.hidden = m.state !== "installed";
-    once(memSlot, [m.state, ws, holds, w && w.idle_unload_minutes].join("|"), () => {
-      if (m.state !== "installed") return;
+    memSlot.hidden = m.state !== "installed" || m.kind === "upscale";
+    once(memSlot, [m.state, m.kind, ws, holds, w && w.idle_unload_minutes].join("|"), () => {
+      if (m.state !== "installed" || m.kind === "upscale") return;
       memSlot.append(h("div", { class: "row-8" }, stateChip(ws, ws === "loading" ? w.message : undefined),
         holds ? h("span", { class: "muted mono", title: holdsTitle }, holds) : null));
       if (ws === "ready" || ws === "generating") memSlot.append(h("div", { class: "field-hint" }, `${KEEPS_MEMORY} ${idleText(w) || ""}`.trim()));
     });
 
-    const gpu = ctx.gpu;
-    once(fitSlot, [gpu && gpu.vram_total_mb, gpu && gpu.name, m.vram_gb].join("|"), () => {
-      if (!gpu) return;
-      const totalGb = gpu.vram_total_mb / 1024;
-      if (m.vram_gb > totalGb) fitSlot.append(statusBadge("warning", `Needs ~${m.vram_gb} GB; your GPU has ${totalGb.toFixed(0)} GB`, "alert"));
-      else fitSlot.append(statusBadge("success", `Should fit your ${totalGb.toFixed(0)} GB GPU (estimate)`, "check"));
+    const fit = m.fit;
+    once(fitSlot, JSON.stringify([fit.level, fit.label, m.vram_note]), () => {
+      const [tone, ic] = { comfortable: ["success", "check"], ok: ["success", "check"], tight: ["info", "info"], low_memory: ["warning", "alert"],
+        too_big: ["danger", "error"], no_gpu: ["warning", "alert"] }[fit.level] || ["neutral", "info"];
+      fitSlot.append(statusBadge(tone, fit.label, ic, fit.detail));
       if (m.vram_note) fitSlot.append(h("span", { class: "muted", style: { fontSize: "var(--text-xs)" } }, m.vram_note));
+    });
+    once(fitNote, JSON.stringify([fit.level, fit.detail]), () => {
+      if (["tight", "low_memory", "too_big", "no_gpu"].includes(fit.level)) fitNote.append(h("div", { class: "muted", style: { fontSize: "var(--text-sm)" } }, fit.detail));
     });
 
     diskSlot.hidden = m.disk.total === 0;
@@ -255,7 +267,7 @@ export async function mount(root) {
 
   function drawFilter() {
     clear(filterSeg);
-    for (const [v, label, ic] of [["all", "All", null], ["image", "Image", "image"], ["video", "Video", "generate"]]) {
+    for (const [v, label, ic] of [["all", "All", null], ["image", "Image", "image"], ["video", "Video", "generate"], ["upscale", "Upscale", "upscale"]]) {
       filterSeg.append(h("button", { type: "button", "aria-pressed": String(filter === v), onclick: () => {
         filter = v; try { localStorage.setItem(FILTER_KEY, v); } catch { /* ignore */ }
         drawFilter(); applyFilter();
@@ -275,6 +287,7 @@ export async function mount(root) {
   }
 
   async function refresh() {
+    if (document.hidden) { schedule(2000); return; }   // minimised: don't poll or redraw; the wake event refreshes
     let data, sys, settings;
     try { [data, sys, settings] = await Promise.all([api.get("/api/models"), api.get("/api/system"), api.get("/api/settings")]); }
     catch (e) { clear(notices); notices.append(h("div", { class: "notice notice-danger" }, icon("error"), `Cannot reach Reel: ${e.message}`)); schedule(5000); return; }
@@ -317,7 +330,9 @@ export async function mount(root) {
   }
 
   function schedule(ms) { clearTimeout(timer); if (alive) timer = setTimeout(refresh, ms); }
+  const onWake = () => { if (alive) refresh(); };
+  document.addEventListener("reel:wake", onWake);
   drawFilter();
   await refresh();
-  return { unmount() { alive = false; clearTimeout(timer); } };
+  return { unmount() { alive = false; clearTimeout(timer); document.removeEventListener("reel:wake", onWake); } };
 }

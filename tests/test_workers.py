@@ -13,7 +13,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from reel import api_worker, config, generation, history, recipes, workers  # noqa: E402
-from reel.generation import GenerationManager  # noqa: E402
+from reel.generation import GenerationError, GenerationManager  # noqa: E402
 
 TESTS = Path(__file__).resolve().parent
 
@@ -23,14 +23,16 @@ class WorkerLifecycle(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         tmp = Path(self.tmp.name)
-        for mid in ("ltx-video", "wan-2.2"):
+        for mid in ("ltx-video", "wan-2.2", "realesrgan-x4plus"):
             (tmp / "models" / mid / "venv" / "bin").mkdir(parents=True)
             (tmp / "models" / mid / "venv" / "bin" / "python").symlink_to(sys.executable)
-        real = recipes.get
+        shipped = recipes.load_all()[0]
 
         def fake_recipe(mid):
-            r = real(mid)
-            return {**r, "adapter": "fake_adapter"} if r else None
+            r = shipped.get(mid)
+            if not r:
+                return None
+            return {**r, "adapter": "fake_upscaler" if r.get("kind") == "upscale" else "fake_adapter"}
 
         history._conn = None
         self.patches = [
@@ -41,6 +43,7 @@ class WorkerLifecycle(unittest.TestCase):
             mock.patch.object(generation, "installed_info", lambda m: {"ok": True}),
             mock.patch.object(workers, "child_env", lambda: {"PYTHONPATH": str(TESTS)}),
             mock.patch.object(recipes, "get", fake_recipe),
+            mock.patch.object(generation.recipes, "load_all", lambda: ({k: fake_recipe(k) for k in shipped}, {})),
         ]
         for p in self.patches:
             p.start()
@@ -211,6 +214,41 @@ class WorkerLifecycle(unittest.TestCase):
         w = self.manager.worker
         self.manager.shutdown()
         self.assertFalse(w.alive)
+
+    def test_upscaling_runs_as_a_one_shot_process_and_leaves_the_loaded_model_alone(self):
+        ok = self.run_job(steps=2)
+        outputs = Path(config.OUTPUTS_DIR)
+        w = self.manager.worker
+        job = self.gen.start_upscale(ok.clips[0]["id"], 2)
+        end = time.time() + 30
+        while job.status == "running" and time.time() < end:
+            time.sleep(0.05)
+        self.assertEqual(job.status, "done", (job.error, job.error_detail))
+        self.assertEqual(job.params["upscale"], {"scale": 2, "source": ok.clips[0]["id"]})
+        self.assertIn("upscaled x2", (outputs / job.clips[0]["file"]).read_text())
+        self.assertEqual(job.clips[0]["params"]["upscaled_from"], ok.clips[0]["id"])
+        self.assertTrue(w.alive)                                 # the generator was not unloaded
+        self.assertTrue(job.log_name)
+        self.assertIn("upscale", (config.LOGS_DIR / job.log_name).read_text())
+
+    def test_an_upscale_failure_is_explained_like_any_other(self):
+        ok = self.run_job(steps=2)
+        src = Path(config.OUTPUTS_DIR) / ok.clips[0]["file"]
+        failing = src.with_name("fail-" + src.name)
+        src.rename(failing)
+        history.get(ok.clips[0]["id"])      # the clip row still points at the old name
+        with mock.patch.object(history, "get", lambda cid: {**ok.clips[0], "file": failing.name, "kind": "image", "prompt": "x",
+                                                            "params": {"width": 64, "height": 64}}):
+            job = self.gen.start_upscale(ok.clips[0]["id"], 2)
+            while job.status == "running":
+                time.sleep(0.05)
+        self.assertEqual(job.status, "failed")
+        self.assertEqual(job.error_kind, "oom")
+        self.assertIn("MemoryError", job.error)
+
+    def test_a_loaded_upscaler_is_not_a_thing_and_generating_with_one_is_refused(self):
+        with self.assertRaises(GenerationError):
+            self.gen.start("realesrgan-x4plus", {"prompt": "x"})
 
     def test_api_functions(self):
         recipe_id = "ltx-video"

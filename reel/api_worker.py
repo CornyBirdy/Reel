@@ -25,6 +25,8 @@ def _installed_recipe(model_id: str) -> dict:
     r = recipes.get(model_id) if recipes.MODEL_ID_RE.match(model_id) else None
     if not r:
         raise HTTPException(404, "Unknown model.")
+    if r.get("kind") == "upscale":
+        raise HTTPException(409, f"{r['name']} is not kept loaded: it runs only while an upscale does.")
     if installs.is_installing(model_id) or installs.is_uninstalling(model_id):
         raise HTTPException(409, f"{r['name']} is being installed or removed.")
     if not installed_info(model_id):

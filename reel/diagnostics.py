@@ -45,6 +45,11 @@ POSIX_EXIT = {
 }
 
 
+def is_native_crash(code: int | None) -> bool:
+    """True for a hard crash of a model process (Windows NTSTATUS such as 0xC0000005, or a POSIX signal)."""
+    return code is not None and (code < 0 or code >= 0xC0000000)
+
+
 def exit_hex(code: int | None) -> str:
     return "unknown" if code is None else f"0x{code & 0xFFFFFFFF:X}"
 
@@ -124,7 +129,7 @@ def failure(code: int | None, lines: list[str], error_event: dict | None = None)
         msg = f"The model process stopped unexpectedly ({format_exit(code)})."
     if not detail:
         detail = "The process printed nothing that looks like an error. Open the full log for everything it wrote."
-    kind = "crash" if d["name"] or (code or 0) < 0 else "error"
+    kind = "crash" if is_native_crash(code) else "error"
     return {"message": msg, "detail": detail, "hint": d["hint"], "kind": kind}
 
 

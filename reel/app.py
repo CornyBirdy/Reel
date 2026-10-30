@@ -45,6 +45,15 @@ def system_info() -> dict:
     }
 
 
+@app.get("/api/changelog")
+def changelog() -> dict:
+    """CHANGELOG.md as text, for Settings > What's changed."""
+    try:
+        return {"text": (config.ROOT / "CHANGELOG.md").read_text(encoding="utf-8")}
+    except OSError:
+        return {"text": ""}
+
+
 @app.get("/favicon.ico", include_in_schema=False)
 def favicon() -> FileResponse:
     return FileResponse(config.STATIC_DIR / "icons" / "reel.ico", media_type="image/x-icon")

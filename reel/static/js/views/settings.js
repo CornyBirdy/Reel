@@ -10,7 +10,7 @@ export async function mount(root) {
   async function load() {
     const [s, stored] = await Promise.all([api.get("/api/settings"), api.get("/api/settings/stored-models")]);
     clear(body);
-    body.append(updatesCard(s), gpuCard(s), memoryCard(s), windowCard(s), storageCard(s, stored), tokenCard(s), systemCard(s));
+    body.append(updatesCard(s), changelogCard(), gpuCard(s), memoryCard(s), windowCard(s), storageCard(s, stored), tokenCard(s), systemCard(s));
     refreshUpdates(false);
   }
 
@@ -98,6 +98,49 @@ export async function mount(root) {
           h("div", { class: "row-8" },
             h("button", { class: "btn", type: "button", onclick: () => tok.value.trim() ? saveTok(tok.value.trim()) : toast("Enter a token first.", "warning") }, "Save token"),
             h("button", { class: "btn", type: "button", disabled: !s.github_token_set, onclick: () => saveTok("") }, "Clear token")))));
+  }
+
+  // ---- Changelog ----
+  // CHANGELOG.md is small and hand-written, so a few rules are enough: "## version", "**Section**", "- item".
+  function inline(text) {
+    const out = [];
+    for (const part of text.split(/(\*\*[^*]+\*\*|`[^`]+`)/)) {
+      if (part.startsWith("**") && part.endsWith("**") && part.length > 4) out.push(h("strong", {}, part.slice(2, -2)));
+      else if (part.startsWith("`") && part.endsWith("`") && part.length > 2) out.push(h("code", {}, part.slice(1, -1)));
+      else if (part) out.push(part);
+    }
+    return out;
+  }
+
+  function renderChangelog(text) {
+    const root = h("div", { class: "stack-12 changelog-text" });
+    let list = null;
+    for (const raw of text.split("\n")) {
+      const line = raw.trimEnd();
+      if (line.startsWith("## ")) { list = null; root.append(h("h4", {}, line.slice(3))); }
+      else if (/^\*\*[^*]+\*\*$/.test(line)) { list = null; root.append(h("h5", {}, line.slice(2, -2))); }
+      else if (line.startsWith("- ")) {
+        if (!list) { list = h("ul", { class: "changelog" }); root.append(list); }
+        list.append(h("li", {}, inline(line.slice(2))));
+      } else if (line.trim() && !line.startsWith("# ")) { list = null; root.append(h("p", { class: "muted" }, inline(line))); }
+    }
+    return root;
+  }
+
+  function changelogCard() {
+    const slot = h("div", { class: "muted" }, "Loading…");
+    const details = h("details", {}, h("summary", {}, "What's changed in each version"), slot);
+    let loaded = false;
+    details.addEventListener("toggle", async () => {
+      if (!details.open || loaded) return;
+      loaded = true;
+      try {
+        const { text } = await api.get("/api/changelog");
+        clear(slot); slot.className = "";
+        slot.append(text ? renderChangelog(text) : h("p", { class: "muted" }, "No changelog was found."));
+      } catch (e) { slot.textContent = `Could not load it: ${e.message}`; }
+    });
+    return h("section", { class: "card stack-16" }, h("h3", {}, "Changelog"), details);
   }
 
   function gpuCard(s) {

@@ -7,7 +7,7 @@ import time
 
 from fastapi import APIRouter, HTTPException
 
-from . import config, hf, recipes, system, workers
+from . import config, fit, hf, recipes, system, workers
 from .installer import InstallError, installs, installed_info, model_dir
 
 router = APIRouter(prefix="/api/models", tags=["models"])
@@ -38,7 +38,7 @@ def disk_usage(model_id: str) -> dict:
     return usage
 
 
-def describe(recipe: dict) -> dict:
+def describe(recipe: dict, gpu: dict | None = None) -> dict:
     mid = recipe["id"]
     info = installed_info(mid)
     job = installs.job(mid)
@@ -74,6 +74,7 @@ def describe(recipe: dict) -> dict:
         "state": state, "installed": state == "installed", "installed_info": info,
         "disk": disk_usage(mid), "install": job.to_dict() if job else None,
         "blocked_reason": blocked,
+        "fit": fit.assess(recipe, gpu),
     }
 
 
@@ -81,8 +82,9 @@ def describe(recipe: dict) -> dict:
 def list_models() -> dict:
     found, problems = recipes.load_all()
     root = config.models_root()
+    gpu = system.gpu_info().get("selected_gpu")
     return {
-        "models": [describe(r) for r in found.values()],
+        "models": [describe(r, gpu) for r in found.values()],
         "worker": workers.manager.status(),
         "recipe_problems": problems,
         "models_dir": str(root),
