@@ -115,6 +115,21 @@ async function refreshGpuChip() {
   if (gpuLine && sel) gpuLine.textContent = `${gb(sel.vram_used_mb)} / ${gb(sel.vram_total_mb)} GB VRAM`;
 }
 
+// Coming back from minimised (or another window): WebView2 can show a blank page until something forces a
+// repaint, most often while a download keeps the page busy. Force a reflow, then tell the views to refresh now
+// instead of waiting for their next timer.
+function wake() {
+  if (document.hidden) return;
+  const body = document.body;
+  body.style.display = "none"; void body.offsetHeight; body.style.display = "";
+  document.dispatchEvent(new CustomEvent("reel:wake"));
+  refreshGpuChip();
+}
+document.addEventListener("visibilitychange", wake);
+window.addEventListener("focus", wake);
+window.addEventListener("pageshow", wake);
+window.addEventListener("resize", () => { if (!document.hidden) document.dispatchEvent(new CustomEvent("reel:wake")); });
+
 applyTheme(getTheme());
 buildNav();
 buildThemeToggle();

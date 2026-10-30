@@ -93,6 +93,7 @@ export async function mount(root) {
     f.tiling = h("input", { id: "g-tiling", type: "checkbox", onchange: persist });
     f.caps = h("div", { class: "field-hint" });
     f.warn = h("div", { class: "stack-8" });
+    f.fit = h("div", { class: "stack-8" });
     f.count = h("select", { id: "g-count", class: "select count-select", "aria-label": "How many to generate", onchange: () => { syncGoLabel(); persist(); } });
     f.goLabel = h("span", {}, "Generate");
     f.go = h("button", { class: "btn btn-primary grow", type: "button", onclick: () => start() }, icon("play"), f.goLabel);
@@ -119,7 +120,7 @@ export async function mount(root) {
           h("div", { class: "grid-2" }, field("Offloading", f.offload, null, "g-offload"), field("Quantization", f.quant, null, "g-quant")),
           h("label", { class: "check" }, f.tiling, "Tiled VAE decode"),
           h("div", { class: "field-hint", id: "mem-note" }))),
-      f.caps, f.warn,
+      f.caps, f.fit, f.warn,
       h("div", { class: "row-8 action-row" },
         h("div", { class: "count-pick" }, h("label", { for: "g-count", class: "count-label" }, "Count"), f.count), f.go, f.stop),
       h("div", { class: "field-hint" }, "Several at once: the model loads once, then each one uses its own seed (seed, seed+1, …). Every finished one is saved as it completes."));
@@ -156,19 +157,27 @@ export async function mount(root) {
     f.negative.value = d.negative_prompt || "";
     clear(f.offload);
     for (const o of mem.offload_options || ["model"]) f.offload.append(h("option", { value: o }, { none: "None (fastest, most VRAM)", model: "Model offload", sequential: "Sequential (slowest, least VRAM)" }[o] || o));
-    f.offload.value = d.offload;
+    // Start from what suits this PC's GPU: low-memory settings on a small card, no offloading on a big one.
+    const rec = (m.fit && m.fit.recommended) || {};
+    const pick = (select, wanted, fallback) => ([...select.options].some((o) => o.value === wanted) ? wanted : fallback);
+    f.offload.value = pick(f.offload, rec.offload, d.offload);
     clear(f.quant);
     for (const o of mem.quantization_options || ["none"]) f.quant.append(h("option", { value: o }, { none: "Off (bf16)", int8: "8-bit", nf4: "4-bit NF4" }[o] || o));
-    f.quant.value = d.quantization;
+    f.quant.value = pick(f.quant, rec.quantization, d.quantization);
+    clear(f.fit);
+    if (m.fit && ["low_memory", "too_big", "no_gpu"].includes(m.fit.level)) {
+      f.fit.append(h("div", { class: `notice ${m.fit.level === "low_memory" ? "notice-info" : "notice-warning"}` }, icon(m.fit.level === "low_memory" ? "info" : "alert"),
+        h("div", {}, h("strong", {}, m.fit.label), h("div", {}, m.fit.detail))));
+    }
     f.tiling.checked = d.vae_tiling;
     fillCount(f.count.value);
     const note = document.getElementById("mem-note");
     if (note) note.textContent = mem.notes || "";
     if (kind === "video") {
       const budget = lim.max_area_frames ? " The width × height × frames total is also capped." : "";
-      f.caps.textContent = `${m.name} is capped at ${lim.max_width} × ${lim.max_height} and ${lim.frames.max} frames to fit a 16 GB GPU.${budget}`;
+      f.caps.textContent = `${m.name} is capped at ${lim.max_width} × ${lim.max_height} and ${lim.frames.max} frames (sized for a 16 GB GPU).${budget}`;
     } else {
-      f.caps.textContent = `${m.name} is capped at ${lim.max_width} × ${lim.max_height} (and ${((lim.max_area || lim.max_width * lim.max_height) / 1e6).toFixed(1)} megapixels) to fit a 16 GB GPU.`;
+      f.caps.textContent = `${m.name} is capped at ${lim.max_width} × ${lim.max_height} (and ${((lim.max_area || lim.max_width * lim.max_height) / 1e6).toFixed(1)} megapixels), sized for a 16 GB GPU.`;
     }
     syncFrames(); validate();
   }
@@ -204,11 +213,11 @@ export async function mount(root) {
       const budget = model.limits.max_area_frames;
       if (budget && w * hgt * frames > budget) {
         ok = false;
-        f.warn.append(h("div", { class: "notice notice-warning" }, icon("alert"), `${w} × ${hgt} with ${frames} frames is over the 16 GB budget. Lower the resolution or the frame count.`));
+        f.warn.append(h("div", { class: "notice notice-warning" }, icon("alert"), `${w} × ${hgt} with ${frames} frames is over this model's size budget. Lower the resolution or the frame count.`));
       }
     } else if (model.limits.max_area && w * hgt > model.limits.max_area) {
       ok = false;
-      f.warn.append(h("div", { class: "notice notice-warning" }, icon("alert"), `${w} × ${hgt} is over the 16 GB size budget. Lower the resolution.`));
+      f.warn.append(h("div", { class: "notice notice-warning" }, icon("alert"), `${w} × ${hgt} is over this model's size budget. Lower the resolution.`));
     }
     if (!activeRunning()) f.go.disabled = !ok;
     return ok;
@@ -302,7 +311,7 @@ export async function mount(root) {
     if (job && job.status === "failed") {
       outputCard.append(h("div", { class: "notice notice-danger", role: "alert" }, icon("error"),
         h("div", { class: "stack-8" }, h("strong", {}, "Generation failed"), h("div", { class: "mono" }, job.error || "Unknown error"),
-          job.error_kind === "oom" ? h("div", {}, "Out of VRAM. Lower the resolution (or frame count), set offloading to Sequential, or use NF4 quantization.") : null)));
+          job.error_kind === "oom" ? h("div", {}, "Out of VRAM. Lower the resolution (or frame count), set offloading to Sequential, or use NF4 quantization under Memory options.") : null)));
     } else if (job && job.status === "cancelled") {
       outputCard.append(h("div", { class: "notice notice-info" }, icon("info"), job.message || "Cancelled."));
     }
@@ -400,6 +409,7 @@ export async function mount(root) {
   async function poll() {
     clearTimeout(timer);
     if (!alive) return;
+    if (document.hidden) { if (activeRunning()) timer = setTimeout(poll, 2000); return; }
     try {
       const { job } = await api.get("/api/generate/current");
       if (job && (!activeJob || activeJob.id === job.id || job.status === "running")) {
@@ -434,5 +444,7 @@ export async function mount(root) {
   else if (history.clips.length) shownClipId = history.clips[0].id;
   renderOutput();
   if (activeRunning()) poll();
-  return { unmount() { alive = false; clearTimeout(timer); } };
+  const onWake = () => { if (alive && activeRunning()) poll(); else if (alive) renderOutput(); };
+  document.addEventListener("reel:wake", onWake);
+  return { unmount() { alive = false; clearTimeout(timer); document.removeEventListener("reel:wake", onWake); } };
 }

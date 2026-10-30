@@ -36,6 +36,7 @@ function ModelCard(initial, ctx) {
   const m0 = initial;
   const badgeSlot = h("div", { class: "row-8 badges" });
   const fitSlot = h("div", { class: "row-8" });
+  const fitNote = h("div");
   const diskSlot = h("div", { class: "muted icon-line" });
   const stepsEl = h("ol", { class: "steps", "aria-label": "Install steps" });
   const bar = progressBar(0, { label: `${m0.name} install progress` });
@@ -64,7 +65,7 @@ function ModelCard(initial, ctx) {
       stat("Max resolution", `${m0.limits.max_width} × ${m0.limits.max_height}`),
       m0.kind === "video" ? stat("Max frames", String(m0.limits.frames.max)) : null,
       m0.kind === "video" ? stat("Frame rate", `${m0.limits.fps} fps`) : null),
-    fitSlot, diskSlot, panel, actions);
+    fitSlot, fitNote, diskSlot, panel, actions);
 
   let lastActionsKey = "";
 
@@ -76,7 +77,7 @@ function ModelCard(initial, ctx) {
 
   function renderActions(m) {
     const job = m.install;
-    const key = [m.state, m.status, !!m.blocked_reason, job && job.status, m.source].join("|");
+    const key = [m.state, m.status, !!m.blocked_reason, job && job.status, m.source, m.fit.level].join("|");
     if (key === lastActionsKey) return;
     lastActionsKey = key;
     clear(actions);
@@ -87,7 +88,14 @@ function ModelCard(initial, ctx) {
     }
     const install = (label) => h("button", {
       class: "btn btn-primary", disabled: !!m.blocked_reason, title: m.blocked_reason || undefined,
-      onclick: () => act(() => api.post(`/api/models/${m.id}/install`)),
+      onclick: async () => {
+        // A model this PC can't really run: say so before a 10-30 GB download, but let people decide.
+        if (["too_big", "no_gpu"].includes(m.fit.level)) {
+          const ok = await confirmDialog({ title: `Install ${m.name} anyway?`, confirmLabel: "Install anyway", body: m.fit.detail });
+          if (!ok) return;
+        }
+        act(() => api.post(`/api/models/${m.id}/install`));
+      },
     }, icon("download"), label);
     const blockedNote = () => m.blocked_reason
       ? h("span", { class: "muted", style: { fontSize: "var(--text-sm)" } }, m.blocked_reason) : null;
@@ -192,13 +200,15 @@ function ModelCard(initial, ctx) {
       badgeSlot.append(statusBadge(kind, text, ic));
     });
 
-    const gpu = ctx.gpu;
-    once(fitSlot, [gpu && gpu.vram_total_mb, gpu && gpu.name, m.vram_gb].join("|"), () => {
-      if (!gpu) return;
-      const totalGb = gpu.vram_total_mb / 1024;
-      if (m.vram_gb > totalGb) fitSlot.append(statusBadge("warning", `Needs ~${m.vram_gb} GB; your GPU has ${totalGb.toFixed(0)} GB`, "alert"));
-      else fitSlot.append(statusBadge("success", `Should fit your ${totalGb.toFixed(0)} GB GPU (estimate)`, "check"));
+    const fit = m.fit;
+    once(fitSlot, JSON.stringify([fit.level, fit.label, m.vram_note]), () => {
+      const [tone, ic] = { comfortable: ["success", "check"], ok: ["success", "check"], low_memory: ["warning", "alert"],
+        too_big: ["danger", "error"], no_gpu: ["warning", "alert"] }[fit.level] || ["neutral", "info"];
+      fitSlot.append(statusBadge(tone, fit.label, ic, fit.detail));
       if (m.vram_note) fitSlot.append(h("span", { class: "muted", style: { fontSize: "var(--text-xs)" } }, m.vram_note));
+    });
+    once(fitNote, JSON.stringify([fit.level, fit.detail]), () => {
+      if (["low_memory", "too_big", "no_gpu"].includes(fit.level)) fitNote.append(h("div", { class: "muted", style: { fontSize: "var(--text-sm)" } }, fit.detail));
     });
 
     diskSlot.hidden = m.disk.total === 0;
@@ -258,6 +268,7 @@ export async function mount(root) {
   }
 
   async function refresh() {
+    if (document.hidden) { schedule(2000); return; }   // minimised: don't poll or redraw; the wake event refreshes
     let data, sys, settings;
     try { [data, sys, settings] = await Promise.all([api.get("/api/models"), api.get("/api/system"), api.get("/api/settings")]); }
     catch (e) { clear(notices); notices.append(h("div", { class: "notice notice-danger" }, icon("error"), `Cannot reach Reel: ${e.message}`)); schedule(5000); return; }
@@ -296,7 +307,9 @@ export async function mount(root) {
   }
 
   function schedule(ms) { clearTimeout(timer); if (alive) timer = setTimeout(refresh, ms); }
+  const onWake = () => { if (alive) refresh(); };
+  document.addEventListener("reel:wake", onWake);
   drawFilter();
   await refresh();
-  return { unmount() { alive = false; clearTimeout(timer); } };
+  return { unmount() { alive = false; clearTimeout(timer); document.removeEventListener("reel:wake", onWake); } };
 }

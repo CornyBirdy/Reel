@@ -52,8 +52,8 @@ def validate(recipe: dict, req: dict) -> dict:
         if v % mult:
             raise ValueError(f"{key} must be a multiple of {mult}.")
         if not 64 <= v <= cap:
-            raise ValueError(f"{key.capitalize()} must be between 64 and {cap} for {recipe['name']}: that is its size limit "
-                             f"for a 16 GB GPU. Pick a size from the Resolution list.")
+            raise ValueError(f"{key.capitalize()} must be between 64 and {cap} for {recipe['name']}: that is its size limit. "
+                             "Pick a size from the Resolution list.")
         out[key] = v
 
     if kind == "video":
@@ -67,13 +67,13 @@ def validate(recipe: dict, req: dict) -> dict:
         budget = lim.get("max_area_frames")
         if budget and out["width"] * out["height"] * frames > budget:
             raise ValueError(
-                f"{out['width']}×{out['height']} with {frames} frames is over {recipe['name']}'s 16 GB budget. "
+                f"{out['width']}×{out['height']} with {frames} frames is over {recipe['name']}'s size budget. "
                 "Lower the resolution or the frame count.")
         out["fps"] = lim["fps"]
     else:
         budget = lim.get("max_area")
         if budget and out["width"] * out["height"] > budget:
-            raise ValueError(f"{out['width']}×{out['height']} is over {recipe['name']}'s 16 GB size budget. Lower the resolution.")
+            raise ValueError(f"{out['width']}×{out['height']} is over {recipe['name']}'s size budget. Lower the resolution.")
 
     steps = int(req.get("steps", dflt["steps"]))
     sl = lim.get("steps", {"min": 1, "max": 100})
