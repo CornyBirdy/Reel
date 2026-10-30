@@ -173,3 +173,8 @@ button.batch-thumb:hover { background: var(--hover-bg); }
 .point-box video { width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none; }
 .point-dot { position: absolute; width: var(--sp-16); height: var(--sp-16); margin: calc(var(--sp-8) * -1) 0 0 calc(var(--sp-8) * -1);
   border-radius: 50%; background: var(--accent); border: var(--indicator-w) solid var(--surface); box-shadow: 0 0 0 var(--border-w) var(--accent); pointer-events: none; }
+
+/* -- Verify ------------------------------------------------------------------------------------ */
+.verify-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--sp-8); }
+.verify-line { display: flex; align-items: flex-start; gap: var(--sp-8); }
+.verify-line .badge { flex: none; }

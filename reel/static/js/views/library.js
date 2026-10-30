@@ -1,8 +1,9 @@
 import { h, icon, clear, toast, confirmDialog, fmtBytes, fmtDuration, progressBar, statusBadge, kindBadge } from "../ui.js";
 import { api } from "../api.js";
 import { openAddFromHF } from "./hf_dialog.js";
+import { openVerify } from "../verify.js";
 import { openModelSettings } from "../model_settings.js";
-import { KEEPS_MEMORY, crashNotice, holdsText, holdsTitle, idleText, loadButton, stateChip, stateOf } from "../worker.js";
+import { KEEPS_MEMORY, crashNotice, holdsText, holdsTitle, idleText, loadButton, loadingKey, loadingNote, stateChip, stateOf } from "../worker.js";
 
 const FILTER_KEY = "reel.library.filter";
 const loadFilter = () => { try { return localStorage.getItem(FILTER_KEY) || "all"; } catch { return "all"; } };
@@ -134,6 +135,8 @@ function ModelCard(initial, ctx) {
           m.kind === "upscale" ? null : loadButton(m, ctx.worker, { onDone: ctx.refresh }),
           m.kind === "upscale" ? null : h("button", { class: "btn btn-icon", type: "button", title: "Model settings: how it loads and what it generates with by default",
             "aria-label": `${m.name} settings`, onclick: () => openModelSettings(m, { onSaved: ctx.refresh }) }, icon("settings")),
+          h("button", { class: "btn", type: "button", title: "Check that this model's files are complete and undamaged, and that its Python environment can use your graphics card",
+            onclick: () => openVerify(m, { onDone: ctx.refresh }) }, icon("check"), "Verify"),
           ...[remove("Uninstall", "This deletes only this model's folder: its environment and weights."), refresh()].filter(Boolean));
         break;
       case "partial":
@@ -221,10 +224,11 @@ function ModelCard(initial, ctx) {
     const w = ctx.worker, ws = stateOf(w, m.id);
     const holds = ws === "unloaded" ? null : holdsText(w);
     memSlot.hidden = m.state !== "installed" || m.kind === "upscale";
-    once(memSlot, [m.state, m.kind, ws, holds, w && w.idle_unload_minutes, JSON.stringify(m.settings)].join("|"), () => {
+    once(memSlot, [m.state, m.kind, ws, holds, w && w.idle_unload_minutes, JSON.stringify(m.settings), ws === "loading" ? loadingKey(w) : ""].join("|"), () => {
       if (m.state !== "installed" || m.kind === "upscale") return;
       memSlot.append(h("div", { class: "row-8" }, stateChip(ws, ws === "loading" ? w.message : undefined),
         holds ? h("span", { class: "muted mono", title: holdsTitle }, holds) : null));
+      if (ws === "loading") memSlot.append(loadingNote(w));
       const sv = m.settings || {};
       if (Object.keys(sv).length) {
         const bits = [sv.width && sv.height ? `${sv.width} × ${sv.height}` : null, sv.frames ? `${sv.frames} frames` : null, sv.fps ? `${sv.fps} fps` : null,
