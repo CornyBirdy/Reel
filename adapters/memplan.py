@@ -13,8 +13,8 @@ Pure arithmetic here, so it is testable without a GPU; base.py asks the GPU and 
 from __future__ import annotations
 
 GB = 1024**3
-NONE_HEADROOM = (3.0, 0.30)    # (at least GB, share of the card): activations, VAE decode and allocator slack on top of the weights
-MODEL_HEADROOM = (2.0, 0.20)   # the same, for when only the biggest part is on the GPU at a time
+NONE_HEADROOM = (2.5, 0.15)    # (at least GB, share of the card): activations, VAE decode and allocator slack on top of the weights
+MODEL_HEADROOM = (1.5, 0.12)   # the same, for when only the biggest part is on the GPU at a time
 
 
 def headroom(total_gb: float, rule: tuple[float, float]) -> float:

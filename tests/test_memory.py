@@ -31,8 +31,13 @@ class ChooseOffload(unittest.TestCase):
         self.assertEqual(memplan.choose_offload(VACE, free_gb=14.7, total_gb=15.9)[0], "none")
 
     def test_the_same_model_with_a_browser_and_games_open_has_less_free(self):
-        self.assertEqual(memplan.choose_offload(VACE, free_gb=11.0, total_gb=15.9)[0], "model")
-        self.assertEqual(memplan.choose_offload(VACE, free_gb=9.0, total_gb=15.9)[0], "sequential")
+        self.assertEqual(memplan.choose_offload(VACE, free_gb=9.5, total_gb=15.9)[0], "model")
+        self.assertEqual(memplan.choose_offload(VACE, free_gb=7.0, total_gb=15.9)[0], "sequential")
+
+    def test_a_5070_ti_with_windows_and_a_browser_open_still_keeps_vace_on_the_gpu(self):
+        # 15.9 GB card, about 13 GB free: this used to fall back to model offload (it asked for 12.3 GB free)
+        self.assertEqual(memplan.choose_offload(VACE, free_gb=13.0, total_gb=15.9)[0], "none")
+        self.assertEqual(memplan.choose_offload(VACE, free_gb=10.5, total_gb=15.9)[0], "none")
 
     def test_whole_pipeline_of_wan_22_needs_one_part_at_a_time(self):
         mode, why = memplan.choose_offload({"transformer": 7.1, "text_encoder": 11.4, "vae": 0.5}, free_gb=14.7, total_gb=15.9)
@@ -43,8 +48,8 @@ class ChooseOffload(unittest.TestCase):
         self.assertEqual(memplan.choose_offload({"transformer": 24.0, "vae": 0.5}, free_gb=14.7, total_gb=15.9)[0], "sequential")
 
     def test_headroom_grows_with_the_card_but_never_below_the_floor(self):
-        self.assertEqual(memplan.headroom(8, memplan.NONE_HEADROOM), 3.0)
-        self.assertAlmostEqual(memplan.headroom(24, memplan.NONE_HEADROOM), 7.2)
+        self.assertEqual(memplan.headroom(8, memplan.NONE_HEADROOM), 2.5)
+        self.assertAlmostEqual(memplan.headroom(24, memplan.NONE_HEADROOM), 3.6)
 
     def test_the_text_encoder_is_kept_in_ram_only_when_plenty_is_left(self):
         self.assertFalse(memplan.keep_in_ram(11.4, 15.0))       # 3.6 GB would be left
@@ -95,6 +100,7 @@ class AutoOffload(unittest.TestCase):
             self.assertEqual(a.resolve_offload(self.pipe(transformer=7.1, vae=0.5)), "none")
         self.assertEqual(a.offload_active, "none")
         self.assertIn("'auto' chose none", emit.call_args.kwargs["message"])
+        self.assertIn("VRAM are free", a.offload_why)
 
     def test_auto_follows_what_is_really_free(self):
         parts = dict(transformer=7.1, text_encoder=11.4, vae=0.5)

@@ -17,15 +17,16 @@ function vramShare(e) {
 
 export function renderEstimate(el, e) {
   clear(el);
-  const row = (name, used, cap, level, title) => h("div", { class: "est-row", title },
+  // "~9.5 GB needed · card 15.9 GB, 13.2 free": the card's size first, so the free figure is not mistaken for it.
+  const row = (name, used, cap, level, title, total) => h("div", { class: "est-row", title },
     h("span", { class: "est-name" }, name),
-    h("span", { class: "mono est-nums" }, cap ? `~${used} GB of ${cap} GB free` : `~${used} GB`),
+    h("span", { class: "mono est-nums" }, cap ? (total ? `~${used} GB needed · card ${total} GB, ${cap} free` : `~${used} GB of ${cap} GB free`) : `~${used} GB`),
     statusBadge(STATUS_KIND[level], STATUS_LABEL[level]));
   const b = e.breakdown || {};
   const vramTip = b.weights_gb !== undefined ? `Weights on the GPU ~${b.weights_gb} GB, activations ~${b.activations_gb} GB, VAE decode ~${b.vae_decode_gb} GB` : "Scaled from the model's listed VRAM need";
   el.append(
     h("div", { class: "field-label" }, "Memory estimate"),
-    row("GPU memory", e.vram_gb, e.vram_cap_gb, e.vram, `${vramTip}. ${vramShare(e)}`),
+    row("GPU memory", e.vram_gb, e.vram_cap_gb, e.vram, `${vramTip}. ${vramShare(e)}`, e.vram_total_gb),
     row("System RAM", e.ram_gb, e.ram_cap_gb, e.ram, "Python and CUDA libraries, the model's weights while they wait on the CPU, and the decoded frames"));
   if (e.status === "fail") el.append(h("div", { class: "notice notice-danger" }, icon("alert"),
     "This will probably run out of memory or crash on this PC. You can still try it. To bring it down: lower the resolution or frame count, use NF4 quantization, or set Offloading to Sequential."));

@@ -221,7 +221,7 @@ export async function mount(root) {
     const other = w && w.state !== "unloaded" && w.model_id && w.model_id !== model.id ? modelById(w.model_id) : null;
     f.worker.append(h("div", { class: "row-8" },
       stateChip(st, st === "loading" ? w.message : undefined),
-      holds ? h("span", { class: "muted mono", title: holdsTitle }, holds) : null,
+      holds ? h("span", { class: "muted mono", title: holdsTitle(w) }, holds) : null,
       h("span", { class: "grow" }),
       logButton(w),
       h("button", { class: "btn btn-icon", type: "button", title: "Model settings: how it loads and what it generates with by default", "aria-label": "Model settings",

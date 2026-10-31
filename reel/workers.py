@@ -68,6 +68,7 @@ class WorkerProcess:
         self.memory: dict = {}
         self.attention = None
         self.offload_active = None         # the mode the model really uses (what "auto" chose)
+        self.offload_why = None            # why, in words (shown beside the mode)
         self.load_seconds: float | None = None
         self.loaded_at: float | None = None
         self.last_used = time.time()
@@ -165,6 +166,7 @@ class WorkerProcess:
             self.memory = evt.get("memory") or self.memory
             self.attention = evt.get("attention")
             self.offload_active = evt.get("offload")
+            self.offload_why = evt.get("offload_why")
         p = self.pending.get(evt.get("id") or "")
         if p:
             p.q.put(evt)
@@ -261,6 +263,7 @@ class WorkerManager:
             "loading_seconds": (time.time() - w.load_started) if w and state == "loading" and w.load_started else None,
             "attention": w.attention if w and state != "unloaded" else None,
             "offload_active": w.offload_active if w and state != "unloaded" else None,
+            "offload_why": w.offload_why if w and state != "unloaded" else None,
             "settings": ({k: w.load_req.get(k) for k in ("quantization", "offload", "vae_tiling", "attention_backend")}
                          if w and state != "unloaded" else None),
             "log_name": w.log.name if w else None,

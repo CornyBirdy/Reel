@@ -137,7 +137,7 @@ class Worker:
         self.adapter = adapter
         name = adapter.torch.cuda.get_device_name(0) if adapter.device == "cuda" else None
         emit(event="loaded", seconds=seconds, memory=memory_report(adapter.torch), device_name=name, attention=adapter.attention_active,
-             offload=getattr(adapter, "offload_active", None))
+             offload=getattr(adapter, "offload_active", None), offload_why=getattr(adapter, "offload_why", None))
 
     def do_generate(self, request: dict) -> None:
         if self.adapter is None:

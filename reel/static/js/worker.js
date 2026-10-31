@@ -53,7 +53,8 @@ export const logButton = (worker) => (worker && worker.state === "loading" && wo
   : null);
 export const loadingKey = (w) => (w && w.state === "loading" ? `${w.message}|${Math.floor(w.loading_seconds || 0)}` : "");
 
-export const holdsTitle = "VRAM is what PyTorch has reserved in the model process (Task Manager adds about 0.5 GB for the CUDA context). RAM is the process's working set.";
+export const holdsTitle = (worker) => "VRAM is what PyTorch has reserved in the model process (Task Manager adds about 0.5 GB for the CUDA context). RAM is the process's working set."
+  + (worker && worker.offload_why && worker.settings?.offload === "auto" ? ` Auto chose ${worker.offload_active} offload because ${worker.offload_why}.` : "");
 
 export function idleText(worker) {
   if (!worker || worker.state !== "ready") return null;

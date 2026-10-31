@@ -184,6 +184,7 @@ class BaseAdapter:
         self.kind = request.get("kind", "video")
         self.attention_active = "native"   # what is really in use after apply_attention_backend()
         self.offload_active = request.get("offload", "model")   # what "auto" resolved to, once the pipeline is measured
+        self.offload_why = None                                  # ...and the reason, in words (only "auto" has one)
         self.steps_done = 0
 
     # -- to implement --------------------------------------------------------
@@ -244,6 +245,7 @@ class BaseAdapter:
             free, total = self.torch.cuda.mem_get_info()
             mode, why = memplan.choose_offload(memplan.component_gb(pipe, self.torch), free / memplan.GB, total / memplan.GB)
             emit(event="log", message=f"Offloading 'auto' chose {mode}: {why}.")
+            self.offload_why = why
         self.offload_active = mode
         return mode
 
