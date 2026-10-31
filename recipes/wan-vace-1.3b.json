@@ -75,6 +75,7 @@
       "huggingface_hub",
       "imageio",
       "imageio-ffmpeg",
+      "scipy",
       "numpy",
       "Pillow"
     ]
@@ -179,7 +180,7 @@
     "steps": 30,
     "guidance": 5.0,
     "negative_prompt": "blurry, low quality, distorted, jittery, watermark, text, static",
-    "offload": "model",
+    "offload": "auto",
     "vae_tiling": true,
     "quantization": "none"
   },
@@ -192,7 +193,7 @@
     "quantization_options": [
       "none"
     ],
-    "notes": "The 1.3B transformer is only about 7 GB in bf16, so no quantization is offered. The umT5 text encoder (11 GB) is the biggest part.",
+    "notes": "The 1.3B transformer is only about 7 GB in bf16, so no quantization is offered. The umT5 text encoder (11 GB) is the biggest part, so Reel reads it only while it encodes your prompt and then frees it: it is kept in system RAM between prompts only when RAM is plentiful. Auto offloading keeps the transformer and VAE on the GPU for good when they fit.",
     "estimate": {
       "weights_gb": {
         "transformer": 7.1,
@@ -207,7 +208,18 @@
       },
       "hidden": 1536,
       "vae_mb_per_mpx_frame": 768,
-      "vae_tile_mpx_frames": 1.5
+      "vae_tile_mpx_frames": 1.5,
+      "transient": [
+        "text_encoder"
+      ]
     }
-  }
+  },
+  "verify_modules": [
+    "diffusers",
+    "transformers",
+    "accelerate",
+    "imageio_ffmpeg",
+    "bitsandbytes",
+    "scipy"
+  ]
 }

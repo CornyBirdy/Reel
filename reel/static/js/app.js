@@ -112,7 +112,13 @@ async function refreshGpuChip() {
       chip.append(icon("chip"), body);
     }
   }
-  if (gpuLine && sel) gpuLine.textContent = `${gb(sel.vram_used_mb)} / ${gb(sel.vram_total_mb)} GB VRAM`;
+  // One decimal, and "used": a "16 GB" card is 15.9 GB here, and Windows and other programs hold some of it.
+  const gb1 = (mb) => (mb / 1024).toFixed(1);
+  if (gpuLine && sel) {
+    gpuLine.textContent = `${gb1(sel.vram_used_mb)} / ${gb1(sel.vram_total_mb)} GB VRAM used`;
+    gpuLine.title = `${gb1(sel.vram_total_mb - sel.vram_used_mb)} GB are free. The card's size is shown the way PyTorch and Task Manager count it (a "16 GB" card is 15.9 GB). `
+      + "Windows, the browser and Reel's own window use part of it, and so does a loaded model.";
+  }
 }
 
 // Coming back from minimised (or another window): WebView2 can show a blank page until something forces a

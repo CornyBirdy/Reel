@@ -13,8 +13,10 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import stat
+import subprocess
 import sys
 import threading
 import time
@@ -39,6 +41,11 @@ class InstallError(Exception):
 
 class Cancelled(Exception):
     pass
+
+
+def package_name(spec: str) -> str:
+    """"diffusers>=0.35" -> "diffusers"; extras, markers and version pins are dropped."""
+    return re.split(r"[\s;\[<>=!~(]", spec.strip(), maxsplit=1)[0]
 
 
 def model_dir(model_id: str) -> Path:
@@ -71,6 +78,71 @@ def force_rmtree(path: Path) -> None:
             time.sleep(0.3)
             func(p)
     shutil.rmtree(path, onerror=onerror)
+
+
+_LIST_MISSING = ("import importlib.metadata as m, json, sys\n"
+                 "gone = []\n"
+                 "for name in sys.argv[1:]:\n"
+                 "    try:\n"
+                 "        m.version(name)\n"
+                 "    except m.PackageNotFoundError:\n"
+                 "        gone.append(name)\n"
+                 "print(json.dumps(gone))\n")
+
+
+def missing_packages(recipe: dict) -> list[str]:
+    """Packages a recipe lists that its installed Python environment does not have (a recipe can gain a package after
+    the model was installed). [] when the environment is complete or cannot be asked."""
+    py = procs.venv_python(model_dir(recipe["id"]) / "venv")
+    names = [package_name(spec) for spec in recipe.get("python", {}).get("packages", [])]
+    if not py.exists() or not names:
+        return []
+    try:
+        out = subprocess.run([str(py), "-c", _LIST_MISSING, *names], capture_output=True, text=True, timeout=60, check=True,
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout
+        return [n for n in json.loads(out.strip().splitlines()[-1]) if isinstance(n, str)]
+    except (subprocess.SubprocessError, OSError, ValueError, IndexError):
+        return []
+
+
+def torch_constraints(py: Path, out: Path) -> list[str]:
+    """pip arguments that keep the CUDA PyTorch already in the environment: without them a package that wants torch could
+    pull the CPU-only build from PyPI, and the model would then silently run on the CPU."""
+    found = subprocess.run([str(py), "-c", "import importlib.metadata as m; print(m.version('torch'))"], capture_output=True,
+                           text=True, timeout=60, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout.split()
+    if not found:
+        return []
+    out.write_text(f"torch=={found[-1]}\n", encoding="utf-8")
+    return ["-c", str(out)]
+
+
+def top_up_packages(recipe: dict, on_message=None, timeout: int = 900) -> list[str]:
+    """Install the packages a recipe needs that an older install lacks (just those: PyTorch and the weights are untouched).
+
+    Returns the names it installed; raises InstallError when pip fails, for example offline."""
+    missing = missing_packages(recipe)
+    if not missing:
+        return []
+    mdir = model_dir(recipe["id"])
+    py = procs.venv_python(mdir / "venv")
+    tmp = mdir / "tmp"
+    tmp.mkdir(exist_ok=True)
+    wanted = [spec for spec in recipe["python"]["packages"] if package_name(spec) in missing]
+    if on_message:
+        on_message(f"Installing {', '.join(missing)}, which this model now needs")
+    try:
+        cmd = [str(py), "-m", "pip", "install", "--no-cache-dir", "--progress-bar", "off", "--disable-pip-version-check",
+               *torch_constraints(py, tmp / "constraints.txt"), *wanted]
+        done = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                              env={**os.environ, "TMP": str(tmp), "TEMP": str(tmp), "TMPDIR": str(tmp), "PYTHONUTF8": "1"})
+    except (subprocess.SubprocessError, OSError) as exc:
+        raise InstallError(f"Could not install {', '.join(missing)}: {exc}") from exc
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    if done.returncode != 0:
+        tail = " | ".join((done.stdout + done.stderr).strip().splitlines()[-3:])
+        raise InstallError(f"Could not install {', '.join(missing)} (pip exited with code {done.returncode}): {tail}")
+    return missing
 
 
 class Job:
@@ -290,13 +362,8 @@ class InstallManager:
             def do_packages():
                 # Keep the CUDA PyTorch that was just installed: without this a package that wants torch could pull the
                 # CPU-only build from PyPI, and the model would then silently run on the CPU.
-                found: list[str] = []
-                self._run_cmd(job, log, [str(py), "-c", "import importlib.metadata as m; print('TORCH', m.version('torch'))"], capture=found)
-                pins = [l.split(" ", 1)[1].strip() for l in found if l.startswith("TORCH ")]
-                constraints = tmp / "constraints.txt"
-                constraints.write_text("".join(f"torch=={v}\n" for v in pins), encoding="utf-8")
                 cmd = [str(py), "-m", "pip", "install", "--no-cache-dir", "--progress-bar", "off",
-                       "--disable-pip-version-check", *(["-c", str(constraints)] if pins else []), *pyc["packages"]]
+                       "--disable-pip-version-check", *torch_constraints(py, tmp / "constraints.txt"), *pyc["packages"]]
                 self._run_cmd(job, log, cmd, env=pip_env)
                 # Fail now, not after a 30 GB download, if this diffusers has no such pipeline class.
                 cls = (recipe.get("adapter_config") or {}).get("pipeline")

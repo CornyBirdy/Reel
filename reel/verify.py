@@ -260,6 +260,16 @@ def damaged_paths(job: Job) -> list[str]:
     return [*f["missing"], *(x["path"] for x in f["wrong_size"]), *(x["path"] for x in f["damaged"]), *f["bad_hash"]]
 
 
+def only_packages_missing(job: Job) -> bool:
+    """The environment's PyTorch is fine and the only trouble is Python packages that are not installed (a recipe gained
+    one after the model was installed). Repair then installs them instead of rebuilding the whole environment."""
+    env = job.environment or {}
+    return bool(env.get("missing_modules")) and bool(env.get("torch")) and env.get("cuda_available") is not False \
+        and env.get("kernels_ok") is not False and not env.get("error", "").startswith("torch import failed")
+
+
 def needs_new_environment(job: Job) -> bool:
     env = job.environment or {}
+    if only_packages_missing(job):
+        return False
     return bool(job.environment) and (not env.get("ok") or env.get("cuda_available") is False or env.get("kernels_ok") is False)

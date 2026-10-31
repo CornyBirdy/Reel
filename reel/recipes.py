@@ -222,6 +222,14 @@ def repair_user(r: dict) -> dict:
     return r
 
 
+def offer_auto_offload(r: dict) -> dict:
+    """Every model that can offload also gets "auto", which picks none / model / sequential from the VRAM that is free at load time."""
+    options = (r.get("memory") or {}).get("offload_options")
+    if options and "model" in options and "auto" not in options:
+        options.insert(0, "auto")
+    return r
+
+
 def adapter_exists(r: dict) -> bool:
     return (ADAPTERS_DIR / f"{r['adapter']}.py").exists()
 
@@ -246,6 +254,7 @@ def _load_dir(directory: Path, source: str, recipes: dict, problems: dict) -> No
         else:
             r.setdefault("kind", "video")
             r["source"] = source
+            offer_auto_offload(r)
             recipes[r["id"]] = r
 
 

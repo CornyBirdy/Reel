@@ -4,7 +4,7 @@
 import { h, icon, clear, toast } from "./ui.js";
 import { api } from "./api.js";
 import { fetchEstimate, renderEstimate } from "./estimate.js";
-import { ATTN_LABEL, OFFLOAD_LABEL, QUANT_LABEL, describeCeiling, dims, resolutionChoices, snapFrames } from "./limits.js";
+import { ATTN_LABEL, OFFLOAD_HINT, OFFLOAD_LABEL, QUANT_LABEL, describeCeiling, dims, resolutionChoices, snapFrames } from "./limits.js";
 
 const field = (label, control, hint, id) => h("div", { class: "field" }, h("label", { for: id }, label), control, hint ? h("span", { class: "field-hint" }, hint) : null);
 
@@ -103,7 +103,7 @@ export async function openModelSettings(model, { onSaved } = {}) {
         video ? field("Frames per second", c.fps, null, "ms-fps") : null),
       h("div", { class: "field-hint" }, describeCeiling(model, model.kind)),
       h("h4", {}, "Loading (memory)"),
-      h("div", { class: "grid-2" }, field("Offloading", c.offload, null, "ms-offload"), field("Quantization", c.quant, null, "ms-quant")),
+      h("div", { class: "grid-2" }, field("Offloading", c.offload, OFFLOAD_HINT, "ms-offload"), field("Quantization", c.quant, null, "ms-quant")),
       mem.attention_options ? field("Attention backend", c.attn, mem.attention_note || "How the denoiser computes attention. Native is PyTorch's own and always works.", "ms-attn") : null,
       h("label", { class: "check" }, c.tiling, "Tiled VAE decode"),
       mem.notes ? h("div", { class: "field-hint" }, mem.notes) : null,

@@ -260,6 +260,9 @@ def repair(model_id: str) -> dict:
         shutil.rmtree(mdir / "venv", ignore_errors=True)
         for name in ("env", "torch", "packages", "verify"):
             stages[name] = False
+    elif verify.only_packages_missing(job):
+        for name in ("packages", "verify"):          # pip adds what is missing; PyTorch and the weights stay as they are
+            stages[name] = False
     (mdir / "stages.json").write_text(json.dumps(stages), encoding="utf-8")
     (mdir / "install.json").unlink(missing_ok=True)
     try:

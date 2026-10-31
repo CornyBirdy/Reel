@@ -4,7 +4,8 @@ export const ATTN_LABEL = {
   auto: "Auto (per the diffusers docs for this GPU)", native: "Native (PyTorch)", sage_hub: "SageAttention (sage_hub)",
   flash_hub: "FlashAttention-2 (flash_hub)", _flash_3_hub: "FlashAttention-3 (_flash_3_hub, H100)", sage_blackwell_hub: "SageAttention 3 (sage_blackwell_hub, RTX 50)",
 };
-export const OFFLOAD_LABEL = { none: "None (fastest, most VRAM)", model: "Model offload", sequential: "Sequential (slowest, least VRAM)" };
+export const OFFLOAD_LABEL = { auto: "Auto (fit to VRAM)", none: "None (fastest, most VRAM)", model: "Model offload", sequential: "Sequential (slowest, least VRAM)" };
+export const OFFLOAD_HINT = "Auto keeps as much on the GPU as the VRAM free at load time allows. Model offload always swaps whole parts between system RAM and the GPU.";
 export const QUANT_LABEL = { none: "Off (bf16)", int8: "8-bit", nf4: "4-bit NF4" };
 
 /** The nearest valid frame count (the pipeline's step/offset rule) within [min, max]. */

@@ -22,7 +22,7 @@ import time
 import uuid
 from collections import deque
 
-from . import config, diagnostics, procs, system
+from . import config, diagnostics, installer, procs, system
 from .installer import model_dir
 
 TERMINAL = {"loaded", "done", "cancelled", "error", "_exit"}
@@ -67,6 +67,7 @@ class WorkerProcess:
         self.message = "Starting"
         self.memory: dict = {}
         self.attention = None
+        self.offload_active = None         # the mode the model really uses (what "auto" chose)
         self.load_seconds: float | None = None
         self.loaded_at: float | None = None
         self.last_used = time.time()
@@ -163,6 +164,7 @@ class WorkerProcess:
         if kind == "loaded":
             self.memory = evt.get("memory") or self.memory
             self.attention = evt.get("attention")
+            self.offload_active = evt.get("offload")
         p = self.pending.get(evt.get("id") or "")
         if p:
             p.q.put(evt)
@@ -258,6 +260,7 @@ class WorkerManager:
             "load_seconds": w.load_seconds if w and state != "unloaded" else None,
             "loading_seconds": (time.time() - w.load_started) if w and state == "loading" and w.load_started else None,
             "attention": w.attention if w and state != "unloaded" else None,
+            "offload_active": w.offload_active if w and state != "unloaded" else None,
             "settings": ({k: w.load_req.get(k) for k in ("quantization", "offload", "vae_tiling", "attention_backend")}
                          if w and state != "unloaded" else None),
             "log_name": w.log.name if w else None,
@@ -336,8 +339,10 @@ class WorkerManager:
             self._unload_locked(w, reason or "replaced")
         self.clear_crash()
         w = WorkerProcess(recipe, load_req, self._worker_exited)
+        w.state, w.message = "loading", "Checking the model's packages"
         with self.cv:
             self.worker = w
+        self._top_up_packages(w, on_event)
         try:
             w.start()
         except OSError as exc:
@@ -368,6 +373,26 @@ class WorkerManager:
             if self.worker is w:
                 self.worker = None
         return {"kind": "failed", "worker": None, "reused": False, "reason": reason, "failure": failure, "log_name": w.log.name}
+
+    @staticmethod
+    def _top_up_packages(w: "WorkerProcess", on_event=None) -> None:
+        """A model installed before its recipe gained a package (scipy for Replace) would fail in the middle of a run. Add
+        what is missing now, before the model is loaded. Offline or failing, loading carries on: the run then says what is missing."""
+        def say(text: str) -> None:
+            w.message = text
+            w.log.note(text)
+            if on_event:
+                on_event({"event": "phase", "phase": "loading", "message": text})
+
+        try:
+            added = installer.top_up_packages(w.recipe, say)
+        except installer.InstallError as exc:
+            w.log.note(f"Could not add the missing packages: {exc}")
+            if on_event:
+                on_event({"event": "log", "message": f"Could not add the missing packages: {exc}"})
+            return
+        if added:
+            w.log.note(f"Installed {', '.join(added)}.")
 
     def load_async(self, recipe: dict, load_req: dict) -> None:
         """The Library's / Generate's Load button: load in the background and report through status()."""

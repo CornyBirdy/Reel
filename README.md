@@ -30,6 +30,7 @@ If something goes wrong:
 | "Port 8765 is in use" | Close the other Reel window, or set `REEL_PORT` to another number. |
 | An install fails or stalls | Press Install again: finished downloads are kept. The full log is in `data/models/<model>/install.log`. |
 | Out of VRAM while generating | Lower the resolution, set Offloading to Sequential, or use NF4 quantization (Memory options). |
+| A model says a Python package "was not found" (for example scipy) | Reel adds packages a model needs when the model next loads. If that fails (offline), press **Verify** on the model's card, then **Repair**: it installs just the missing package without reinstalling PyTorch. |
 | "The model process stopped unexpectedly (exit code 0xC0000005 ...)" | A native crash, usually the PC running out of system RAM, or an incompatible CUDA / attention kernel. Close other programs, lower the resolution or frames, and try the attention backend Native. **View full log** (or `data/logs/`) shows everything the process wrote. |
 
 ## Updating
@@ -124,11 +125,46 @@ LTX-2 makes sound with its video. Reel writes it into the mp4, plays it in Gener
 
 Every recipe defaults to the memory-saving options and carries *safe sizes* (resolution, frame count, and for Wan width x height x frames) that suit a typical 16 GB card. They are guidance, not limits: like LM Studio's memory guardrail, Reel lets you choose **any size and length up to what the model's pipeline supports** (the model card's native sizes and maximum length, or any multiple of the model's size rule, including a custom width and height), and the live **memory estimate** (VRAM and system RAM against what your PC has free right now) warns when it is Risky or Likely to fail. It never blocks. Treat it as a rough guide: the real peak is recorded in History after every run. If a bigger-than-safe run crashes or runs out of memory, the error says so and suggests safer settings.
 
-- **Offloading**: model offload by default (sequential available).
+- **Offloading**: **Auto** looks at the loaded parts and the VRAM that is free right now and picks the fastest mode that fits; the others are fixed choices (see below). Most models still start on model offload; VACE starts on Auto.
 - **Quantization**: NF4 for Wan 2.2 and for any imported model that is too big otherwise (denoiser plus large text encoders); LTX-Video's 2B transformer stays bf16 and its T5 text encoder is the official 8-bit one, encoded first and freed before denoising.
 - **Tiled VAE decode** on by default.
 
 The figures in the recipes are estimates from upstream guidance. After each clip Reel records the real peak VRAM and shows it in History, so you can see how much headroom you actually have.
+
+### Where the memory goes
+
+**"Why does it say 13.7 GB when my card is 16 GB?"** Three things. A "16 GB" card is 15.9 GB in the units PyTorch and Task Manager use (16,303 MiB). Windows itself, your browser and Reel's own window already use 1-2.5 GB of it. And the figure Reel compares a generation against is what is *free right now*, not what the card has. The sidebar shows `used / total GB VRAM used`, and the memory estimate in Generate spells out the split ("2.2 GB are in use by Windows and other programs, which leaves 13.7 GB for Reel").
+
+**The offload modes**
+
+| Mode | What it does | Good for |
+| --- | --- | --- |
+| None | Every part of the model on the GPU for good. Fastest, and the weights are not copied in system RAM at all. | Models that fit with room to spare |
+| Model offload | **One whole part at a time** (text encoder, then transformer, then VAE) is moved onto the GPU; the rest wait in system RAM. It does **not** fill the VRAM first and spill the rest: whatever is not running sits in RAM even when the GPU has room. All weights are held in RAM the whole time. | Models whose biggest part fits the GPU but not all of them together |
+| Sequential | One layer at a time. Needs almost no VRAM, much slower. | Last resort |
+| **Auto** | Weighs every loaded part against the VRAM that is really free when the model loads, then uses None if everything fits with room to work (30% of the card, at least 3 GB), else Model offload if the biggest part does, else Sequential. The log says what it chose and why, and the Library and Generate show "Auto chose none offload". | Almost always |
+
+**Wan2.1 VACE (Replace)** needed the most care, because its umT5 text encoder (11 GB) is bigger than the transformer (7 GB) and VAE together and is used only for a moment. Reel now loads the video model without it. Each *new* prompt is read from disk straight onto the GPU (no copy in system RAM), encoded, and the encoder is freed again; a prompt that was encoded before is not encoded again. When your RAM is plentiful (the encoder would still leave 10 GB free) it is kept in RAM so the next prompt skips the 15 second read. With Auto the transformer and VAE then stay on the GPU for good, so a 16 GB card holds about 7.6 GB of weights and system RAM should stay mostly free instead of holding 19 GB. (Unverified on real hardware: the History tab records the real peak after each run, and `data/logs` shows what Auto chose and how much RAM the process holds.)
+
+### Using Reel from an AI assistant (MCP)
+
+Reel is also an [MCP](https://modelcontextprotocol.io) server, so Claude Desktop, Claude Code and other assistants can make images and videos with the models you installed, check how much VRAM is free, and unload a model to give memory back. It uses Reel's own local API, so everything stays on your PC and the same memory checks apply. If Reel is not running, the server starts it in the background (no window).
+
+1. Run `start.bat` once (it sets Reel up), and install a model from the Library.
+2. Run `reel-mcp.bat --config` in a Command Prompt. It prints the exact text to paste for your folder: the `"reel"` entry for Claude Desktop's `claude_desktop_config.json` (Settings, Developer, Edit Config), or the one-line `claude mcp add reel -- ...` for Claude Code.
+3. Restart the assistant and ask, for example, "What models does Reel have and how much VRAM is free?" or "Replace the person in `C:\clips\in.mp4` with the one in `C:\photos\me.jpg`".
+
+| Tool | What it does |
+| --- | --- |
+| `reel_status` | GPU (VRAM total, used and free), system RAM, free disk, the loaded model and what the current generation is doing |
+| `reel_list_models` | Installed models with their modes, sizes, defaults, inputs and whether they fit this PC |
+| `reel_estimate_memory` | The VRAM and RAM a generation needs against what is free right now (runs nothing) |
+| `reel_generate` | Make an image or clip. Inputs for Edit, Frames and Replace are file paths on this PC. Waits up to `wait_seconds` (default 20) and returns the files, or progress |
+| `reel_job` / `reel_cancel` | Check, wait for, or stop the running generation |
+| `reel_history` | Recent results with prompts, settings and file paths |
+| `reel_load_model` / `reel_unload_model` | Load a model now, or free its VRAM and RAM |
+
+`REEL_MCP_AUTOSTART=0` stops it from starting Reel by itself; `REEL_PORT` and `REEL_HOST` work as they do for Reel.
 
 ## How models work
 
