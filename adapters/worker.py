@@ -191,8 +191,26 @@ class Worker:
         except BaseException as exc:  # noqa: BLE001 - the adapter raises the same error with a proper report when asked to load
             emit(event="log", message=f"PyTorch could not be imported ({type(exc).__name__}: {exc})", id=None)
 
+    @staticmethod
+    def start_scipy() -> None:
+        """Load scipy (if this environment has it) before any thread exists. Its math library carries a Fortran runtime, which looks at
+        the process's standard input when it starts; if the thread that waits for commands is already blocked reading that pipe,
+        the look-up waits behind the read for good. That was the hang on "Loading the model's Python libraries": inside scipy's
+        DLL, no disk activity, only in this process (the same import takes under a second anywhere else)."""
+        t0 = time.time()
+        try:
+            importlib.import_module("scipy.linalg")
+            importlib.import_module("scipy.optimize")
+        except ImportError:
+            return                                              # this model does not use scipy
+        except Exception as exc:  # noqa: BLE001 - not worth stopping the worker; the load reports what it needs
+            emit(event="log", message=f"scipy could not be loaded ({type(exc).__name__}: {exc})", id=None)
+            return
+        emit(event="log", message=f"scipy loaded in {time.time() - t0:.1f}s", id=None)
+
     def run(self) -> int:
         self.start_pytorch()
+        self.start_scipy()                                      # before the stdin thread below: see start_scipy
         threading.Thread(target=self.read_commands, daemon=True, name="stdin").start()
         threading.Thread(target=self.heartbeat, daemon=True, name="heartbeat").start()
         emit(event="ready", id=None, pid=os.getpid())
