@@ -5,40 +5,43 @@ Run it with the MODEL's Python, from Reel's folder (PowerShell):
 
     & ".\\data\\models\\wan-vace-1.3b\\venv\\Scripts\\python.exe" tools\\import_probe.py
 
-Each line imports scipy.optimize in a fresh process, set up one way, and says how long it took, or HANG after 40 seconds.
+Each case imports scipy.optimize in a fresh process, set up one way, and says how long it took, or HANG after 40 seconds.
 Needs PyTorch with CUDA in that environment; standard library otherwise.
 """
 import subprocess
 import sys
+import tempfile
 import time
 
 LIMIT = 40
 GPU = "import torch; torch.cuda.get_device_name(0); torch.cuda.mem_get_info()\n"
-BEAT = ("import threading, time, torch\n"
-        "def beat():\n"
-        "    while True:\n"
-        "        torch.cuda.mem_get_info(); torch.cuda.memory_reserved(); time.sleep(0.05)\n"
-        "threading.Thread(target=beat, daemon=True).start()\n")
+# what Reel's model process does: a thread waits for commands on stdin (the pipe Reel holds open and writes to later)
+STDIN_THREAD = "import sys, threading, time\nthreading.Thread(target=lambda: sys.stdin.readline(), daemon=True).start()\ntime.sleep(0.5)\n"
 SCIPY = "import time; t = time.time(); import scipy.optimize; print(round(time.time() - t, 1))\n"
 CASES = [
-    ("alone (what you ran before)", SCIPY),
+    ("alone", SCIPY),
     ("after the GPU is in use", GPU + SCIPY),
-    ("GPU in use + a thread polling it, as the model process does", GPU + BEAT + SCIPY),
-    ("scipy FIRST, then the GPU and the polling thread (the order Reel now uses)", "import scipy.optimize\n" + GPU + BEAT + "print('ok')\n"),
+    ("while a thread waits for input on stdin (what Reel's model process does)", STDIN_THREAD + SCIPY),
+    ("scipy FIRST, then the stdin thread and the GPU (the order Reel now uses)", "import scipy.optimize\n" + STDIN_THREAD + GPU + "print('ok')\n"),
 ]
 
 
 def run(code: str) -> str:
+    """The child's stdin stays an open pipe nobody writes to, as in Reel, so a thread reading it really blocks."""
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     t0 = time.time()
-    p = subprocess.Popen([sys.executable, "-c", code], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, creationflags=flags)
-    try:
-        out, _ = p.communicate(timeout=LIMIT)
-    except subprocess.TimeoutExpired:
-        subprocess.run(["taskkill", "/PID", str(p.pid), "/T", "/F"], capture_output=True) if sys.platform == "win32" else p.kill()
-        return f"HANG (still importing after {LIMIT} s)"
-    last = (out.strip().splitlines() or ["(no output)"])[-1]
-    return f"fine ({last} s; whole run {time.time() - t0:.0f} s)" if p.returncode == 0 else f"failed: {last}"
+    with tempfile.TemporaryFile("w+") as out:
+        p = subprocess.Popen([sys.executable, "-c", code], stdin=subprocess.PIPE, stdout=out, stderr=subprocess.STDOUT, text=True, creationflags=flags)
+        try:
+            p.wait(timeout=LIMIT)
+        except subprocess.TimeoutExpired:
+            subprocess.run(["taskkill", "/PID", str(p.pid), "/T", "/F"], capture_output=True) if sys.platform == "win32" else p.kill()
+            return f"HANG (still importing after {LIMIT} s)"
+        finally:
+            p.stdin.close()
+        out.seek(0)
+        last = (out.read().strip().splitlines() or ["(no output)"])[-1]
+    return f"fine ({last}; whole run {time.time() - t0:.0f} s)" if p.returncode == 0 else f"failed: {last}"
 
 
 if __name__ == "__main__":

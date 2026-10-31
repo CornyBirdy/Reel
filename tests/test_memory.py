@@ -380,6 +380,44 @@ class ImportsBeforeTheGpu(unittest.TestCase):
         self.assertNotIn("vram_total_gb", report)
 
 
+class ScipyBeforeTheStdinThread(unittest.TestCase):
+    """scipy's Fortran runtime waits behind a thread blocked reading stdin (see Worker.start_scipy): load it before that thread exists."""
+
+    def setUp(self):
+        import worker
+        self.worker = worker
+
+    def run_worker(self):
+        order = []
+        w = self.worker.Worker.__new__(self.worker.Worker)
+        w.stop, w.commands = False, __import__("queue").Queue()
+        w.commands.put({"cmd": "exit"})
+        with mock.patch.object(self.worker.Worker, "start_pytorch", staticmethod(lambda: order.append("torch"))), \
+                mock.patch.object(self.worker.Worker, "start_scipy", staticmethod(lambda: order.append("scipy"))), \
+                mock.patch.object(self.worker.threading, "Thread", lambda target, **kw: types.SimpleNamespace(start=lambda: order.append(f"thread:{kw['name']}"))), \
+                mock.patch.object(self.worker, "emit"):
+            w.run()
+        return order
+
+    def test_the_order_in_run(self):
+        order = self.run_worker()
+        self.assertEqual(order[:2], ["torch", "scipy"])
+        self.assertEqual(order[2:], ["thread:stdin", "thread:heartbeat"])
+
+    def test_a_missing_scipy_is_not_an_error(self):
+        events = []
+        with mock.patch.dict(sys.modules, {"scipy": None, "scipy.linalg": None}), mock.patch.object(self.worker, "emit", lambda **e: events.append(e)):
+            self.worker.Worker.start_scipy()
+        self.assertEqual(events, [])
+
+    def test_scipy_is_imported_when_it_is_there(self):
+        fake = {"scipy": types.ModuleType("scipy"), "scipy.linalg": types.ModuleType("scipy.linalg"), "scipy.optimize": types.ModuleType("scipy.optimize")}
+        events = []
+        with mock.patch.dict(sys.modules, fake), mock.patch.object(self.worker, "emit", lambda **e: events.append(e)):
+            self.worker.Worker.start_scipy()
+        self.assertIn("scipy loaded in", events[0]["message"])
+
+
 class RepairOnlyAddsPackages(unittest.TestCase):
     def job(self, env):
         j = verify.Job("m", False)
