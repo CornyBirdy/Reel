@@ -1,6 +1,6 @@
 import { h, icon, clear, toast, fmtDuration, fmtDate, progressBar, statusBadge, viewLog } from "../ui.js";
 import { api } from "../api.js";
-import { KEEPS_MEMORY, crashNotice, holdsText, holdsTitle, idleText, loadButton, loadingNote, stateChip, stateOf, watchWorker } from "../worker.js";
+import { KEEPS_MEMORY, crashNotice, holdsText, holdsTitle, idleText, loadButton, loadingNote, logButton, stateChip, stateOf, watchWorker } from "../worker.js";
 import { ATTN_LABEL, OFFLOAD_HINT, OFFLOAD_LABEL, QUANT_LABEL, describeCeiling, dims, resolutionChoices, snapFrames } from "../limits.js";
 import { fetchEstimate, renderEstimate } from "../estimate.js";
 import { openModelSettings } from "../model_settings.js";
@@ -62,6 +62,7 @@ export async function mount(root) {
   let shownClipId = null;
   let history = { clips: [], total: 0 };
   const saved = loadForm();
+  for (const [name, v] of Object.entries(saved.inputs || {})) if (Array.isArray(v)) inputVals[name] = v;   // what was added before leaving this page
   let userPicked = false;   // the viewer shows something chosen from History: a finished run must not take it over
   let estTimer = null, estSeq = 0;
   let worker = null;     // what is loaded right now (GET /api/worker)
@@ -222,6 +223,7 @@ export async function mount(root) {
       stateChip(st, st === "loading" ? w.message : undefined),
       holds ? h("span", { class: "muted mono", title: holdsTitle }, holds) : null,
       h("span", { class: "grow" }),
+      logButton(w),
       h("button", { class: "btn btn-icon", type: "button", title: "Model settings: how it loads and what it generates with by default", "aria-label": "Model settings",
         onclick: () => openModelSettings(model, { onSaved: afterSettingsSaved }) }, icon("settings")),
       loadButton(model, w, { onDone: () => watcher && watcher.poke(), memory: memorySettings, compact: true })));
@@ -384,8 +386,8 @@ export async function mount(root) {
     if (!rules.length) return;
     for (const [name, rule] of rules) {
       const picker = rule.type === "point"
-        ? pointPicker(name, rule, { initial: inputVals[name] || null, onChange: (p) => { inputVals[name] = p; } })
-        : filePicker(name, rule, { initial: (inputVals[name] || []).filter((i) => i.kind === rule.type), onChange: (items) => { inputVals[name] = items; inputsChanged(); } });
+        ? pointPicker(name, rule, { initial: inputVals[name] || null, onChange: (p) => { inputVals[name] = p; persist(); } })
+        : filePicker(name, rule, { initial: (inputVals[name] || []).filter((i) => i.kind === rule.type), onChange: (items) => { inputVals[name] = items; inputsChanged(); persist(); } });
       pickers[name] = picker;
       f.inputs.append(rule.type === "point" ? h("div", { class: "field" }, h("label", {}, rule.label || name), picker.el)
         : h("div", { class: "field" }, h("label", {}, rule.label || name, rule.required ? " *" : ""), picker.el, rule.help ? h("span", { class: "field-hint" }, rule.help) : null));
@@ -513,7 +515,33 @@ export async function mount(root) {
       res: f.res.value, cw: f.cw.value, ch: f.ch.value, fps: f.fps.value, frames: f.frames.value, steps: f.steps.value, guidance: f.guidance.value,
       offload: f.offload.value, quantization: f.quant.value, vae_tiling: f.tiling.checked, count: f.count.value,
       attention_backend: f.attn.value,
+      inputs: storedInputs(),
     });
+  }
+
+  // The pictures, video and point that were added, so leaving this page (to cancel a load in the Library, say) does not lose them.
+  // Uploads stay on the server for 30 days; one that has gone is dropped when the page opens (see dropGoneInputs).
+  function storedInputs() {
+    const out = {};
+    for (const [name, v] of Object.entries(inputVals)) {
+      if (!Array.isArray(v) || !v.length) continue;
+      out[name] = typeof v[0] === "number" ? v : v.map(({ ref, url, kind }) => ({ ref, url, kind }));
+    }
+    return out;
+  }
+
+  async function dropGoneInputs() {
+    let lost = 0;
+    for (const [name, v] of Object.entries(inputVals)) {
+      if (!Array.isArray(v) || typeof v[0] === "number") continue;
+      const checked = await Promise.all(v.map((it) => api.get(`/api/inputs/describe?ref=${encodeURIComponent(it.ref)}`).then(() => it, () => null)));
+      const kept = checked.filter(Boolean);
+      lost += v.length - kept.length;
+      inputVals[name] = kept;
+    }
+    if (!lost || !alive) return;
+    buildInputs(); persist();
+    toast(`${lost === 1 ? "A picture or video you added earlier is" : `${lost} pictures or videos you added earlier are`} no longer on this PC. Add ${lost === 1 ? "it" : "them"} again.`, "warning", 6000);
   }
 
   async function loadSettings(clip) {
@@ -808,6 +836,7 @@ export async function mount(root) {
   }
   watcher = watchWorker((w) => { worker = w; renderWorker(); });
   buildForm();
+  dropGoneInputs();
   await loadHistory();
   const { job } = await api.get("/api/generate/current").catch(() => ({ job: null }));
   if (job && (job.status === "running" || job.status === "failed")) { activeJob = job; if (history.clips.length) shownClipId = history.clips[0].id; }

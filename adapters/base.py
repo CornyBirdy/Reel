@@ -394,6 +394,7 @@ class BaseAdapter:
             self.torch.cuda.reset_peak_memory_stats()
         self.phase("loading", "Loading model")
         emit(event="log", message="Loading model. " + self.memory_line())
+        self.phase("loading", "Loading the model's Python libraries")      # importing diffusers and transformers is silent and can take a while
         with trace_component_loading():
             self.prepare()
         seconds = round(time.time() - t0, 1)

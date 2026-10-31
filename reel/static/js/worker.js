@@ -44,8 +44,13 @@ export function loadingNote(worker) {
           h("pre", { class: "log mono", tabindex: 0 }, `"${worker.python}" -c "import time; t=time.time(); import torch; print(torch.__version__, round(time.time()-t), 'seconds')"`)))
       : null,
     s != null && s > 300 ? h("div", { class: "field-hint" }, "Still loading. A big model takes several minutes the first time (it reads tens of GB from disk). The log says which step it is on, and Cancel load stops it.") : null,
-    worker.log_name ? h("div", { class: "row-8" }, h("button", { class: "btn btn-ghost", type: "button", onclick: () => viewLog(worker.log_name) }, icon("log"), "View log")) : null);
+    null);
 }
+
+/** "View log" while a model loads: a small button beside the state chip, not a block in the middle of the card. */
+export const logButton = (worker) => (worker && worker.state === "loading" && worker.log_name
+  ? h("button", { class: "btn btn-ghost", type: "button", title: "Show what the model process is doing", onclick: () => viewLog(worker.log_name) }, icon("log"), "View log")
+  : null);
 export const loadingKey = (w) => (w && w.state === "loading" ? `${w.message}|${Math.floor(w.loading_seconds || 0)}` : "");
 
 export const holdsTitle = "VRAM is what PyTorch has reserved in the model process (Task Manager adds about 0.5 GB for the CUDA context). RAM is the process's working set.";

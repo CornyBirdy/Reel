@@ -3,7 +3,7 @@ import { api } from "../api.js";
 import { openAddFromHF } from "./hf_dialog.js";
 import { openVerify } from "../verify.js";
 import { openModelSettings } from "../model_settings.js";
-import { KEEPS_MEMORY, crashNotice, holdsText, holdsTitle, idleText, loadButton, loadingKey, loadingNote, stateChip, stateOf } from "../worker.js";
+import { KEEPS_MEMORY, crashNotice, holdsText, holdsTitle, idleText, loadButton, loadingKey, loadingNote, logButton, stateChip, stateOf } from "../worker.js";
 
 const FILTER_KEY = "reel.library.filter";
 const loadFilter = () => { try { return localStorage.getItem(FILTER_KEY) || "all"; } catch { return "all"; } };
@@ -227,7 +227,8 @@ function ModelCard(initial, ctx) {
     once(memSlot, [m.state, m.kind, ws, holds, w && w.idle_unload_minutes, JSON.stringify(m.settings), ws === "loading" ? loadingKey(w) : ""].join("|"), () => {
       if (m.state !== "installed" || m.kind === "upscale") return;
       memSlot.append(h("div", { class: "row-8" }, stateChip(ws, ws === "loading" ? w.message : undefined),
-        holds ? h("span", { class: "muted mono", title: holdsTitle }, holds) : null));
+        holds ? h("span", { class: "muted mono", title: holdsTitle }, holds) : null,
+        h("span", { class: "grow" }), logButton(w)));
       if (ws === "loading") memSlot.append(loadingNote(w));
       const sv = m.settings || {};
       if (Object.keys(sv).length) {
