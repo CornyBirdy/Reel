@@ -18,7 +18,7 @@ mp4 export, OOM reporting) is shared.
 
 LOAD REQUEST = {
   "model_id", "adapter", "kind": "image|video", "weights_dir", "adapter_config": {...},
-  "dtype": "bfloat16|float16", "quantization": "none|int8|nf4", "offload": "none|model|sequential",
+  "dtype": "bfloat16|float16", "quantization": "none|int8|nf4", "offload": "auto|none|model|sequential",
   "vae_tiling": bool, "attention_backend": "native|auto|sage_hub|..."
 }
 GENERATE REQUEST = {
@@ -39,6 +39,7 @@ import time
 import warnings
 from pathlib import Path
 
+import memplan
 import sysinfo
 
 
@@ -182,6 +183,7 @@ class BaseAdapter:
         self.total_steps = 0
         self.kind = request.get("kind", "video")
         self.attention_active = "native"   # what is really in use after apply_attention_backend()
+        self.offload_active = request.get("offload", "model")   # what "auto" resolved to, once the pipeline is measured
         self.steps_done = 0
 
     # -- to implement --------------------------------------------------------
@@ -217,7 +219,7 @@ class BaseAdapter:
         """Offloading + tiled VAE decode. Offloading needs an accelerator, so it is skipped on CPU."""
         pipe.set_progress_bar_config(disable=True)  # Reel reports progress itself
         if self.device == "cuda":
-            mode = self.req.get("offload", "model")
+            mode = self.resolve_offload(pipe)
             if mode == "sequential":
                 pipe.enable_sequential_cpu_offload()
             elif mode == "model":
@@ -234,6 +236,16 @@ class BaseAdapter:
                 except Exception:  # noqa: BLE001 - not every VAE has both
                     pass
         self.apply_attention_backend(pipe)
+
+    def resolve_offload(self, pipe) -> str:
+        """The offload mode to apply. "auto" weighs the loaded parts against the VRAM that is really free right now."""
+        mode = self.req.get("offload", "model")
+        if mode == "auto":
+            free, total = self.torch.cuda.mem_get_info()
+            mode, why = memplan.choose_offload(memplan.component_gb(pipe, self.torch), free / memplan.GB, total / memplan.GB)
+            emit(event="log", message=f"Offloading 'auto' chose {mode}: {why}.")
+        self.offload_active = mode
+        return mode
 
     def apply_attention_backend(self, pipe) -> None:
         """Switch the denoiser's attention kernel when the recipe/request asks for one; never fail the run over it.
@@ -322,7 +334,8 @@ class BaseAdapter:
         context = {
             "model": r.get("model_id"), "item": f"{self.item + 1}/{self.n_items}", "seed": self.seed,
             "fps": r.get("fps"), "dtype": str(self.dtype).replace("torch.", ""),
-            "quantization": r.get("quantization", "none"), "offload": r.get("offload", "model"),
+            "quantization": r.get("quantization", "none"),
+            "offload": r.get("offload", "model") if self.offload_active == r.get("offload", "model") else f"{r.get('offload')} -> {self.offload_active}",
             "vae_tiling": bool(r.get("vae_tiling", True)),
             "attention_backend": self.attention_active,
         }

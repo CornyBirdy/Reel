@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+**Memory**
+- **Replace a person no longer fails with "Mask2FormerLoss requires the scipy library".** The model needed scipy to find the person and it was not installed. It is now part of the model's install, and a model installed earlier gets it automatically: before a model loads Reel checks that every package its recipe lists is installed and installs just the missing ones (PyTorch and the weights are untouched). **Verify** now reports a missing package, and **Repair** installs it instead of rebuilding the whole environment. The error, if it still happens, says to use Verify and Repair.
+- **Offloading: Auto.** Looks at the model's parts and the VRAM that is free right now and picks None, Model offload or Sequential, and says why in the log. The Library and Generate show what it chose. Wan2.1 VACE starts on Auto; other models keep their defaults and can switch to Auto in Memory options.
+- **Wan2.1 VACE uses far less system RAM.** The 11 GB umT5 text encoder is no longer held in RAM for the whole session: each new prompt reads it straight onto the GPU, encodes, and frees it (it is kept only when RAM is plentiful). A prompt that was already encoded is not encoded again. On a 32 GB PC the model used to leave about 5 GB of RAM free after loading; with Auto it should leave most of it free (not yet measured on a real GPU).
+- **VRAM figures explain themselves.** The sidebar says "2.4 / 15.9 GB VRAM used" (one decimal, and "used"), and the memory estimate in Generate says how much of the card Windows and other programs are using, which is why "free" is less than the card's size. The estimate also no longer counts a text encoder that is read straight onto the GPU as system RAM.
+- The README explains what each offload mode really does (Model offload swaps whole parts; it does not fill the VRAM first and spill the rest).
+
+**MCP server**
+- Reel can be used from AI assistants (Claude Desktop, Claude Code, ...): `reel-mcp.bat`. Tools to check the GPU and memory, list models, estimate memory, generate images and clips (with input files for Edit, Frames and Replace), follow or cancel a job, read History, and load or unload a model. Run `reel-mcp.bat --config` for the text to paste into the assistant's settings. If Reel is not running it is started in the background.
+
 **Pause**
 - **Pause** and **Resume** on a download or install in the Library: the download is frozen and carries on exactly where it stopped (if the connection was dropped meanwhile, Reel reconnects by itself; finished files are kept).
 - **Pause** and **Resume** while generating: the run holds at its next step, the model stays loaded, and the paused time is not counted in the elapsed time or the estimate. Cancel still works while paused. Upscales can be paused too.

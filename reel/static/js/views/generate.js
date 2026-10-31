@@ -1,7 +1,7 @@
 import { h, icon, clear, toast, fmtDuration, fmtDate, progressBar, statusBadge, viewLog } from "../ui.js";
 import { api } from "../api.js";
 import { KEEPS_MEMORY, crashNotice, holdsText, holdsTitle, idleText, loadButton, loadingNote, stateChip, stateOf, watchWorker } from "../worker.js";
-import { ATTN_LABEL, OFFLOAD_LABEL, QUANT_LABEL, describeCeiling, dims, resolutionChoices, snapFrames } from "../limits.js";
+import { ATTN_LABEL, OFFLOAD_HINT, OFFLOAD_LABEL, QUANT_LABEL, describeCeiling, dims, resolutionChoices, snapFrames } from "../limits.js";
 import { fetchEstimate, renderEstimate } from "../estimate.js";
 import { openModelSettings } from "../model_settings.js";
 import { filePicker, itemFromClip, measure, pointPicker } from "../inputs.js";
@@ -174,7 +174,7 @@ export async function mount(root) {
       h("details", { class: "memory" },
         h("summary", {}, "Memory options (VRAM saving)"),
         h("div", { class: "stack-12" },
-          h("div", { class: "grid-2" }, field("Offloading", f.offload, null, "g-offload"), field("Quantization", f.quant, null, "g-quant")),
+          h("div", { class: "grid-2" }, field("Offloading", f.offload, OFFLOAD_HINT, "g-offload"), field("Quantization", f.quant, null, "g-quant")),
           f.attnField,
           h("label", { class: "check" }, f.tiling, "Tiled VAE decode"),
           h("div", { class: "field-hint", id: "mem-note" }))),

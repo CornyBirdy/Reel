@@ -22,6 +22,7 @@ PROCESS_GB = 3.0        # Python + torch + CUDA libraries in system RAM
 SEQUENTIAL_GB = 1.0     # one layer at a time on the GPU
 LOAD_SPIKE_GB = 2.0     # the shard being read while the pipeline loads (safetensors maps files, so most of it is reclaimable cache)
 LIVE_TENSORS = 12       # hidden-state-sized tensors alive at once inside a transformer block (attention + MLP)
+TRANSIENT_RAM_SHARE = 0.3  # a part read straight onto the GPU for one step (device_map) only passes through the loader and file cache
 OUT_BYTES_PER_PIXEL = 18  # decoded frames: float32 tensor + uint8 copies, per pixel (3 channels)
 OK_VRAM, OK_RAM = 0.85, 0.80  # share of what is available that still counts as comfortable
 GENERIC = {"tokens": {"spatial": 16, "temporal": 4}, "hidden": 2048, "vae_mb_per_mpx_frame": 768, "vae_tile_mpx_frames": 1.5}
@@ -102,7 +103,7 @@ def estimate(recipe: dict, params: dict, gpu: dict | None = None, ram: dict | No
         vram += CONTEXT_GB
         cpu_resident = sum(resident.values()) if offload != "none" else 1.0
         load_spike = min(LOAD_SPIKE_GB, max(comp.values()))
-        ram_gb = PROCESS_GB + cpu_resident + max(load_spike, out_gb + sum(comp[n] for n in transient))
+        ram_gb = PROCESS_GB + cpu_resident + max(load_spike, out_gb + TRANSIENT_RAM_SHARE * sum(comp[n] for n in transient))
         breakdown = {"weights_gb": round(sum(resident.values()), 1), "activations_gb": round(act, 1), "vae_decode_gb": round(vae_act, 1)}
         approximate = False
     else:
@@ -117,9 +118,12 @@ def estimate(recipe: dict, params: dict, gpu: dict | None = None, ram: dict | No
         notes.append("No detailed memory profile for this model: this scales its listed VRAM need by the size of the request.")
 
     total_vram = (gpu or {}).get("total_gb")
-    vram_cap = None
+    vram_cap, vram_other = None, None
     if gpu:
-        vram_cap = min(gpu["total_gb"], gpu.get("free_gb", gpu["total_gb"]) + (worker or {}).get("vram_gb", 0.0))
+        held = (worker or {}).get("vram_gb", 0.0)
+        vram_cap = min(gpu["total_gb"], gpu.get("free_gb", gpu["total_gb"]) + held)
+        # What the card is spending on things other than Reel's own model: Windows, the browser, Reel's window, other apps.
+        vram_other = max(gpu["total_gb"] - gpu.get("free_gb", gpu["total_gb"]) - held, 0.0)
     ram_cap = None
     if ram and ram.get("available_gb") is not None:
         ram_cap = ram["available_gb"] + (worker or {}).get("ram_gb", 0.0)
@@ -135,6 +139,7 @@ def estimate(recipe: dict, params: dict, gpu: dict | None = None, ram: dict | No
         "vram_cap_gb": None if vram_cap is None else round(vram_cap, 1),
         "ram_cap_gb": None if ram_cap is None else round(ram_cap, 1),
         "vram_total_gb": None if total_vram is None else round(total_vram, 1),
+        "vram_other_gb": None if vram_other is None else round(vram_other, 1),
         "ram_total_gb": None if not ram else round(ram.get("total_gb", 0), 1),
         "vram": vram_level, "ram": ram_level, "status": worst(vram_level, ram_level),
         "breakdown": breakdown, "approximate": approximate, "notes": notes,

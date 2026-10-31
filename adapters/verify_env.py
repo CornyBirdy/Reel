@@ -42,6 +42,8 @@ for mod in (ARGS or ("diffusers", "transformers", "accelerate", "imageio_ffmpeg"
         if mod != "bitsandbytes":
             out["ok"] = False
             out.setdefault("error", f"{mod} import failed: {exc}")
+            if isinstance(exc, ModuleNotFoundError):
+                out.setdefault("missing_modules", []).append(mod)       # a package to add, not an environment to rebuild
         else:
             out["warnings"].append(f"bitsandbytes failed to import ({type(exc).__name__}); 8-bit/4-bit options will not work.")
 if PROBE and out.get("cuda_available") and out.get("bitsandbytes"):

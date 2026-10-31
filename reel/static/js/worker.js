@@ -26,7 +26,8 @@ const gb = (v) => (v === null || v === undefined ? "-" : `${v.toFixed(1)} GB`);
 export function holdsText(worker) {
   if (!worker || worker.state === "unloaded" || !worker.memory) return null;
   const { vram_gb: v, ram_gb: r } = worker.memory;
-  const parts = [v != null ? `VRAM ${gb(v)}` : null, r != null ? `RAM ${gb(r)}` : null].filter(Boolean);
+  const chose = worker.settings?.offload === "auto" && worker.offload_active ? `Auto chose ${worker.offload_active} offload` : null;
+  const parts = [v != null ? `VRAM ${gb(v)}` : null, r != null ? `RAM ${gb(r)}` : null, chose].filter(Boolean);
   return parts.length ? `Holds ${parts.join(" · ")}` : null;
 }
 
