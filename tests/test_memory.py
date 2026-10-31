@@ -243,6 +243,104 @@ class TopUp(unittest.TestCase):
         run.assert_not_called()
 
 
+@unittest.skipIf(sys.platform == "win32", "the test environment's python is a symlink")
+class WarmUp(unittest.TestCase):
+    """The first import after packages change can sit silent for minutes on Windows: it is done once, before the model process starts."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.mdir = Path(self.tmp.name)
+        (self.mdir / "venv" / "bin").mkdir(parents=True)
+        (self.mdir / "venv" / "bin" / "python").symlink_to(sys.executable)
+        self.recipe = {"id": "m", "python": {"packages": ["pip"]}, "adapter_config": {}}
+        for patch in (mock.patch.object(installer, "model_dir", lambda _m: self.mdir), mock.patch.object(installer, "_WARM", "print('imported')\n")):
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def test_it_runs_once_and_says_why(self):
+        said, lines = [], []
+        self.assertTrue(installer.warm_up(self.recipe, said.append, lines.append))
+        self.assertEqual(said, [installer.WARM_MESSAGE])
+        self.assertIn("imported", lines)
+        self.assertTrue((self.mdir / "warm.json").exists())
+        with mock.patch.object(installer.procs, "popen") as popen:        # nothing changed: no second run
+            self.assertTrue(installer.warm_up(self.recipe, said.append))
+        popen.assert_not_called()
+
+    def test_changing_a_package_runs_it_again(self):
+        installer.warm_up(self.recipe)
+        before = (self.mdir / "warm.json").read_text()
+        with mock.patch.object(installer, "environment_signature", return_value="another state"):
+            installer.warm_up(self.recipe)
+        self.assertNotEqual((self.mdir / "warm.json").read_text(), before)
+
+    def test_a_rebuilt_environment_is_not_trusted(self):
+        installer.warm_up(self.recipe)
+        (self.mdir / "venv" / "pyvenv.cfg").write_text("home = x")          # a new venv has a new pyvenv.cfg
+        with mock.patch.object(installer.procs, "popen", wraps=installer.procs.popen) as popen:
+            installer.warm_up(self.recipe)
+        popen.assert_called_once()
+
+    def test_a_failure_is_reported_and_not_remembered(self):
+        with mock.patch.object(installer, "_WARM", "raise SystemExit('No module named torch')\n"):
+            with self.assertRaises(installer.InstallError) as ctx:
+                installer.warm_up(self.recipe)
+        self.assertIn("No module named torch", str(ctx.exception))
+        self.assertFalse((self.mdir / "warm.json").exists())
+
+    def test_cancelling_stops_it_at_once(self):
+        import threading
+        import time
+        cancel = threading.Event()
+        threading.Timer(0.5, cancel.set).start()
+        t0 = time.time()
+        with mock.patch.object(installer, "_WARM", "import time\ntime.sleep(60)\n"):
+            self.assertFalse(installer.warm_up(self.recipe, cancel=cancel))
+        self.assertLess(time.time() - t0, 10)
+        self.assertFalse((self.mdir / "warm.json").exists())
+
+    def test_no_environment_means_nothing_to_do(self):
+        (self.mdir / "venv" / "bin" / "python").unlink()
+        self.assertTrue(installer.warm_up(self.recipe))
+
+
+class PrepareEnvironment(unittest.TestCase):
+    """What happens before a model process starts (reel/workers.py)."""
+
+    def worker(self):
+        from reel import workers
+        w = types.SimpleNamespace(recipe={"id": "m"}, message="", log=types.SimpleNamespace(note=mock.Mock(), write=mock.Mock()))
+        return workers, w
+
+    def test_a_cancel_during_the_preparation_stops_the_load(self):
+        workers, w = self.worker()
+        with mock.patch.object(installer, "top_up_packages", return_value=[]), mock.patch.object(installer, "warm_up", return_value=False):
+            self.assertFalse(workers.WorkerManager._prepare_environment(w))
+
+    def test_trouble_is_logged_and_the_load_carries_on(self):
+        workers, w = self.worker()
+        events = []
+        with mock.patch.object(installer, "top_up_packages", side_effect=installer.InstallError("offline")):
+            self.assertTrue(workers.WorkerManager._prepare_environment(w, events.append))
+        self.assertIn("offline", w.log.note.call_args.args[0])
+        self.assertEqual(events[0]["event"], "log")
+
+    def test_progress_reaches_the_status_chip(self):
+        workers, w = self.worker()
+        events = []
+
+        def warm(recipe, say, line, cancel):
+            say(installer.WARM_MESSAGE)
+            return True
+
+        with mock.patch.object(installer, "top_up_packages", return_value=["scipy"]), mock.patch.object(installer, "warm_up", side_effect=warm):
+            self.assertTrue(workers.WorkerManager._prepare_environment(w, events.append))
+        self.assertEqual(w.message, installer.WARM_MESSAGE)
+        self.assertEqual(events[0], {"event": "phase", "phase": "loading", "message": installer.WARM_MESSAGE})
+        self.assertIn("Installed scipy", [c.args[0] for c in w.log.note.call_args_list][0])
+
+
 class RepairOnlyAddsPackages(unittest.TestCase):
     def job(self, env):
         j = verify.Job("m", False)

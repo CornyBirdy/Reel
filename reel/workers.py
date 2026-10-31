@@ -339,10 +339,14 @@ class WorkerManager:
             self._unload_locked(w, reason or "replaced")
         self.clear_crash()
         w = WorkerProcess(recipe, load_req, self._worker_exited)
-        w.state, w.message = "loading", "Checking the model's packages"
+        w.state, w.message, w.load_started = "loading", "Checking the model's packages", time.time()
         with self.cv:
             self.worker = w
-        self._top_up_packages(w, on_event)
+        if not self._prepare_environment(w, on_event, cancel):
+            with self.cv:
+                if self.worker is w:
+                    self.worker = None
+            return {"kind": "cancelled", "worker": None, "reused": False, "reason": reason}
         try:
             w.start()
         except OSError as exc:
@@ -352,7 +356,6 @@ class WorkerManager:
                     "failure": {"message": f"Reel could not start the model process: {exc}", "detail": "", "hint": "", "kind": "error"}}
         w.state, w.message = "loading", f"Loading {recipe['name']}"
         p = w.send("load", load_req)
-        w.load_started = time.time()
 
         def track(evt: dict) -> None:           # what the model process is doing, for the status chip while it loads
             if evt.get("event") == "phase" and evt.get("message"):
@@ -375,9 +378,11 @@ class WorkerManager:
         return {"kind": "failed", "worker": None, "reused": False, "reason": reason, "failure": failure, "log_name": w.log.name}
 
     @staticmethod
-    def _top_up_packages(w: "WorkerProcess", on_event=None) -> None:
-        """A model installed before its recipe gained a package (scipy for Replace) would fail in the middle of a run. Add
-        what is missing now, before the model is loaded. Offline or failing, loading carries on: the run then says what is missing."""
+    def _prepare_environment(w: "WorkerProcess", on_event=None, cancel: threading.Event | None = None) -> bool:
+        """Before the model process starts: add packages the recipe gained since the model was installed (scipy for Replace), and
+        let the libraries be imported once so Windows has checked them (see installer.warm_up). False if the load was cancelled.
+
+        Nothing here is fatal: offline, or failing, the load carries on and reports its own problem."""
         def say(text: str) -> None:
             w.message = text
             w.log.note(text)
@@ -386,13 +391,14 @@ class WorkerManager:
 
         try:
             added = installer.top_up_packages(w.recipe, say)
+            if added:
+                w.log.note(f"Installed {', '.join(added)}.")
+            return installer.warm_up(w.recipe, say, w.log.write, cancel)
         except installer.InstallError as exc:
-            w.log.note(f"Could not add the missing packages: {exc}")
+            w.log.note(f"Could not prepare the model's environment: {exc}")
             if on_event:
-                on_event({"event": "log", "message": f"Could not add the missing packages: {exc}"})
-            return
-        if added:
-            w.log.note(f"Installed {', '.join(added)}.")
+                on_event({"event": "log", "message": f"Could not prepare the model's environment: {exc}"})
+            return True
 
     def load_async(self, recipe: dict, load_req: dict) -> None:
         """The Library's / Generate's Load button: load in the background and report through status()."""

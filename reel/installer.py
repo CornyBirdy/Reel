@@ -80,29 +80,37 @@ def force_rmtree(path: Path) -> None:
     shutil.rmtree(path, onerror=onerror)
 
 
-_LIST_MISSING = ("import importlib.metadata as m, json, sys\n"
-                 "gone = []\n"
-                 "for name in sys.argv[1:]:\n"
-                 "    try:\n"
-                 "        m.version(name)\n"
-                 "    except m.PackageNotFoundError:\n"
-                 "        gone.append(name)\n"
-                 "print(json.dumps(gone))\n")
+_INSPECT = ("import importlib.metadata as m, json, sys\n"
+            "gone, have = [], {}\n"
+            "for name in sys.argv[1:]:\n"
+            "    try:\n"
+            "        have[name] = m.version(name)\n"
+            "    except m.PackageNotFoundError:\n"
+            "        gone.append(name)\n"
+            "print(json.dumps({'missing': gone, 'versions': have}))\n")
+
+
+def inspect_environment(recipe: dict, extra: tuple[str, ...] = ()) -> dict | None:
+    """{"missing": [...], "versions": {name: version}} for the recipe's packages (plus `extra`) as the model's Python environment
+    has them, or None when it cannot be asked."""
+    py = procs.venv_python(model_dir(recipe["id"]) / "venv")
+    names = [package_name(spec) for spec in recipe.get("python", {}).get("packages", [])] + list(extra)
+    if not py.exists() or not names:
+        return None
+    try:
+        out = subprocess.run([str(py), "-c", _INSPECT, *names], capture_output=True, text=True, timeout=60, check=True,
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout
+        found = json.loads(out.strip().splitlines()[-1])
+        return {"missing": [n for n in found["missing"] if isinstance(n, str)], "versions": dict(found["versions"])}
+    except (subprocess.SubprocessError, OSError, ValueError, IndexError, KeyError, TypeError):
+        return None
 
 
 def missing_packages(recipe: dict) -> list[str]:
     """Packages a recipe lists that its installed Python environment does not have (a recipe can gain a package after
     the model was installed). [] when the environment is complete or cannot be asked."""
-    py = procs.venv_python(model_dir(recipe["id"]) / "venv")
-    names = [package_name(spec) for spec in recipe.get("python", {}).get("packages", [])]
-    if not py.exists() or not names:
-        return []
-    try:
-        out = subprocess.run([str(py), "-c", _LIST_MISSING, *names], capture_output=True, text=True, timeout=60, check=True,
-                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout
-        return [n for n in json.loads(out.strip().splitlines()[-1]) if isinstance(n, str)]
-    except (subprocess.SubprocessError, OSError, ValueError, IndexError):
-        return []
+    found = inspect_environment(recipe)
+    return found["missing"] if found else []
 
 
 def torch_constraints(py: Path, out: Path) -> list[str]:
@@ -143,6 +151,76 @@ def top_up_packages(recipe: dict, on_message=None, timeout: int = 900) -> list[s
         tail = " | ".join((done.stdout + done.stderr).strip().splitlines()[-3:])
         raise InstallError(f"Could not install {', '.join(missing)} (pip exited with code {done.returncode}): {tail}")
     return missing
+
+
+# What the model process imports before it can load anything. Windows checks every program file the first time it is used
+# (antivirus, SmartScreen), and the first import after packages were installed or changed can sit silent for minutes. Doing it
+# here, once, under its own heading, means the load itself starts fast; and if something really hangs, the traceback says where.
+_WARM = ("import faulthandler, sys\n"
+         "faulthandler.dump_traceback_later(120, repeat=True, file=sys.stdout)\n"
+         "import torch, diffusers, transformers\n"
+         "for name in sys.argv[1:]:\n"
+         "    getattr(diffusers, name)\n")
+WARM_MESSAGE = ("Preparing the model's Python libraries. Windows checks new files the first time they are used, so this can take "
+                "a few minutes after an install or update. It happens once.")
+
+
+def environment_signature(recipe: dict) -> str | None:
+    """Changes when a package is installed, updated or removed, or the environment is rebuilt. None if it cannot be asked."""
+    found = inspect_environment(recipe, extra=("torch",))
+    if not found:
+        return None
+    cfg = procs.venv_python(model_dir(recipe["id"]) / "venv").parent.parent / "pyvenv.cfg"
+    try:
+        built = cfg.stat().st_mtime_ns
+    except OSError:
+        built = 0
+    return json.dumps({"versions": found["versions"], "built": built}, sort_keys=True)
+
+
+def warm_up(recipe: dict, on_message=None, on_line=None, cancel: threading.Event | None = None, timeout: int = 1800) -> bool:
+    """Import what the model process needs, once per environment state, before it starts. False if `cancel` was set meanwhile.
+
+    Raises InstallError when the imports fail or do not finish in `timeout` seconds; the caller then loads the model anyway
+    and the load reports the problem in its own words."""
+    sig = environment_signature(recipe)
+    mdir = model_dir(recipe["id"])
+    marker = mdir / "warm.json"
+    if sig is None or (read_json(marker) or {}).get("signature") == sig:
+        return True
+    if on_message:
+        on_message(WARM_MESSAGE)
+    py = procs.venv_python(mdir / "venv")
+    cls = (recipe.get("adapter_config") or {}).get("pipeline")
+    proc = procs.popen([str(py), "-c", _WARM, *([cls] if cls else [])], env={"HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1"}, cwd=mdir)
+    tail: deque[str] = deque(maxlen=30)
+
+    def drain() -> None:
+        try:
+            for raw in proc.stdout:                 # type: ignore[union-attr]
+                tail.append(raw.rstrip())
+                if on_line:
+                    on_line(raw.rstrip())
+        except (ValueError, OSError):
+            pass
+
+    reader = threading.Thread(target=drain, daemon=True, name=f"warm-{recipe['id']}")
+    reader.start()
+    end = time.time() + timeout
+    try:
+        while proc.poll() is None:
+            if cancel is not None and cancel.is_set():
+                return False
+            if time.time() > end:
+                raise InstallError(f"Preparing the Python libraries did not finish in {timeout // 60} minutes.")
+            time.sleep(0.3)
+    finally:
+        procs.kill_tree(proc)
+        reader.join(timeout=3)
+    if proc.returncode != 0:
+        raise InstallError("Preparing the Python libraries failed: " + " | ".join(list(tail)[-3:]))
+    marker.write_text(json.dumps({"signature": sig, "at": time.time()}), encoding="utf-8")
+    return True
 
 
 class Job:
