@@ -30,6 +30,7 @@ If something goes wrong:
 | "Port 8765 is in use" | Close the other Reel window, or set `REEL_PORT` to another number. |
 | An install fails or stalls | Press Install again: finished downloads are kept. The full log is in `data/models/<model>/install.log`. |
 | Out of VRAM while generating | Lower the resolution, set Offloading to Sequential, or use NF4 quantization (Memory options). |
+| A model sits on "Loading the model's Python libraries" for minutes | Cancel the load, update Reel, close it completely and start it again. If it still hangs, run `tools\import_probe.py` with the model's Python (`& ".\data\models\<model>\venv\Scripts\python.exe" tools\import_probe.py` in PowerShell) and send its output; the last "Timeout (0:02:00)" block in `data\logs` shows where it is stuck. |
 | A model says a Python package "was not found" (for example scipy) | Reel adds packages a model needs when the model next loads. If that fails (offline), press **Verify** on the model's card, then **Repair**: it installs just the missing package without reinstalling PyTorch. |
 | "The model process stopped unexpectedly (exit code 0xC0000005 ...)" | A native crash, usually the PC running out of system RAM, or an incompatible CUDA / attention kernel. Close other programs, lower the resolution or frames, and try the attention backend Native. **View full log** (or `data/logs/`) shows everything the process wrote. |
 

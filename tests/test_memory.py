@@ -341,6 +341,45 @@ class PrepareEnvironment(unittest.TestCase):
         self.assertIn("Installed scipy", [c.args[0] for c in w.log.note.call_args_list][0])
 
 
+class ImportsBeforeTheGpu(unittest.TestCase):
+    """The model process imports diffusers and the pipeline module before anything touches the GPU (see Worker.preimport)."""
+
+    def setUp(self):
+        import worker
+        self.worker = worker
+        self.events = []
+        for patch in (mock.patch.object(worker, "emit", lambda **e: self.events.append(e)), mock.patch.dict(sys.modules)):
+            patch.start()
+            self.addCleanup(patch.stop)
+        self.diffusers = types.ModuleType("diffusers")
+        self.diffusers.WanVACEPipeline = object
+        sys.modules.update(diffusers=self.diffusers, transformers=types.ModuleType("transformers"))
+        self.w = worker.Worker.__new__(worker.Worker)
+
+    def test_the_pipeline_module_is_imported_and_the_phase_says_so(self):
+        self.w.preimport({"adapter_config": {"pipeline": "WanVACEPipeline"}})
+        self.assertEqual(self.events[0]["message"], "Loading the model's Python libraries")
+        self.assertIn("imported in", self.events[-1]["message"])
+
+    def test_a_missing_pipeline_class_is_left_for_the_load_to_report(self):
+        self.w.preimport({"adapter_config": {"pipeline": "NoSuchPipeline"}})
+        self.assertIn("Could not import", self.events[-1]["message"])
+        self.assertIn("NoSuchPipeline", self.events[-1]["message"])
+
+    def test_it_can_be_switched_off(self):
+        with mock.patch.dict("os.environ", {"REEL_PREIMPORT": "0"}):
+            self.w.preimport({"adapter_config": {"pipeline": "WanVACEPipeline"}})
+        self.assertEqual(self.events, [])
+
+    def test_the_heartbeat_does_not_ask_the_driver_until_cuda_is_in_use(self):
+        asked = []
+        cuda = types.SimpleNamespace(is_initialized=lambda: False, is_available=lambda: asked.append("is_available") or True,
+                                     mem_get_info=lambda: asked.append("mem_get_info") or (1, 2))
+        report = self.worker.memory_report(types.SimpleNamespace(cuda=cuda))
+        self.assertEqual(asked, [])
+        self.assertNotIn("vram_total_gb", report)
+
+
 class RepairOnlyAddsPackages(unittest.TestCase):
     def job(self, env):
         j = verify.Job("m", False)

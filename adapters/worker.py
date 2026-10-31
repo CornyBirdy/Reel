@@ -48,7 +48,7 @@ def memory_report(torch) -> dict:
         out["ram_available_gb"] = round(host["available_gb"], 2)
     if torch is not None:
         try:
-            if torch.cuda.is_available() and torch.cuda.is_initialized():
+            if torch.cuda.is_initialized() and torch.cuda.is_available():     # is_initialized first: it asks the driver nothing
                 free, total = torch.cuda.mem_get_info()
                 out.update(vram_reserved_gb=torch.cuda.memory_reserved() / GB, vram_allocated_gb=torch.cuda.memory_allocated() / GB,
                            vram_free_gb=free / GB, vram_total_gb=total / GB)
@@ -107,9 +107,30 @@ class Worker:
         return getattr(self.adapter, "torch", None) if self.adapter else sys.modules.get("torch")
 
     # -- commands ---------------------------------------------------------------------------------------------
+    def preimport(self, request: dict) -> None:
+        """Import diffusers, transformers and the pipeline's own module (and so scipy, which transformers pulls in) first, in this
+        thread, before anything has touched the GPU. On one Windows PC that import hung for good, inside scipy's math library
+        (0 % disk, no progress), when it happened while the GPU was already in use and the heartbeat thread was polling it; the
+        same import alone takes 8 seconds. Doing it first, with the GPU untouched, is the order that is known to work."""
+        if os.environ.get("REEL_PREIMPORT") == "0":
+            return
+        emit(event="phase", phase="loading", message="Loading the model's Python libraries")
+        t0 = time.time()
+        try:
+            import diffusers
+            importlib.import_module("transformers")
+            cls = (request.get("adapter_config") or {}).get("pipeline")
+            if cls:
+                getattr(diffusers, cls)
+        except Exception as exc:  # noqa: BLE001 - the load itself then fails with the real error
+            emit(event="log", message=f"Could not import the model's libraries ahead of the load ({type(exc).__name__}: {exc}).")
+            return
+        emit(event="log", message=f"The model's Python libraries were imported in {time.time() - t0:.1f}s.")
+
     def do_load(self, request: dict) -> None:
         if self.adapter is not None:
             raise RuntimeError("A model is already loaded in this worker.")
+        self.preimport(request)
         module = importlib.import_module(request["adapter"])
         adapter = module.Adapter(request)
         seconds = adapter.load()

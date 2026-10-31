@@ -41,7 +41,7 @@ class WorkerLifecycle(unittest.TestCase):
             mock.patch.object(workers, "model_dir", lambda m: tmp / "models" / m),
             mock.patch.object(generation, "model_dir", lambda m: tmp / "models" / m),
             mock.patch.object(generation, "installed_info", lambda m: {"ok": True}),
-            mock.patch.object(workers, "child_env", lambda: {"PYTHONPATH": str(TESTS)}),
+            mock.patch.object(workers, "child_env", lambda: {"PYTHONPATH": str(TESTS), "REEL_PREIMPORT": "0"}),
             mock.patch.object(recipes, "get", fake_recipe),
             mock.patch.object(generation.recipes, "load_all", lambda: ({k: fake_recipe(k) for k in shipped}, {})),
         ]
