@@ -19,6 +19,7 @@
 - Reel can be used from AI assistants (Claude Desktop, Claude Code, ...): `reel-mcp.bat`. Tools to check the GPU and memory, list models, estimate memory, generate images and clips (with input files for Edit, Frames and Replace), follow or cancel a job, read History, and load or unload a model. Run `reel-mcp.bat --config` for the text to paste into the assistant's settings. If Reel is not running it is started in the background.
 
 **Pause**
+- **Resuming a download really resumes.** After Cancel, closing Reel or a dropped connection, **Resume install** used to start the file that was in progress again from zero (with a 34 GB model that is several GB lost each time, and the bar jumped back). The Hugging Face client no longer keeps a half-finished file, so Reel now downloads the files itself: the unfinished part is kept in `weights/.cache/reel/` and the next run asks Hugging Face only for the rest. Finished files and the progress bar are unchanged, and a model that was half-installed with the old downloader continues from its finished files.
 - **Pause** and **Resume** on a download or install in the Library: the download is frozen and carries on exactly where it stopped (if the connection was dropped meanwhile, Reel reconnects by itself; finished files are kept).
 - **Pause** and **Resume** while generating: the run holds at its next step, the model stays loaded, and the paused time is not counted in the elapsed time or the estimate. Cancel still works while paused. Upscales can be paused too.
 

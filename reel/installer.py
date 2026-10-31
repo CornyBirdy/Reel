@@ -354,7 +354,7 @@ class InstallManager:
         if job.paused:
             return
         if job.proc and not procs.suspend_tree(job.proc):
-            raise InstallError("This PC would not let Reel pause the download. Use Cancel instead: finished files are kept and Install continues with the rest.")
+            raise InstallError("This PC would not let Reel pause the download. Use Cancel instead: what is downloaded is kept and Install continues from where it stopped.")
         job.paused, job.was_paused, job.paused_at = True, True, time.time()
         job.log.append("Paused.")
 
@@ -511,7 +511,7 @@ class InstallManager:
             log("=== Install complete ===")
         except Cancelled:
             job.status = "cancelled"
-            job.message = "Cancelled. Finished files are kept; Install continues with the rest (a file that was mid-download starts over)."
+            job.message = "Cancelled. Everything downloaded so far is kept; Install continues from where it stopped."
             log(job.message)
         except Exception as exc:  # noqa: BLE001
             job.status = "failed"
