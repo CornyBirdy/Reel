@@ -33,6 +33,7 @@ CHUNK = 1 << 20
 TIMEOUT = 30          # seconds without a byte before a connection is treated as dropped
 MAX_FAILURES = 8      # attempts in a row that bring no new bytes before a file is given up on
 WORKERS = 8
+REPLACE_ATTEMPTS = 20  # tries at renaming a finished file; with the growing pause that is about two minutes
 
 
 def emit(**kw):
@@ -151,6 +152,29 @@ def _stream(url: str, part: Path, have: int, token: str | None, abort: threading
     return have, total or 0
 
 
+def move_into_place(part: Path, dest: Path, abort: threading.Event, sleep=time.sleep) -> None:
+    """Rename a finished .part file to its real name.
+
+    On Windows the rename fails with "being used by another process" (WinError 32) for as long as anything else has the
+    file open, and a virus scanner or the search indexer opens a freshly written multi-GB file for a while. That is
+    temporary, so wait and try again. The .part file is left where it is if it never frees up: the next Install finds
+    it already complete and only has to rename it.
+    """
+    delay = 0.25
+    for attempt in range(1, REPLACE_ATTEMPTS + 1):
+        try:
+            os.replace(part, dest)
+            return
+        except PermissionError as exc:
+            if attempt == REPLACE_ATTEMPTS or abort.is_set():
+                raise Fatal(f"Downloaded {dest.name}, but Windows would not let Reel finish it because another program "
+                            "has the file open (usually antivirus scanning it, or an earlier Reel download that is "
+                            "still running). Close that program or wait a minute, then press Install again: the file "
+                            f"is complete and will not be downloaded again. ({exc})") from exc
+            sleep(delay)
+            delay = min(delay * 2, 10)
+
+
 def fetch_file(url: str, dest: Path, part: Path, size: int, token: str | None, abort: threading.Event,
                sleep=time.sleep) -> None:
     """Download `url` to `dest`, continuing `part` if an earlier run left one. `dest` only ever appears complete."""
@@ -177,7 +201,7 @@ def fetch_file(url: str, dest: Path, part: Path, size: int, token: str | None, a
             except (Retry, urllib.error.URLError, http.client.HTTPException, OSError) as exc:
                 why = exc
         if why is None:
-            os.replace(part, dest)
+            move_into_place(part, dest, abort, sleep)
             return
         if abort.is_set():
             raise Aborted()

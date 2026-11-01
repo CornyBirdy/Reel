@@ -122,10 +122,8 @@ function ModelCard(initial, ctx) {
     switch (m.state) {
       case "installing":
         actions.append(
-          job && job.paused
-            ? h("button", { class: "btn btn-primary", title: "Carry on exactly where it stopped", onclick: () => act(() => api.post(`/api/models/${m.id}/resume`)) }, icon("play"), "Resume")
-            : h("button", { class: "btn", title: "Freeze the download or install; Resume carries on where it stopped", onclick: () => act(() => api.post(`/api/models/${m.id}/pause`)) }, icon("pause"), "Pause"),
-          h("button", { class: "btn", onclick: () => act(() => api.post(`/api/models/${m.id}/cancel`)) }, icon("stop"), "Cancel install"));
+          h("button", { class: "btn", title: "Stop the download. What is already downloaded is kept, and Install carries on from the same byte",
+            onclick: () => act(() => api.post(`/api/models/${m.id}/cancel`)) }, icon("stop"), "Stop"));
         break;
       case "installed":
         actions.append(

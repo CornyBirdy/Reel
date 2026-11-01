@@ -9,6 +9,7 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "adapters"))
 import download  # noqa: E402
@@ -162,6 +163,48 @@ class Fetching(unittest.TestCase):
         s = self.serve(data=DATA[:100_000])          # the server has less than the Hub said the file has
         with self.assertRaises(download.Fatal):
             self.fetch(s, size=len(DATA))
+
+
+class MovingIntoPlace(unittest.TestCase):
+    """Windows refuses the rename while a virus scanner (or anything else) has the finished file open."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.part, self.dest = Path(self.tmp.name) / "a.part", Path(self.tmp.name) / "a.bin"
+        self.part.write_bytes(b"done")
+
+    def test_it_waits_while_the_file_is_in_use_and_then_succeeds(self):
+        real, calls, sleeps = os.replace, [], []
+
+        def flaky(src, dst):
+            calls.append(1)
+            if len(calls) < 4:
+                raise PermissionError(32, "being used by another process")
+            real(src, dst)
+
+        with mock.patch.object(download.os, "replace", flaky):
+            download.move_into_place(self.part, self.dest, threading.Event(), sleeps.append)
+        self.assertEqual(self.dest.read_bytes(), b"done")
+        self.assertEqual(len(sleeps), 3)
+
+    def test_a_file_that_never_frees_up_keeps_its_partial_and_says_what_to_do(self):
+        def locked(src, dst):
+            raise PermissionError(32, "being used by another process")
+
+        with mock.patch.object(download.os, "replace", locked):
+            with self.assertRaisesRegex(download.Fatal, "press Install again"):
+                download.move_into_place(self.part, self.dest, threading.Event(), lambda s: None)
+        self.assertTrue(self.part.exists())
+        self.assertFalse(self.dest.exists())
+
+    def test_the_next_install_only_renames_a_complete_partial_file(self):
+        server = Server()
+        self.addCleanup(server.close)
+        self.part.write_bytes(DATA)
+        download.fetch_file(server.url, self.dest, self.part, len(DATA), None, threading.Event(), sleep=lambda s: None)
+        self.assertEqual(self.dest.read_bytes(), DATA)
+        self.assertEqual(server.requests, [])
 
 
 class Partials(unittest.TestCase):
