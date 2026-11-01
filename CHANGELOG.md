@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+**MiniMax-H3**
+- **New models: MiniMax-H3 and MiniMax-H3 Reference.** One model that makes the picture and a stereo soundtrack together (5 to 15 seconds at 24 fps). *MiniMax-H3* does text to video and first/last frame (Video and Frames modes); *MiniMax-H3 Reference* takes up to 9 pictures, 3 videos and 3 recordings in an order you set (the new Reference mode). The sound is written into the mp4. Both are marked Unverified: they were written against the diffusers 0.41 source and documentation and have not been run on a GPU.
+- **It is very large.** A 33B transformer and a 32B text encoder, 144 GB to download per model. The diffusers documentation puts the host RAM at about 75 GB with 8-bit weights. Reel runs it in stages (read the prompt with the text encoder, free it, then run the transformer with its blocks streamed through the GPU) so VRAM stays low, and when RAM cannot hold both parts it loads them one after the other. A PC with 32 GB of RAM is below what is documented; the memory estimate says so rather than promising it.
+- **Reference mode** in Generate: a picker for pictures, videos and recordings with numbered thumbnails, reordering, and a click on a number to put `<Picture 1>` / `<Video 1>` / `<Audio 1>` in the prompt. An option sizes the clip to the first recording.
+- **Recordings** (WAV, MP3, FLAC, OGG, M4A) can be uploaded as inputs. Guidance and the negative prompt are hidden for models that do not use them (H3 is guidance-distilled).
+
+**Shelf tasks**
+- **Download speed limit** (Settings > Downloads). Automatic runs at full speed and drops to about 10 MB/s while a model is loading or generating; Fixed limit holds a speed you choose; an optional ceiling applies in both. It also caps how fast files are written, and applies to a download that is already running.
+- **Auto offloading is sized for the job.** It used to look only at the weights, so a model that fit could still run out of memory on a long or large clip. It now adds the clip's own need (activations or VAE decode) and chooses again for every request, switching between None, Model offload and Sequential when the answer changes.
+- **Mixing pictures.** Edit models that take several pictures (Qwen-Image-Edit) number them, let you reorder them, and a click on a number puts "picture 2" in the prompt.
+
+**Interface**
+- Explanations moved from grey text under controls into tooltips; Seed, Steps, Guidance, Negative prompt and the memory options are in a collapsed Advanced section; the memory estimate is one line until you open it. The Library and Settings cards are shorter in the same way, and the secondary actions on a result are in one menu.
+- **Prompt tools**: insert camera, light, style and sound snippets, and save prompts to reuse. **Ctrl+Enter** generates.
+- **Chaining clips**: *Continue from the last frame* and *Start frame: this frame* turn a frame of a finished clip into the start of the next one. *Use as reference* sends a picture or clip to Reference mode. The frame is taken in the browser, so nothing extra is installed.
+
 **Memory**
 - **Replace a person no longer fails with "Mask2FormerLoss requires the scipy library".** The model needed scipy to find the person and it was not installed. It is now part of the model's install, and a model installed earlier gets it automatically: before a model loads Reel checks that every package its recipe lists is installed and installs just the missing ones (PyTorch and the weights are untouched). **Verify** now reports a missing package, and **Repair** installs it instead of rebuilding the whole environment. The error, if it still happens, says to use Verify and Repair.
 - **Installing and updating just works, without a long silent load.** Right after a package is installed or updated (scipy, for example), Windows checks the new files the first time they are used, which could leave a model on "Loading model" for minutes with nothing on screen. Reel now does that first import itself, once, before the model process starts, under a heading that says what it is doing ("Preparing the model's Python libraries ... it happens once") with the usual elapsed time and Cancel load. It repeats only when a package changes or the environment is rebuilt. If something really hangs, the traceback goes to the model's log.
