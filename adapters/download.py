@@ -19,6 +19,7 @@ import fnmatch
 import http.client
 import json
 import os
+import shutil
 import sys
 import threading
 import time
@@ -33,7 +34,7 @@ CHUNK = 1 << 20
 TIMEOUT = 30          # seconds without a byte before a connection is treated as dropped
 MAX_FAILURES = 8      # attempts in a row that bring no new bytes before a file is given up on
 WORKERS = 8
-REPLACE_ATTEMPTS = 20  # tries at renaming a finished file; with the growing pause that is about two minutes
+REPLACE_ATTEMPTS = 8   # tries at renaming a finished file before copying it instead; about 30 seconds in all
 
 
 def emit(**kw):
@@ -153,26 +154,39 @@ def _stream(url: str, part: Path, have: int, token: str | None, abort: threading
 
 
 def move_into_place(part: Path, dest: Path, abort: threading.Event, sleep=time.sleep) -> None:
-    """Rename a finished .part file to its real name.
+    """Make a finished .part file appear at its real name.
 
     On Windows the rename fails with "being used by another process" (WinError 32) for as long as anything else has the
-    file open, and a virus scanner or the search indexer opens a freshly written multi-GB file for a while. That is
-    temporary, so wait and try again. The .part file is left where it is if it never frees up: the next Install finds
-    it already complete and only has to rename it.
+    file open: a virus scanner or the search indexer opens a freshly written multi-GB file for a while, and an earlier
+    download process that was never closed can hold it indefinitely. So wait and retry first; if the file stays locked,
+    copy it instead (reading is allowed where renaming is not) and rename the copy. If even that fails the .part file is
+    left where it is: the next Install finds it already complete and only has to move it.
     """
-    delay = 0.25
-    for attempt in range(1, REPLACE_ATTEMPTS + 1):
+    delay, last = 0.25, None
+    for _ in range(REPLACE_ATTEMPTS):
         try:
             os.replace(part, dest)
             return
         except PermissionError as exc:
-            if attempt == REPLACE_ATTEMPTS or abort.is_set():
-                raise Fatal(f"Downloaded {dest.name}, but Windows would not let Reel finish it because another program "
-                            "has the file open (usually antivirus scanning it, or an earlier Reel download that is "
-                            "still running). Close that program or wait a minute, then press Install again: the file "
-                            f"is complete and will not be downloaded again. ({exc})") from exc
+            last = exc
+            if abort.is_set():
+                break
             sleep(delay)
             delay = min(delay * 2, 10)
+    copy = dest.with_name(dest.name + ".copying")
+    try:
+        shutil.copyfile(part, copy)
+        os.replace(copy, dest)
+    except OSError as exc:
+        copy.unlink(missing_ok=True)
+        raise Fatal(f"Downloaded {dest.name}, but Windows would not let Reel finish it because another program has "
+                    "the file open (antivirus scanning it, or an earlier Reel download that is still running; "
+                    "restarting Reel or the PC clears the second). The file is complete and will not be downloaded "
+                    f"again: press Install once the program lets go. ({last or exc})") from exc
+    try:
+        part.unlink()
+    except OSError:
+        pass                                        # still locked; the finished copy is what counts
 
 
 def fetch_file(url: str, dest: Path, part: Path, size: int, token: str | None, abort: threading.Event,
@@ -180,6 +194,10 @@ def fetch_file(url: str, dest: Path, part: Path, size: int, token: str | None, a
     """Download `url` to `dest`, continuing `part` if an earlier run left one. `dest` only ever appears complete."""
     if dest.exists():
         if not size or dest.stat().st_size == size:
+            try:
+                part.unlink(missing_ok=True)             # a leftover from a rename that was blocked
+            except OSError:
+                pass
             return
         dest.unlink()                            # a damaged or older copy: fetch it again
     part.parent.mkdir(parents=True, exist_ok=True)

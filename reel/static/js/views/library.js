@@ -122,8 +122,8 @@ function ModelCard(initial, ctx) {
     switch (m.state) {
       case "installing":
         actions.append(
-          h("button", { class: "btn", title: "Stop the download. What is already downloaded is kept, and Install carries on from the same byte",
-            onclick: () => act(() => api.post(`/api/models/${m.id}/cancel`)) }, icon("stop"), "Stop"));
+          h("button", { class: "btn", title: "Pause the download. What is already downloaded is kept, and Install carries on from the same byte",
+            onclick: () => act(() => api.post(`/api/models/${m.id}/cancel`)) }, icon("pause"), "Pause"));
         break;
       case "installed":
         actions.append(

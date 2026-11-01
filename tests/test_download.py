@@ -188,12 +188,28 @@ class MovingIntoPlace(unittest.TestCase):
         self.assertEqual(self.dest.read_bytes(), b"done")
         self.assertEqual(len(sleeps), 3)
 
-    def test_a_file_that_never_frees_up_keeps_its_partial_and_says_what_to_do(self):
+    def test_a_file_that_stays_locked_is_copied_instead(self):
+        real, calls = os.replace, []
+
+        def locked(src, dst):
+            calls.append(src)
+            if Path(src) == self.part:
+                raise PermissionError(32, "being used by another process")
+            real(src, dst)
+
+        with mock.patch.object(download.os, "replace", locked):
+            download.move_into_place(self.part, self.dest, threading.Event(), lambda s: None)
+        self.assertEqual(self.dest.read_bytes(), b"done")
+        self.assertEqual(len(calls), download.REPLACE_ATTEMPTS + 1)       # tried the rename, then renamed the copy
+        self.assertFalse(Path(str(self.dest) + ".copying").exists())
+
+    def test_a_file_that_cannot_even_be_read_keeps_its_partial_and_says_what_to_do(self):
         def locked(src, dst):
             raise PermissionError(32, "being used by another process")
 
-        with mock.patch.object(download.os, "replace", locked):
-            with self.assertRaisesRegex(download.Fatal, "press Install again"):
+        with mock.patch.object(download.os, "replace", locked), \
+                mock.patch.object(download.shutil, "copyfile", side_effect=PermissionError(32, "in use")):
+            with self.assertRaisesRegex(download.Fatal, "press Install"):
                 download.move_into_place(self.part, self.dest, threading.Event(), lambda s: None)
         self.assertTrue(self.part.exists())
         self.assertFalse(self.dest.exists())

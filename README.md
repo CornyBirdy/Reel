@@ -102,7 +102,7 @@ Like LM Studio, each installed model has **Settings** (the sliders icon on its L
 
 ### Pause
 
-A download or install in the Library has one button, **Stop**. Everything downloaded so far is kept, and **Install** carries on from the same byte. **Pause** while generating holds the run at its next step with the model still loaded; the paused time is not counted. Cancel works while paused.
+A download or install in the Library has one button, **Pause**. Everything downloaded so far is kept, and **Install** carries on from the same byte. **Pause** while generating holds the run at its next step with the model still loaded; the paused time is not counted. Cancel works while paused.
 
 ### Edit pictures, start and end frames, replace a person
 
