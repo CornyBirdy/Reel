@@ -145,7 +145,8 @@ button.batch-thumb:hover { background: var(--hover-bg); }
 .est-row { display: grid; grid-template-columns: minmax(0, 1fr) auto calc(var(--sp-48) * 2); align-items: center; gap: var(--sp-12); font-size: var(--text-sm); }
 .est-row .badge { justify-self: start; }
 .est-name { flex: 1; min-width: 0; }
-.est-nums { color: var(--ink-muted); font-variant-numeric: tabular-nums; }
+.est-nums { color: var(--ink-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.est-sub { font-size: var(--text-xs, 0.85em); opacity: 0.85; }
 
 /* -- Model settings dialog ------------------------------------------------------------- */
 .ms-body { max-height: 62vh; overflow-y: auto; padding: var(--sp-4) var(--sp-4) var(--sp-4) 0; margin-top: var(--sp-12); }

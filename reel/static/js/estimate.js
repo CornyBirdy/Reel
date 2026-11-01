@@ -17,10 +17,13 @@ function vramShare(e) {
 
 export function renderEstimate(el, e) {
   clear(el);
-  // "~9.5 GB needed · card 15.9 GB, 13.2 free": the card's size first, so the free figure is not mistaken for it.
+  // Two lines when the card's size is known ("~9.5 GB needed" over "card 15.9 GB · 13.2 free"), so the free figure is not
+  // mistaken for the card's size and the cell stays narrow enough not to run into the row's label.
   const row = (name, used, cap, level, title, total) => h("div", { class: "est-row", title },
     h("span", { class: "est-name" }, name),
-    h("span", { class: "mono est-nums" }, cap ? (total ? `~${used} GB needed · card ${total} GB, ${cap} free` : `~${used} GB of ${cap} GB free`) : `~${used} GB`),
+    h("span", { class: "mono est-nums" }, cap && total
+      ? [h("div", {}, `~${used} GB needed`), h("div", { class: "est-sub" }, `card ${total} GB · ${cap} free`)]
+      : cap ? `~${used} GB of ${cap} GB free` : `~${used} GB`),
     statusBadge(STATUS_KIND[level], STATUS_LABEL[level]));
   const b = e.breakdown || {};
   const vramTip = b.weights_gb !== undefined ? `Weights on the GPU ~${b.weights_gb} GB, activations ~${b.activations_gb} GB, VAE decode ~${b.vae_decode_gb} GB` : "Scaled from the model's listed VRAM need";
