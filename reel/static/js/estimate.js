@@ -1,5 +1,5 @@
 // The live memory estimate (VRAM and system RAM) against what this PC has free right now. It warns; it never blocks.
-import { h, icon, clear, statusBadge } from "./ui.js";
+import { h, icon, clear, statusBadge, tip } from "./ui.js";
 import { api } from "./api.js";
 
 const STATUS_KIND = { ok: "success", risky: "warning", fail: "danger", unknown: "neutral" };
@@ -17,8 +17,6 @@ function vramShare(e) {
 
 export function renderEstimate(el, e) {
   clear(el);
-  // Two lines when the card's size is known ("~9.5 GB needed" over "card 15.9 GB · 13.2 free"), so the free figure is not
-  // mistaken for the card's size and the cell stays narrow enough not to run into the row's label.
   const row = (name, used, cap, level, title, total) => h("div", { class: "est-row", title },
     h("span", { class: "est-name" }, name),
     h("span", { class: "mono est-nums" }, cap && total
@@ -27,15 +25,22 @@ export function renderEstimate(el, e) {
     statusBadge(STATUS_KIND[level], STATUS_LABEL[level]));
   const b = e.breakdown || {};
   const vramTip = b.weights_gb !== undefined ? `Weights on the GPU ~${b.weights_gb} GB, activations ~${b.activations_gb} GB, VAE decode ~${b.vae_decode_gb} GB` : "Scaled from the model's listed VRAM need";
+  // One line while all is well: the two verdicts. The working is one click away.
   el.append(
-    h("div", { class: "field-label" }, "Memory estimate"),
-    row("GPU memory", e.vram_gb, e.vram_cap_gb, e.vram, `${vramTip}. ${vramShare(e)}`, e.vram_total_gb),
-    row("System RAM", e.ram_gb, e.ram_cap_gb, e.ram, "Python and CUDA libraries, the model's weights while they wait on the CPU, and the decoded frames"));
+    h("div", { class: "est-head" },
+      h("span", { class: "field-label" }, "Memory"),
+      statusBadge(STATUS_KIND[e.vram], `GPU ~${e.vram_gb} GB`, null, `${vramTip}. ${vramShare(e)}`),
+      statusBadge(STATUS_KIND[e.ram], `RAM ~${e.ram_gb} GB`, null, "Python and CUDA libraries, the model's weights while they wait on the CPU, and the decoded frames"),
+      tip("A rough estimate against what this PC has free right now. The real peak is recorded in History after each run.")));
   if (e.status === "fail") el.append(h("div", { class: "notice notice-danger" }, icon("alert"),
-    "This will probably run out of memory or crash on this PC. You can still try it. To bring it down: lower the resolution or frame count, use NF4 quantization, or set Offloading to Sequential."));
+    "Probably too much for this PC. You can still try it; lower the resolution or frames, use 4-bit quantization, or set Offloading to Sequential to bring it down."));
   else if (e.status === "risky") el.append(h("div", { class: "notice notice-warning" }, icon("alert"),
-    "Close to what this PC has free right now. It may work, but other programs using memory could make it fail."));
-  if (e.vram_other_gb >= 0.5) el.append(h("div", { class: "field-hint" }, vramShare(e)));
-  for (const n of e.notes || []) el.append(h("div", { class: "field-hint" }, n));
-  el.append(h("div", { class: "field-hint" }, "A rough estimate; the real peak is recorded in History after each run."));
+    "Close to what this PC has free right now. Other programs using memory could make it fail."));
+  const more = [];
+  if (e.vram_other_gb >= 0.5) more.push(h("div", { class: "field-hint" }, vramShare(e)));
+  for (const n of e.notes || []) more.push(h("div", { class: "field-hint" }, n));
+  el.append(h("details", { class: "est-more" }, h("summary", {}, "Where the memory goes"), h("div", { class: "stack-8" },
+    row("GPU memory", e.vram_gb, e.vram_cap_gb, e.vram, `${vramTip}. ${vramShare(e)}`, e.vram_total_gb),
+    row("System RAM", e.ram_gb, e.ram_cap_gb, e.ram, "Python and CUDA libraries, the model's weights while they wait on the CPU, and the decoded frames"),
+    ...more)));
 }

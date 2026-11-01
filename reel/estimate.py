@@ -68,6 +68,8 @@ def estimate(recipe: dict, params: dict, gpu: dict | None = None, ram: dict | No
     kind = recipe.get("kind", "video")
     est = (recipe.get("memory") or {}).get("estimate")
     quant, offload = params.get("quantization", "none"), params.get("offload", "model")
+    if offload == "auto" and est and est.get("auto_offload"):     # a model whose parts are too big for the card says what Auto ends up doing
+        offload = est["auto_offload"]
     tiling = bool(params.get("vae_tiling", True))
     w, h, mpx_frames = _work(params, kind)
     frames = int(params.get("frames") or 1) if kind == "video" else 1
@@ -97,13 +99,23 @@ def estimate(recipe: dict, params: dict, gpu: dict | None = None, ram: dict | No
             if transient:
                 vram = max(vram, sum(resident.values()) + sum(comp[n] for n in transient))
         elif offload == "sequential":
-            vram = max(SEQUENTIAL_GB + act, SEQUENTIAL_GB + vae_act)
+            on_gpu = sum(comp[n] for n in (est.get("gpu_resident") or []) if n in comp)    # decoders that stay on the card while the denoiser streams
+            vram = SEQUENTIAL_GB + max(act, vae_act) + on_gpu
         else:  # model offload: one component group on the GPU at a time
             vram = max(text, den + act, vae + vae_act)
         vram += CONTEXT_GB
         cpu_resident = sum(resident.values()) if offload != "none" else 1.0
+        if offload == "sequential":
+            cpu_resident -= sum(comp[n] for n in (est.get("gpu_resident") or []) if n in resident)
         load_spike = min(LOAD_SPIKE_GB, max(comp.values()))
         ram_gb = PROCESS_GB + cpu_resident + max(load_spike, out_gb + TRANSIENT_RAM_SHARE * sum(comp[n] for n in transient))
+        if est.get("stages") == "one_at_a_time" and transient:
+            # The prompt is read first and its (large) encoder freed before the denoiser loads, so RAM holds the larger of the two,
+            # not both. If RAM allows both to stay (see ram_both_gb), a clip after the first skips the reload.
+            biggest_transient = max(comp[n] for n in transient)
+            ram_gb = PROCESS_GB + max(cpu_resident, biggest_transient) + out_gb
+            if ram and cpu_resident + biggest_transient > ram.get("total_gb", 0) - 8:
+                notes.append("The text encoder and the transformer are loaded one after the other, so each clip also re-reads the transformer from disk.")
         breakdown = {"weights_gb": round(sum(resident.values()), 1), "activations_gb": round(act, 1), "vae_decode_gb": round(vae_act, 1)}
         approximate = False
     else:

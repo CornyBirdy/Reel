@@ -240,3 +240,135 @@ class Partials(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ThrottleTests(unittest.TestCase):
+    """The speed limit: read from a file the app rewrites, shared by every thread (no network, no sleeping)."""
+
+    def make(self, cfg=None):
+        self.clock = [0.0]
+        self.slept: list[float] = []
+
+        def sleep(s):
+            self.slept.append(s)
+            self.clock[0] += s
+
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        path = Path(d.name) / "t.json"
+        if cfg is not None:
+            import json as _json
+            path.write_text(_json.dumps(cfg))
+        return download.Throttle(path, clock=lambda: self.clock[0], sleep=sleep)
+
+    def test_no_file_means_no_limit(self):
+        t = self.make()
+        t.wait(10_000_000)
+        self.assertEqual(self.slept, [])
+
+    def test_manual_limit_paces_the_writes(self):
+        t = self.make({"mode": "manual", "mb_per_s": 2})
+        for _ in range(4):
+            t.wait(1_000_000)                      # 4 MB at 2 MB/s: the last block may go at 1.5 s
+        self.assertAlmostEqual(sum(self.slept), 1.5, places=1)
+
+    def test_auto_is_unlimited_until_the_pc_is_busy(self):
+        t = self.make({"mode": "auto", "mb_per_s": 0, "busy": False, "busy_mb_per_s": 10})
+        self.assertIsNone(t.limit())
+        t = self.make({"mode": "auto", "mb_per_s": 0, "busy": True, "busy_mb_per_s": 10})
+        self.assertEqual(t.limit(), 10_000_000)
+
+    def test_auto_ceiling_applies_even_when_idle(self):
+        t = self.make({"mode": "auto", "mb_per_s": 50, "busy": False, "busy_mb_per_s": 10})
+        self.assertEqual(t.limit(), 50_000_000)
+        t = self.make({"mode": "auto", "mb_per_s": 5, "busy": True, "busy_mb_per_s": 10})
+        self.assertEqual(t.limit(), 5_000_000)
+
+    def test_off_ignores_the_numbers(self):
+        self.assertIsNone(self.make({"mode": "off", "mb_per_s": 5, "busy": True}).limit())
+
+    def test_a_change_is_picked_up_while_running(self):
+        t = self.make({"mode": "manual", "mb_per_s": 1})
+        self.assertEqual(t.limit(), 1_000_000)
+        t.path.write_text('{"mode": "off"}')
+        self.clock[0] += 2
+        self.assertIsNone(t.limit())
+
+    def test_a_cancelled_download_stops_waiting(self):
+        t = self.make({"mode": "manual", "mb_per_s": 1})
+        t.wait(1_000_000)
+        abort = threading.Event()
+        abort.set()
+        with self.assertRaises(download.Aborted):
+            t.wait(5_000_000, abort)
+
+    def test_a_throttled_download_still_arrives_whole(self):
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        dest = Path(d.name) / "f.bin"
+        part = Path(d.name) / ".cache" / "f.part"
+        slept = []
+        t = download.Throttle(None)
+        t.limit = lambda: 100_000_000.0
+        t.sleep = slept.append
+        s = Server()
+        self.addCleanup(s.close)
+        download.fetch_file(s.url, dest, part, len(DATA), None, threading.Event(), throttle=t)
+        self.assertEqual(dest.read_bytes(), DATA)
+
+
+class PipRetry(unittest.TestCase):
+    """A connection reset while pip downloads PyTorch (WinError 10054) is retried, other failures are not."""
+
+    def setUp(self):
+        from reel import installer
+        self.installer = installer
+        self.job = types_ns()
+        self.logged = []
+
+    def run_with(self, results):
+        calls = iter(results)
+        inst = self.installer.InstallManager.__new__(self.installer.InstallManager)
+
+        def fake_run(job, log, cmd, env=None, **kw):
+            r = next(calls)
+            if r:
+                job.log.append(r)
+                raise self.installer.InstallError(r)
+
+        inst._run_cmd = fake_run
+        return inst, calls
+
+    RESET = "Command exited with code 2: ProtocolError: Connection broken: ConnectionResetError(10054)"
+
+    def test_a_dropped_connection_is_retried_until_it_works(self):
+        inst, calls = self.run_with([self.RESET, self.RESET, None])
+        inst._run_pip(self.job, self.logged.append, ["pip"])
+        self.assertEqual(next(calls, "done"), "done")                  # all three attempts were used
+        self.assertEqual(len([l for l in self.logged if "Trying again" in l]), 2)
+
+    def test_it_gives_up_with_a_plain_message_after_four_attempts(self):
+        inst, _ = self.run_with([self.RESET] * 4)
+        with self.assertRaisesRegex(self.installer.InstallError, "connection kept dropping"):
+            inst._run_pip(self.job, self.logged.append, ["pip"])
+
+    def test_other_failures_are_not_retried(self):
+        inst, calls = self.run_with(["Command exited with code 1: No matching distribution found", None])
+        with self.assertRaises(self.installer.InstallError):
+            inst._run_pip(self.job, self.logged.append, ["pip"])
+        self.assertEqual(list(calls), [None])                           # the second attempt was never made
+
+    def test_is_network_failure(self):
+        f = self.installer.is_network_failure
+        self.assertTrue(f(["pip._vendor.urllib3.exceptions.ProtocolError: ('Connection broken: ConnectionResetError(10054, ...)"]))
+        self.assertFalse(f(["ERROR: No matching distribution found for nothing"]))
+
+
+def types_ns():
+    import collections
+    import threading
+    ns = unittest.mock.MagicMock()
+    ns.log = collections.deque()
+    ns.cancel = threading.Event()
+    ns.cancel.wait = lambda t: False
+    return ns

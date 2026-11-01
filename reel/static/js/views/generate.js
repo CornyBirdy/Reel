@@ -1,27 +1,30 @@
-import { h, icon, clear, toast, fmtDuration, fmtDate, progressBar, statusBadge, viewLog } from "../ui.js";
+import { h, icon, clear, toast, fmtDuration, fmtDate, progressBar, statusBadge, viewLog, tip, menuButton } from "../ui.js";
 import { api } from "../api.js";
 import { KEEPS_MEMORY, crashNotice, holdsText, holdsTitle, idleText, loadButton, loadingNote, logButton, stateChip, stateOf, watchWorker } from "../worker.js";
 import { ATTN_LABEL, OFFLOAD_HINT, OFFLOAD_LABEL, QUANT_LABEL, describeCeiling, dims, resolutionChoices, snapFrames } from "../limits.js";
 import { fetchEstimate, renderEstimate } from "../estimate.js";
 import { openModelSettings } from "../model_settings.js";
-import { filePicker, itemFromClip, measure, pointPicker } from "../inputs.js";
+import { captureFrame, filePicker, flagPicker, itemFromClip, measure, pointPicker } from "../inputs.js";
+import { openSavedPrompts, promptIdeas } from "../prompts.js";
 
 const FORM_KEY = "reel.generate.form";
 const PHASES = {
   video: [["loading", "Load model"], ["denoising", "Generate frames"], ["decoding", "Decode video"], ["encoding", "Write mp4"]],
   image: [["loading", "Load model"], ["denoising", "Generate image"], ["decoding", "Decode image"], ["encoding", "Save PNG"]],
   replace: [["loading", "Load model"], ["masking", "Find the person"], ["denoising", "Generate frames"], ["decoding", "Decode video"], ["encoding", "Write mp4"]],
+  reference: [["loading", "Read references"], ["denoising", "Generate video and sound"], ["decoding", "Decode"], ["encoding", "Write mp4"]],
   upscale: [["loading", "Load upscaler"], ["denoising", "Upscale"], ["encoding", "Save"]],
 };
 const KIND_LABEL = { image: "Image", video: "Video" };
 // What the form can do. A model lists the modes it supports; the first three produce a picture, the rest a video.
-const MODES = [["image", "Image", "image"], ["video", "Video", "generate"], ["edit", "Edit", "edit"], ["frames", "Frames", "load"], ["replace", "Replace", "rerun"]];
-const MODE_KIND = { image: "image", edit: "image", video: "video", frames: "video", replace: "video" };
-const MODE_LABEL = { image: "Image", video: "Video", edit: "Edit a picture", frames: "Start and end frames", replace: "Replace a person" };
+const MODES = [["image", "Image", "image"], ["video", "Video", "generate"], ["edit", "Edit", "edit"], ["frames", "Frames", "load"], ["replace", "Replace", "rerun"], ["reference", "Reference", "frame"]];
+const MODE_KIND = { image: "image", edit: "image", video: "video", frames: "video", replace: "video", reference: "video" };
+const MODE_LABEL = { image: "Image", video: "Video", edit: "Edit a picture (or mix several)", frames: "Start and end frames", replace: "Replace a person", reference: "From references: pictures, videos and recordings" };
 const MODE_HELP = {
   edit: "Edit models change a picture you give them, from a written instruction. Install Qwen-Image-Edit or FLUX.1 Kontext from the Library.",
   frames: "Frames mode makes a clip that starts on (and optionally ends on) pictures you choose. LTX-Video does it: install it from the Library.",
   replace: "Replace mode swaps a person in a video for someone from a photo. Install Wan2.1 VACE from the Library.",
+  reference: "Reference mode makes a clip with sound from pictures, videos and recordings you arrange. Install MiniMax-H3 Reference from the Library.",
 };
 const PLACEHOLDER = {
   image: "A watercolor fox in a misty pine forest, soft morning light, detailed fur…",
@@ -29,6 +32,7 @@ const PLACEHOLDER = {
   edit: "Change the jacket to red leather and keep everything else the same…",
   frames: "The camera slowly pushes in as the light changes from dawn to full day…",
   replace: "A woman with short red hair in a green raincoat walks along the same street…",
+  reference: "<Picture 1> walks toward the camera and sings along to <Audio 1>, handheld shot, warm stage lighting…",
 };
 const supports = (m, mode) => (m.modes || [m.kind]).includes(mode);
 // Clips from models that make sound (LTX-2) play with it. A browser may refuse sound before the page has been clicked: then
@@ -39,13 +43,15 @@ function playWithSound(video) {
 }
 const isImageUrl = (url) => /\.png$/i.test(url);
 // Element.append turns null into the text "null"; optional children are dropped here instead.
+const setTip = (el, text) => { el.dataset.tip = text; el.setAttribute("aria-label", text); el.hidden = !text; };
 const put = (el, ...kids) => el.append(...kids.filter((k) => k !== null && k !== undefined && k !== false));
 
 const loadForm = () => { try { return JSON.parse(localStorage.getItem(FORM_KEY)) || {}; } catch { return {}; } };
 const saveForm = (v) => { try { localStorage.setItem(FORM_KEY, JSON.stringify(v)); } catch { /* ignore */ } };
 
+// A labelled control. The explanation is a tooltip beside the label, not a line of grey text under the control.
 function field(label, control, hint, id) {
-  return h("div", { class: "field" }, h("label", { for: id }, label), control, hint ? h("span", { class: "field-hint" }, hint) : null);
+  return h("div", { class: "field" }, h("div", { class: "label-row" }, h("label", { for: id }, label), hint ? tip(hint) : null), control);
 }
 
 export async function mount(root) {
@@ -62,7 +68,7 @@ export async function mount(root) {
   let shownClipId = null;
   let history = { clips: [], total: 0 };
   const saved = loadForm();
-  for (const [name, v] of Object.entries(saved.inputs || {})) if (Array.isArray(v)) inputVals[name] = v;   // what was added before leaving this page
+  for (const [name, v] of Object.entries(saved.inputs || {})) if (Array.isArray(v) || v === true) inputVals[name] = v;   // what was added before leaving this page
   let userPicked = false;   // the viewer shows something chosen from History: a finished run must not take it over
   let estTimer = null, estSeq = 0;
   let worker = null;     // what is loaded right now (GET /api/worker)
@@ -76,7 +82,7 @@ export async function mount(root) {
   const outputCard = h("section", { class: "card stack-16 gen-output" }, progressEl, viewerEl);
   const historyEl = h("section", { class: "stack-16" });
   root.append(h("div", { class: "view" },
-    h("div", { class: "page-head" }, h("h1", {}, "Generate"), h("p", {}, "Describe what you want, pick an installed model, and render it on this PC.")),
+    h("div", { class: "page-head" }, h("h1", {}, "Generate")),
     h("div", { class: "gen-layout" }, formCard, outputCard), historyEl));
 
   // ---- data ----
@@ -101,6 +107,18 @@ export async function mount(root) {
 
   // ---- form ----
   const f = {}; // element refs
+  function insertAtCursor(el, text) {
+    const a = el.selectionStart ?? el.value.length, z = el.selectionEnd ?? el.value.length;
+    const pad = (before) => (before && !/\s$/.test(before) ? " " : "");
+    el.value = el.value.slice(0, a) + pad(el.value.slice(0, a)) + text + el.value.slice(z);
+    const at = a + pad(el.value.slice(0, a)).length + text.length;
+    el.focus(); el.setSelectionRange(at, at); persist();
+  }
+  function savePromptNow() {
+    const text = f.prompt.value.trim();
+    if (!text) { toast("Write a prompt first.", "warning"); return; }
+    import("../prompts.js").then((m) => { m.addSaved(text); toast("Prompt saved.", "success", 2000); });
+  }
   let model = null;
 
   function buildForm() {
@@ -131,7 +149,7 @@ export async function mount(root) {
     f.custom = h("div", { class: "grid-2", hidden: true }, field("Width", f.cw, null, "g-cw"), field("Height", f.ch, null, "g-ch"));
     f.frames = h("input", { id: "g-frames", type: "range", oninput: () => { syncFrames(); persist(); validate(); refreshEstimate(); } });
     f.framesOut = h("span", { class: "mono" });
-    f.framesHint = h("span", { class: "field-hint" });
+    f.framesTip = tip("");
     f.fps = h("input", { id: "g-fps", class: "input", type: "number", min: 1, max: 60, oninput: () => { syncFrames(); persist(); } });
     f.est = h("div", { class: "stack-8 mem-est", "aria-live": "polite" });
     f.seed = h("input", { id: "g-seed", class: "input input-mono", type: "number", min: 0, max: 4294967295, placeholder: "Random", oninput: persist });
@@ -141,8 +159,8 @@ export async function mount(root) {
     f.quant = h("select", { id: "g-quant", class: "select", onchange: () => { persist(); refreshEstimate(); renderWorker(); } });
     f.tiling = h("input", { id: "g-tiling", type: "checkbox", onchange: () => { persist(); refreshEstimate(); renderWorker(); } });
     f.attn = h("select", { id: "g-attn", class: "select", onchange: () => { persist(); renderWorker(); } });
-    f.attnHint = h("span", { class: "field-hint" });
-    f.attnField = h("div", { class: "field" }, h("label", { for: "g-attn" }, "Attention backend"), f.attn, f.attnHint);
+    f.attnTip = tip("");
+    f.attnField = h("div", { class: "field" }, h("div", { class: "label-row" }, h("label", { for: "g-attn" }, "Attention backend"), f.attnTip), f.attn);
     f.caps = h("div", { class: "field-hint" });
     f.warn = h("div", { class: "stack-8" });
     f.fit = h("div", { class: "stack-8" });
@@ -152,37 +170,54 @@ export async function mount(root) {
     f.stop = h("button", { class: "btn", type: "button", hidden: true, onclick: () => api.post("/api/generate/cancel").catch((e) => toast(e.message, "danger")) }, icon("stop"), "Cancel");
     f.pause = h("button", { class: "btn", type: "button", hidden: true, onclick: () => togglePause() });
 
+    const ctl = controls();
+    f.go.title = "Ctrl+Enter";
     formCard.append(
       field("Model", f.model, null, "g-model"),
       f.worker,
       f.inputs,
-      field("Prompt", f.prompt, mode === "edit" ? "Say what to change, as an instruction (\"make the sky stormy\"). Everything you do not mention is kept."
-        : mode === "replace" ? "Describe the new person and the scene as it should look."
-        : "Describe subject, action, camera and lighting. Longer, concrete prompts work best.", "g-prompt"),
-      field("Negative prompt", f.negative, null, "g-neg"),
+      h("div", { class: "field" },
+        h("div", { class: "label-row" }, h("label", { for: "g-prompt" }, "Prompt"),
+          tip(mode === "edit" ? "Say what to change, as an instruction (\"make the sky stormy\"). Everything you do not mention is kept. With several pictures, refer to them as picture 1, picture 2."
+            : mode === "replace" ? "Describe the new person and the scene as it should look."
+            : mode === "reference" ? "Describe the shot and what each reference does. Name them as numbered on the thumbnails: <Picture 1>, <Video 1>, <Audio 1>. Dialogue goes in <d>…</d>."
+            : "Describe subject, action, camera and lighting. Longer, concrete prompts work best."),
+          h("span", { class: "grow" }),
+          menuButton("Prompt tools", "wand", [
+            ...promptIdeas(kind, mode).map(([label, text]) => [label, "plus", () => insertAtCursor(f.prompt, text)]),
+            ["Save this prompt", "bookmark", () => savePromptNow(), { disabled: false }],
+            ["Saved prompts…", "bookmark", () => openSavedPrompts({ current: () => f.prompt.value, onUse: (t) => { f.prompt.value = t; persist(); f.prompt.focus(); } })],
+            ["Clear prompt", "x", () => { f.prompt.value = ""; persist(); }],
+          ])),
+        f.prompt),
       h("div", { class: kind === "video" ? "grid-2" : "" },
         field("Resolution", f.res, null, "g-res"),
         kind === "video" ? h("div", { class: "field" },
-          h("label", { for: "g-frames" }, "Frames: ", f.framesOut), f.frames, f.framesHint) : null),
+          h("div", { class: "label-row" }, h("label", { for: "g-frames" }, "Frames: ", f.framesOut), f.framesTip), f.frames) : null),
       f.custom,
-      h("div", { class: kind === "video" ? "grid-2" : "grid-3" },
-        field("Seed", h("div", { class: "row-8" },
-          h("div", { class: "grow" }, f.seed),
-          h("button", { class: "btn btn-icon", type: "button", title: "Random seed", "aria-label": "Random seed", onclick: () => { f.seed.value = Math.floor(Math.random() * 4294967295); persist(); } }, icon("dice"))), null, "g-seed"),
-        field("Steps", f.steps, null, "g-steps"),
-        field("Guidance", f.guidance, null, "g-guidance"),
-        kind === "video" ? field("Frames per second", f.fps, null, "g-fps") : null),
+      f.est, f.fit, f.warn,
+      h("div", { class: "row-8 action-row" },
+        h("div", { class: "count-pick" }, h("div", { class: "label-row" }, h("label", { for: "g-count", class: "count-label" }, "Count"),
+          tip("Several at once: the model loads once, then each one uses its own seed (seed, seed+1, …). Every finished one is saved as it completes.")), f.count),
+        f.go, f.pause, f.stop),
       h("details", { class: "memory" },
-        h("summary", {}, "Memory options (VRAM saving)"),
+        h("summary", {}, "Advanced"),
         h("div", { class: "stack-12" },
-          h("div", { class: "grid-2" }, field("Offloading", f.offload, OFFLOAD_HINT, "g-offload"), field("Quantization", f.quant, null, "g-quant")),
+          ctl.negative_prompt ? field("Negative prompt", f.negative, "Things the result should avoid.", "g-neg") : null,
+          h("div", { class: "grid-2" },
+            field("Seed", h("div", { class: "row-8" },
+              h("div", { class: "grow" }, f.seed),
+              h("button", { class: "btn btn-icon", type: "button", title: "Random seed", "aria-label": "Random seed", onclick: () => { f.seed.value = Math.floor(Math.random() * 4294967295); persist(); } }, icon("dice"))),
+              "The same seed with the same settings gives the same result. Leave it empty for a random one.", "g-seed"),
+            field("Steps", f.steps, "More steps take longer and are usually a little cleaner.", "g-steps")),
+          h("div", { class: "grid-2" },
+            ctl.guidance ? field("Guidance", f.guidance, "How closely the result follows the prompt.", "g-guidance") : null,
+            kind === "video" ? field("Frames per second", f.fps, null, "g-fps") : null),
+          h("div", { class: "grid-2" }, field("Offloading", f.offload, OFFLOAD_HINT, "g-offload"), field("Quantization", f.quant, "Smaller weights use less memory; 4-bit is the smallest and loses a little quality.", "g-quant")),
           f.attnField,
           h("label", { class: "check" }, f.tiling, "Tiled VAE decode"),
-          h("div", { class: "field-hint", id: "mem-note" }))),
-      f.est, f.caps, f.fit, f.warn,
-      h("div", { class: "row-8 action-row" },
-        h("div", { class: "count-pick" }, h("label", { for: "g-count", class: "count-label" }, "Count"), f.count), f.go, f.pause, f.stop),
-      h("div", { class: "field-hint" }, "Several at once: the model loads once, then each one uses its own seed (seed, seed+1, …). Every finished one is saved as it completes."));
+          f.caps,
+          h("div", { class: "field-hint", id: "mem-note" }))));
 
     applyModel(model, false);
     buildInputs();
@@ -221,6 +256,8 @@ export async function mount(root) {
     const other = w && w.state !== "unloaded" && w.model_id && w.model_id !== model.id ? modelById(w.model_id) : null;
     f.worker.append(h("div", { class: "row-8" },
       stateChip(st, st === "loading" ? w.message : undefined),
+      tip(st === "unloaded" ? "Generate loads the model for you. Loading takes a while the first time; later runs reuse it."
+        : `${KEEPS_MEMORY} ${idleText(w) || ""}`.trim()),
       holds ? h("span", { class: "muted mono", title: holdsTitle(w) }, holds) : null,
       h("span", { class: "grow" }),
       logButton(w),
@@ -228,10 +265,8 @@ export async function mount(root) {
         onclick: () => openModelSettings(model, { onSaved: afterSettingsSaved }) }, icon("settings")),
       loadButton(model, w, { onDone: () => watcher && watcher.poke(), memory: memorySettings, compact: true })));
     const notes = [];
-    if (st === "unloaded" && !other) notes.push("Generate loads it automatically. Loading takes a while the first time; later runs reuse it.");
     if (other) notes.push(`${other.name} is loaded. Loading or generating with this model unloads it first: only one model fits on the GPU at a time.`);
     if (st === "ready" || st === "generating") {
-      notes.push(`${KEEPS_MEMORY} ${idleText(w) || ""}`.trim());
       const cur = w.settings || {}, want = memorySettings();
       if (st === "ready" && Object.keys(want).some((k) => want[k] !== undefined && cur[k] !== undefined && cur[k] !== want[k])) {
         notes.push("Your memory options differ from what is loaded, so the next Generate reloads the model.");
@@ -282,7 +317,7 @@ export async function mount(root) {
     }
     f.tiling.checked = sv.vae_tiling ?? d.vae_tiling;
     f.attnField.hidden = !mem.attention_options;
-    f.attnHint.textContent = mem.attention_note || "How the denoiser computes attention. Native is PyTorch's own and always works.";
+    setTip(f.attnTip, mem.attention_note || "How the denoiser computes attention. Native is PyTorch's own and always works.");
     clear(f.attn);
     for (const o of mem.attention_options || []) f.attn.append(h("option", { value: o }, ATTN_LABEL[o] || o));
     if (mem.attention_options) f.attn.value = pick(f.attn, sv.attention_backend, d.attention_backend || "native");
@@ -317,9 +352,9 @@ export async function mount(root) {
   function describeLimits() {
     f.caps.textContent = describeCeiling(model, kind);
     const nat = model.native, lim = model.limits;
-    f.framesHint.textContent = kind === "video"
+    setTip(f.framesTip, kind === "video"
       ? (nat?.frames?.length ? `Native: ${nat.frames.join(" or ")} frames (${lim.frames.step}n+${lim.frames.offset})` : `${lim.frames.step}n+${lim.frames.offset} frames`) + `, up to ${maxFrames()}`
-      : "";
+      : "");
   }
 
   function syncCustom() {
@@ -375,6 +410,7 @@ export async function mount(root) {
   }
 
   // ---- inputs: the pictures or video the model works from ----
+  const controls = () => ({ guidance: true, negative_prompt: true, ...((model && model.controls) || {}) });
   const modeRules = () => Object.entries((model && model.inputs) || {}).filter(([, r]) => (r.modes || model.modes || [model.kind]).includes(mode));
   let primaryRef = null;     // the picture/video the size was last matched to
 
@@ -385,28 +421,39 @@ export async function mount(root) {
     f.inputs.hidden = !rules.length;
     if (!rules.length) return;
     for (const [name, rule] of rules) {
+      if (rule.type === "flag") {
+        const picker = flagPicker(name, rule, { initial: inputVals[name] === true, onChange: (on) => { inputVals[name] = on; persist(); } });
+        pickers[name] = picker;
+        f.inputs.append(picker.el);
+        continue;
+      }
       const picker = rule.type === "point"
         ? pointPicker(name, rule, { initial: inputVals[name] || null, onChange: (p) => { inputVals[name] = p; persist(); } })
-        : filePicker(name, rule, { initial: (inputVals[name] || []).filter((i) => i.kind === rule.type), onChange: (items) => { inputVals[name] = items; inputsChanged(); persist(); } });
+        : filePicker(name, rule, {
+            initial: (inputVals[name] || []).filter((i) => rule.type === "media" ? true : i.kind === rule.type),
+            onChange: (items) => { inputVals[name] = items; inputsChanged(); persist(); },
+            onInsert: (tag) => insertAtCursor(f.prompt, tag) });
       pickers[name] = picker;
       f.inputs.append(rule.type === "point" ? h("div", { class: "field" }, h("label", {}, rule.label || name), picker.el)
-        : h("div", { class: "field" }, h("label", {}, rule.label || name, rule.required ? " *" : ""), picker.el, rule.help ? h("span", { class: "field-hint" }, rule.help) : null));
+        : h("div", { class: "field" }, h("div", { class: "label-row" }, h("label", {}, rule.label || name, rule.required ? " *" : ""), rule.help ? tip(rule.help) : null), picker.el));
     }
-    f.inputs.append(h("div", { class: "row-8" }, h("button", { class: "btn btn-ghost", type: "button",
-      title: "Set the width and height to the first picture's shape, at this model's usual size", onclick: () => matchSize(primaryItem()) }, icon("image"), "Match picture size")));
-    for (const [name, rule] of rules) if (rule.type !== "point" && !inputVals[name]) inputVals[name] = [];
+    if (rules.some(([, r]) => r.type === "image" || r.type === "video")) {
+      f.inputs.append(h("div", { class: "row-8" }, h("button", { class: "btn btn-ghost", type: "button",
+        title: "Set the width and height to the first picture's shape, at this model's usual size", onclick: () => matchSize(primaryItem()) }, icon("image"), "Match picture size")));
+    }
+    for (const [name, rule] of rules) if (rule.type !== "point" && rule.type !== "flag" && !inputVals[name]) inputVals[name] = [];
     primaryRef = (primaryItem() || {}).ref || null;
     syncPoint();
   }
 
   const primaryItem = () => {
-    for (const [name, rule] of modeRules()) if (rule.type !== "point") { const it = (inputVals[name] || [])[0]; if (it) return it; }
+    for (const [name, rule] of modeRules()) if (rule.type === "image" || rule.type === "video") { const it = (inputVals[name] || [])[0]; if (it) return it; }
     return null;
   };
 
   function inputsChanged() {
     const first = primaryItem();
-    if (first && first.ref !== primaryRef) matchSize(first);
+    if (first && first.ref !== primaryRef && mode !== "reference") matchSize(first);
     primaryRef = first ? first.ref : null;
     syncPoint();
   }
@@ -440,6 +487,7 @@ export async function mount(root) {
     for (const [name, rule] of modeRules()) {
       const v = inputVals[name];
       if (rule.type === "point") { if (v) out[name] = v; }
+      else if (rule.type === "flag") { if (v) out[name] = true; }
       else if (v && v.length) out[name] = v.map((i) => i.ref);
     }
     return out;
@@ -447,7 +495,7 @@ export async function mount(root) {
 
   function missingInput() {
     for (const [name, rule] of modeRules()) {
-      if (rule.required && !(inputVals[name] || []).length) return `${rule.label || name}: add a ${rule.type === "video" ? "video" : "picture"} first.`;
+      if (rule.required && !(inputVals[name] || []).length) return `${rule.label || name}: add ${rule.type === "media" ? "at least one picture or video" : `a ${rule.type === "video" ? "video" : "picture"}`} first.`;
     }
     return null;
   }
@@ -458,6 +506,7 @@ export async function mount(root) {
     start: { mode: "frames", input: "start_image", label: "Start frame", ic: "load" },
     end: { mode: "frames", input: "end_image", label: "End frame", ic: "load" },
     replace: { mode: "replace", input: "video", label: "Replace a person", ic: "rerun" },
+    reference: { mode: "reference", input: "references", label: "Use as reference", ic: "frame" },
   };
   const canUse = (use) => models.some((m) => supports(m, use.mode) && m.inputs && m.inputs[use.input]);
 
@@ -467,12 +516,33 @@ export async function mount(root) {
     if (!options.length) { toast("Install a model for this in the Library first.", "warning"); return; }
     setMode(use.mode);
     wantedModel = (options.find((m) => model && m.id === model.id) || options[0]).id;
-    inputVals[use.input] = [itemFromClip(clip)];
+    const rule = options.find((m) => m.id === wantedModel).inputs[use.input];
+    const have = Array.isArray(inputVals[use.input]) ? inputVals[use.input] : [];
+    // a list of references grows; a single slot is replaced
+    inputVals[use.input] = rule.type === "media" ? [...have.filter((i) => i.ref !== `clip:${clip.id}`), itemFromClip(clip)].slice(0, rule.max) : [itemFromClip(clip)];
     primaryRef = null;
     buildForm(); persist(); renderOutput();
     const first = primaryItem();
-    if (first) measure(first, () => matchSize(first));
+    if (first && mode !== "reference") measure(first, () => matchSize(first));
     formCard.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  // Take a frame from a clip in History (the one on screen, or the last) and make it the start frame of a new clip, so clips can be chained.
+  async function useFrame(clip, where) {
+    const options = models.filter((m) => supports(m, "frames") && m.inputs && m.inputs.start_image);
+    if (!options.length) { toast("Install a model that does start and end frames first.", "warning"); return; }
+    const player = viewerEl.querySelector("video.player");
+    try {
+      toast("Taking the frame…", "info", 1500);
+      const item = await captureFrame(clip.url, where, where === "current" && player ? player.currentTime : null);
+      setMode("frames");
+      wantedModel = (options.find((m) => model && m.id === model.id) || options[0]).id;
+      inputVals.start_image = [item];
+      primaryRef = null;
+      buildForm(); persist(); renderOutput();
+      matchSize(item);
+      formCard.scrollIntoView({ behavior: "smooth", block: "start" });
+    } catch (e) { toast(e.message, "danger", 6000); }
   }
 
   // ---- live memory estimate (VRAM and system RAM) against what this PC has right now ----
@@ -524,8 +594,9 @@ export async function mount(root) {
   function storedInputs() {
     const out = {};
     for (const [name, v] of Object.entries(inputVals)) {
+      if (v === true) { out[name] = true; continue; }
       if (!Array.isArray(v) || !v.length) continue;
-      out[name] = typeof v[0] === "number" ? v : v.map(({ ref, url, kind }) => ({ ref, url, kind }));
+      out[name] = typeof v[0] === "number" ? v : v.map(({ ref, url, kind, name: fileName }) => ({ ref, url, kind, name: fileName }));
     }
     return out;
   }
@@ -533,7 +604,7 @@ export async function mount(root) {
   async function dropGoneInputs() {
     let lost = 0;
     for (const [name, v] of Object.entries(inputVals)) {
-      if (!Array.isArray(v) || typeof v[0] === "number") continue;
+      if (!Array.isArray(v) || typeof v[0] === "number" || !v.length) continue;
       const checked = await Promise.all(v.map((it) => api.get(`/api/inputs/describe?ref=${encodeURIComponent(it.ref)}`).then(() => it, () => null)));
       const kept = checked.filter(Boolean);
       lost += v.length - kept.length;
@@ -552,6 +623,7 @@ export async function mount(root) {
     if (wantMode !== mode || !model || model.id !== m.id) { setMode(wantMode); wantedModel = m.id; buildForm(); }
     // put back the pictures or video it was made from (an upload that has expired is skipped)
     for (const [name, value] of Object.entries(p.inputs || {})) {
+      if (value === true) { inputVals[name] = true; continue; }
       if (!Array.isArray(value)) continue;
       if (value.length === 2 && typeof value[0] === "number") { inputVals[name] = value; continue; }
       const got = await Promise.all(value.map((ref) => api.get(`/api/inputs/describe?ref=${encodeURIComponent(ref)}`).catch(() => null)));
@@ -672,7 +744,7 @@ export async function mount(root) {
         job.reused ? h("div", { class: "field-hint" }, "The model was already loaded, so this run skipped loading.") : null,
         h("p", { class: "muted" }, job.params.prompt),
         job.clips.length ? h("div", { class: "stack-8" }, h("h4", {}, `Finished so far (${job.clips.length})`), batchStrip(job, true)) : null,
-        h("div", { class: "field-hint" }, "You can look at anything in History while this runs.")));
+        null));
       return;
     }
     if (job && job.status === "failed") {
@@ -726,12 +798,31 @@ export async function mount(root) {
         clip.peak_vram_gb ? stat("Peak VRAM", `${clip.peak_vram_gb} GB`) : null),
       h("div", { class: "row-8" },
         h("a", { class: "btn", href: clip.url, download: `reel-${clip.id}.${image ? "png" : "mp4"}` }, icon("download"), "Download"),
-        upscaled ? null : h("button", { class: "btn", type: "button", onclick: () => loadSettings(clip) }, icon("load"), "Reuse settings"),
-        upscaled ? null : h("button", { class: "btn", type: "button", disabled: activeRunning(), onclick: () => rerun(clip) }, icon("rerun"), "Re-run"),
-        ...upscaleButtons(clip),
-        ...(image ? ["edit", "start", "end"] : ["replace"]).filter((k) => canUse(USES[k])).map((k) => h("button", { class: "btn", type: "button", disabled: activeRunning(),
-          title: `Open ${USES[k].label.toLowerCase()} with this ${image ? "picture" : "video"} already added`, onclick: () => useAs(clip, k) }, icon(USES[k].ic), USES[k].label))));
+        upscaled ? null : h("button", { class: "btn", type: "button", title: "Put this clip's prompt and settings back in the form", onclick: () => loadSettings(clip) }, icon("load"), "Reuse settings"),
+        upscaled ? null : h("button", { class: "btn", type: "button", title: "Run it again with the same seed", disabled: activeRunning(), onclick: () => rerun(clip) }, icon("rerun"), "Re-run"),
+        clipMenu(clip, image, upscaled)));
     renderHistory();
+  }
+
+  // The less common actions on a result, in one menu.
+  function clipMenu(clip, image, upscaled) {
+    const items = [];
+    if (upscalers.length) {
+      for (const n of upscalers[0].limits.scales || [2, 4]) {
+        items.push([`Upscale ${n}×`, "upscale", () => upscale(clip, n), { disabled: activeRunning(), title: `Make this ${n}× bigger with ${upscalers[0].name}; saved as a new item in History` }]);
+      }
+    } else items.push(["Get the upscaler", "upscale", () => { location.hash = "#/library"; }, { title: "Install Real-ESRGAN from the Library first" }]);
+    if (!upscaled) {
+      for (const k of image ? ["edit", "start", "end", "reference"] : ["replace", "reference"]) {
+        if (canUse(USES[k])) items.push([USES[k].label, USES[k].ic, () => useAs(clip, k), { disabled: activeRunning() }]);
+      }
+      if (!image && models.some((m) => supports(m, "frames") && m.inputs && m.inputs.start_image)) {
+        items.push(["Start frame: this frame", "frame", () => useFrame(clip, "current"), { disabled: activeRunning(), title: "Pause the video where you want, then choose this" }]);
+        items.push(["Continue from the last frame", "frame", () => useFrame(clip, "last"), { disabled: activeRunning(), title: "Start a new clip where this one ended" }]);
+      }
+    }
+    items.push(["Copy prompt", "copy", () => { navigator.clipboard.writeText(clip.prompt).then(() => toast("Prompt copied.", "success", 1500), () => toast("Could not copy.", "warning")); }]);
+    return menuButton("More", "more", items);
   }
 
   // Thumbnails of one batch's results. While running they are informational; afterwards they switch the viewer.
@@ -844,7 +935,9 @@ export async function mount(root) {
   else if (history.clips.length) shownClipId = history.clips[0].id;
   renderOutput();
   if (activeRunning()) poll();
+  const onKey = (e) => { if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && alive && f.go && !f.go.hidden && !f.go.disabled) { e.preventDefault(); start(); } };
+  document.addEventListener("keydown", onKey);
   const onWake = () => { if (alive && activeRunning()) poll(); else if (alive) renderOutput(); };
   document.addEventListener("reel:wake", onWake);
-  return { unmount() { alive = false; clearTimeout(timer); clearTimeout(estTimer); if (watcher) watcher.stop(); document.removeEventListener("reel:wake", onWake); } };
+  return { unmount() { alive = false; clearTimeout(timer); clearTimeout(estTimer); if (watcher) watcher.stop(); document.removeEventListener("reel:wake", onWake); document.removeEventListener("keydown", onKey); } };
 }

@@ -1,4 +1,5 @@
-"""Pictures and videos a model takes as input: an image to edit, start and end frames, a video to replace a person in.
+"""Pictures, videos and sound a model takes as input: an image to edit, start and end frames, a video to replace a person in,
+a set of references (pictures, clips and recordings) for a model that works from several at once.
 
 An input is referred to by a short reference, never by a path:
 
@@ -20,10 +21,13 @@ from . import config, history, recipes
 
 MAX_IMAGE_BYTES = 40 * 1024 * 1024
 MAX_VIDEO_BYTES = 400 * 1024 * 1024
+MAX_AUDIO_BYTES = 200 * 1024 * 1024
+VIDEO_EXT = (".mp4", ".webm")
+AUDIO_EXT = (".wav", ".mp3", ".flac", ".ogg", ".m4a")
 KEEP_DAYS = 30
 ID_RE = re.compile(r"^[0-9a-f]{12}$")
 CLIP_RE = re.compile(r"^[A-Za-z0-9_-]{1,40}$")
-TYPES = ("image", "video", "point")
+TYPES = ("image", "video", "audio", "point", "media", "flag")
 
 
 class InputError(ValueError):
@@ -39,9 +43,19 @@ def sniff(data: bytes) -> tuple[str, str] | None:
     if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
         return "image", "webp"
     if data[4:8] == b"ftyp":
+        if data[8:12] in (b"M4A ", b"M4B ", b"M4P "):
+            return "audio", "m4a"
         return "video", "mp4"        # also .mov and the like: the same container family
     if data.startswith(b"\x1a\x45\xdf\xa3"):
         return "video", "webm"
+    if data[:4] == b"RIFF" and data[8:12] == b"WAVE":
+        return "audio", "wav"
+    if data.startswith(b"ID3") or (len(data) > 1 and data[0] == 0xFF and data[1] & 0xE0 == 0xE0):
+        return "audio", "mp3"
+    if data.startswith(b"fLaC"):
+        return "audio", "flac"
+    if data.startswith(b"OggS"):
+        return "audio", "ogg"
     return None
 
 
@@ -49,9 +63,9 @@ def store(data: bytes) -> dict:
     """Save an upload. Returns {"ref", "id", "kind", "url", "bytes"}."""
     found = sniff(data[:32])
     if not found:
-        raise InputError("That file is not a picture (PNG, JPEG, WebP) or a video (MP4, MOV, WebM) Reel can read.")
+        raise InputError("That file is not a picture (PNG, JPEG, WebP), a video (MP4, MOV, WebM) or a recording (WAV, MP3, FLAC, OGG, M4A) Reel can read.")
     kind, ext = found
-    limit = MAX_IMAGE_BYTES if kind == "image" else MAX_VIDEO_BYTES
+    limit = {"image": MAX_IMAGE_BYTES, "video": MAX_VIDEO_BYTES, "audio": MAX_AUDIO_BYTES}[kind]
     if len(data) > limit:
         raise InputError(f"That {kind} is {len(data) / 1e6:.0f} MB; the limit is {limit // 1024 // 1024} MB.")
     config.INPUTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -82,7 +96,7 @@ def describe(ref: str) -> dict:
         if not ID_RE.match(ident):
             raise InputError("That upload is not valid.")
         for p in config.INPUTS_DIR.glob(f"{ident}.*") if config.INPUTS_DIR.exists() else []:
-            kind = "video" if p.suffix.lower() in (".mp4", ".webm") else "image"
+            kind = "video" if p.suffix.lower() in VIDEO_EXT else "audio" if p.suffix.lower() in AUDIO_EXT else "image"
             p.touch()                                           # in use: keep it
             return {"ref": ref, "kind": kind, "url": f"/inputs/{p.name}", "path": p}
         raise InputError("That upload is gone (Reel keeps uploads for 30 days). Add it again.")
@@ -120,6 +134,10 @@ def resolve(recipe: dict, raw: dict | None, mode: str, files: bool = False) -> d
         label = rule.get("label", name)
         value = raw.get(name)
         kind = rule["type"]
+        if kind == "flag":
+            if value:
+                out[name] = True
+            continue
         if kind == "point":
             if value in (None, [], ""):
                 continue
@@ -129,6 +147,9 @@ def resolve(recipe: dict, raw: dict | None, mode: str, files: bool = False) -> d
             out[name] = [float(value[0]), float(value[1])]
             continue
         refs = [value] if isinstance(value, str) else list(value or [])
+        if kind == "media":
+            out[name] = _resolve_media(name, rule, label, refs, files)
+            continue
         if not refs:
             if rule.get("required"):
                 noun = "picture" if kind == "image" else kind
@@ -142,3 +163,33 @@ def resolve(recipe: dict, raw: dict | None, mode: str, files: bool = False) -> d
                 raise InputError(f"{label} needs a {'picture' if kind == 'image' else kind}, but that is a {'picture' if f['kind'] == 'image' else f['kind']}.")
         out[name] = [str(f["path"]) for f in found] if files else [f["ref"] for f in found]
     return out
+
+
+NOUNS = {"image": "picture", "video": "video", "audio": "recording"}
+
+
+def _resolve_media(name: str, rule: dict, label: str, refs: list, files: bool) -> list:
+    """An ordered mix of pictures, videos and recordings. The order matters to the model, so it is kept as given.
+
+    The rule says how many of each kind are allowed ("max_by_kind") and how many in all ("max"). With files=True each entry
+    is {"kind", "path"}; otherwise it is the reference string.
+    """
+    if not refs:
+        if rule.get("required"):
+            raise InputError(f"{label}: add at least one picture, video or recording.")
+        return []
+    if len(refs) > rule.get("max", 12):
+        raise InputError(f"{label}: at most {rule.get('max', 12)} in all.")
+    per_kind = rule.get("max_by_kind") or {}
+    found = [describe(r) for r in refs]
+    counts: dict[str, int] = {}
+    for f in found:
+        counts[f["kind"]] = counts.get(f["kind"], 0) + 1
+        if per_kind and f["kind"] not in per_kind:
+            raise InputError(f"{label} does not take a {NOUNS[f['kind']]}.")
+    for k, n in counts.items():
+        if per_kind and n > per_kind.get(k, 0):
+            raise InputError(f"{label}: at most {per_kind[k]} {NOUNS[k]}{'s' if per_kind[k] != 1 else ''} (you added {n}).")
+    if rule.get("needs_visual") and counts.get("audio") and not (counts.get("image") or counts.get("video")):
+        raise InputError(f"{label}: a recording needs at least one picture or video beside it.")
+    return [{"kind": f["kind"], "path": str(f["path"])} for f in found] if files else [f["ref"] for f in found]

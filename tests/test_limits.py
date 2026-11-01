@@ -126,7 +126,7 @@ class Estimate(unittest.TestCase):
             else:
                 self.assertEqual(e["status"], "ok", (rid, e))
 
-    TOO_BIG_FOR_32GB = {"ltx-2"}     # 19B transformer + 27B Gemma text encoder: about 37 GB of RAM even in 4-bit
+    TOO_BIG_FOR_32GB = {"ltx-2", "minimax-h3", "minimax-h3-ref"}     # LTX-2: 19B transformer + 27B Gemma text encoder, about 37 GB of RAM even in 4-bit; MiniMax-H3: 33B + 32B, 75 GB at 8-bit
     BORDERLINE = {"qwen-image-edit", "wan-vace-1.3b"}   # 20B edit model; and VACE parks umT5 (11 GB) in RAM
 
     def test_edit_models_cost_more_than_plain_generation(self):

@@ -1,4 +1,4 @@
-import { h, icon, clear, toast, confirmDialog, fmtBytes, fmtDuration, progressBar, statusBadge, kindBadge } from "../ui.js";
+import { h, icon, clear, toast, confirmDialog, fmtBytes, fmtDuration, progressBar, statusBadge, kindBadge, tip } from "../ui.js";
 import { api } from "../api.js";
 import { openAddFromHF } from "./hf_dialog.js";
 import { openVerify } from "../verify.js";
@@ -63,7 +63,7 @@ function ModelCard(initial, ctx) {
           m0.license ? [" · ", m0.license_url ? h("a", { href: m0.license_url, target: "_blank", rel: "noopener" }, m0.license) : m0.license] : null,
           m0.hf_url ? [" · ", h("a", { href: m0.hf_url, target: "_blank", rel: "noopener", title: "Open this model's page on Hugging Face" }, "Hugging Face ↗")] : null)),
       badgeSlot),
-    h("p", { class: "muted" }, m0.summary || ""),
+    h("p", { class: "muted clamp-3", title: m0.summary || "" }, m0.summary || ""),
     h("div", { class: "stats" },
       stat("Download", `${m0.download_gb} GB`),
       stat("VRAM needed", `~${m0.vram_gb} GB`),
@@ -234,7 +234,7 @@ function ModelCard(initial, ctx) {
           sv.quantization && sv.quantization !== "none" ? sv.quantization.toUpperCase() : null, sv.offload ? `${sv.offload} offload` : null].filter(Boolean);
         memSlot.append(h("div", { class: "field-hint" }, `Saved settings: ${bits.join(" · ")}. Load and Generate start from these.`));
       }
-      if (ws === "ready" || ws === "generating") memSlot.append(h("div", { class: "field-hint" }, `${KEEPS_MEMORY} ${idleText(w) || ""}`.trim()));
+      if (ws === "ready" || ws === "generating") memSlot.append(tip(`${KEEPS_MEMORY} ${idleText(w) || ""}`.trim()));
     });
 
     const fit = m.fit;
@@ -242,10 +242,10 @@ function ModelCard(initial, ctx) {
       const [tone, ic] = { comfortable: ["success", "check"], ok: ["success", "check"], tight: ["info", "info"], low_memory: ["warning", "alert"],
         too_big: ["danger", "error"], no_gpu: ["warning", "alert"] }[fit.level] || ["neutral", "info"];
       fitSlot.append(statusBadge(tone, fit.label, ic, fit.detail));
-      if (m.vram_note) fitSlot.append(h("span", { class: "muted", style: { fontSize: "var(--text-xs)" } }, m.vram_note));
+      if (m.vram_note) fitSlot.append(tip(m.vram_note));
     });
     once(fitNote, JSON.stringify([fit.level, fit.detail]), () => {
-      if (["tight", "low_memory", "too_big", "no_gpu"].includes(fit.level)) fitNote.append(h("div", { class: "muted", style: { fontSize: "var(--text-sm)" } }, fit.detail));
+      if (["low_memory", "too_big"].includes(fit.level)) fitNote.append(h("div", { class: "muted", style: { fontSize: "var(--text-sm)" } }, fit.detail));
     });
 
     diskSlot.hidden = m.disk.total === 0;

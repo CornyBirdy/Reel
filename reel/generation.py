@@ -15,7 +15,7 @@ import uuid
 from collections import deque
 from pathlib import Path
 
-from . import config, diagnostics, history, inputs, procs, recipes, system, workers
+from . import config, diagnostics, estimate, history, inputs, procs, recipes, system, workers
 from .diagnostics import is_native_crash  # noqa: F401
 from .installer import installed_info, installs, model_dir
 from .workers import child_env, WorkerBusy  # noqa: F401  (child_env stays importable from here)
@@ -347,6 +347,9 @@ class GenerationManager:
         recipe, params = job.recipe, job.params
         gen_req = {k: params[k] for k in ("kind", "prompt", "negative_prompt", "width", "height", "steps", "guidance", "frames", "fps") if k in params}
         gen_req["outputs"] = [{"path": it["path"], "seed": it["seed"]} for it in todo]
+        work = job_work_gb(recipe, params)
+        if work:
+            gen_req["plan"] = {"work_gb": work}      # Auto offloading sizes its choice for this job, not just for the weights
         if recipe.get("inputs"):
             gen_req["inputs"] = inputs.resolve(recipe, params.get("inputs"), params["mode"], files=True)   # the model process gets file paths
             gen_req["mode"] = params["mode"]
@@ -531,6 +534,19 @@ class GenerationManager:
             yield evt
 
 
+def job_work_gb(recipe: dict, params: dict) -> float:
+    """The memory this job needs beyond the weights: the denoiser's activations or the VAE decode, whichever is larger.
+    From the same model the memory estimate uses; 0 when the recipe has no profile (Auto then keeps its rule of thumb)."""
+    try:
+        e = estimate.estimate(recipe, params)
+    except Exception:  # noqa: BLE001 - advice only
+        return 0.0
+    if e.get("approximate"):
+        return 0.0
+    b = e.get("breakdown") or {}
+    return round(max(b.get("activations_gb", 0.0), b.get("vae_decode_gb", 0.0)), 2)
+
+
 def load_request(recipe: dict, params: dict) -> dict:
     """What fixes how the model is loaded. A request that changes any of it needs a reload."""
     return {
@@ -587,3 +603,6 @@ class JobEvents:
 
 generation = GenerationManager()
 installs.is_model_busy = generation.is_model_busy
+installs.is_pc_busy = lambda: bool(
+    (generation.current and generation.current.status == "running")
+    or workers.manager.status().get("state") in ("loading", "generating"))
