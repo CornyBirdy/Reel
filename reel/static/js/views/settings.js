@@ -1,10 +1,10 @@
-import { h, icon, clear, toast, confirmDialog, fmtBytes, statusBadge, restartReel } from "../ui.js";
+import { h, icon, clear, toast, confirmDialog, fmtBytes, statusBadge, restartReel, tip } from "../ui.js";
 import { api } from "../api.js";
 
 export async function mount(root) {
   const body = h("div", { class: "stack-16" });
   root.append(h("div", { class: "view" },
-    h("div", { class: "page-head" }, h("h1", {}, "Settings"), h("p", {}, "Where models live, access tokens, and what Reel found on this PC.")),
+    h("div", { class: "page-head" }, h("h1", {}, "Settings")),
     body));
 
   async function load() {
@@ -88,8 +88,7 @@ export async function mount(root) {
       catch (e) { toast(e.message, "danger"); }
     };
     return h("section", { class: "card stack-16" },
-      h("h3", {}, "Updates"),
-      h("p", { class: "muted" }, "Updates Reel from GitHub in one click. Only the program files change; your models, clips, history and settings stay put. This is the only thing Reel contacts GitHub for."),
+      h("h3", {}, "Updates", tip("Updates Reel from GitHub in one click. Only the program files change; your models, clips, history and settings stay put. This is the only thing Reel contacts GitHub for.")),
       upd,
       h("details", {}, h("summary", {}, "Private repository?"),
         h("div", { class: "stack-12" },
@@ -166,8 +165,7 @@ export async function mount(root) {
   function memoryCard(s) {
     const input = h("input", { id: "idle-min", class: "input", type: "number", min: 0, max: 1440, step: 5, value: s.idle_unload_minutes });
     return h("section", { class: "card stack-16" },
-      h("h3", {}, "Models in memory"),
-      h("p", { class: "muted" }, "Reel keeps a model loaded after it generates, so the next run starts straight away. Only one model is on the GPU at a time; loading another unloads the current one, and Reel unloads everything when it closes."),
+      h("h3", {}, "Models in memory", tip("Reel keeps a model loaded after it generates, so the next run starts straight away. Only one model is on the GPU at a time; loading another unloads the current one, and Reel unloads everything when it closes.")),
       h("div", { class: "field" }, h("label", { for: "idle-min" }, "Unload after this many minutes idle"), input,
         h("span", { class: "field-hint" }, "0 = never. A loaded model keeps its memory (with CPU offload that is mostly system RAM) until it is unloaded.")),
       h("div", { class: "row-8" }, h("button", { class: "btn btn-primary", type: "button", onclick: async () => {
@@ -226,8 +224,7 @@ export async function mount(root) {
       } catch (e) { toast(e.message, "danger", 9000); }
     };
     return h("section", { class: "card stack-16" },
-      h("h3", {}, "Model storage"),
-      h("p", { class: "muted" }, "Each model gets its own folder here (environment + weights). Uninstalling deletes only that folder."),
+      h("h3", {}, "Model storage", tip("Each model gets its own folder here (environment + weights). Uninstalling deletes only that folder.")),
       h("div", { class: "field" },
         h("label", { for: "models-dir" }, "Storage folder"),
         h("div", { class: "row-8" },

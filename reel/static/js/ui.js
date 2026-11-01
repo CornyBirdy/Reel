@@ -62,6 +62,11 @@ const ICONS = {
   back: '<path d="M10 6l-6 6 6 6M4 12h16"/>',
   eject: '<path d="M12 5.5 20 14H4zM5 18.5h14"/>',
   log: '<path d="M6 3.5h8.5L19 8v12.5H6z"/><path d="M14 3.5V8.5h5M9.5 12.5h6M9.5 16h6"/>',
+  music: '<path d="M9 18V6l10-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/>',
+  bookmark: '<path d="M6.5 4h11v16.5L12 16.5l-5.5 4z"/>',
+  wand: '<path d="M5 19 16 8M14 6l4 4M18 3v3M16.5 4.5h3M6 5v2M5 6h2M19 14v2M18 15h2"/>',
+  more: '<circle cx="5.5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="18.5" cy="12" r="1.2"/>',
+  frame: '<path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16"/>',
   box: '<path d="M12 3 20.5 7.5v9L12 21l-8.5-4.5v-9z"/><path d="M3.5 7.5 12 12l8.5-4.5M12 12v9"/>',
 };
 
@@ -70,6 +75,25 @@ export function icon(name) {
   wrap.innerHTML =
     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${ICONS[name] || ""}</svg>`;
   return wrap.firstChild;
+}
+
+// A small (i) that explains a control on hover or keyboard focus. Use it instead of a line of grey text under the control.
+export function tip(text) {
+  return h("span", { class: "tip", tabindex: "0", role: "img", "aria-label": text, "data-tip": text }, icon("info"));
+}
+
+// A button that opens a small list of actions. `items` are [label, iconName, onclick, {disabled, title}] rows.
+export function menuButton(label, iconName, items, { iconOnly = false } = {}) {
+  const list = h("div", { class: "menu-list", role: "menu" });
+  const root = h("details", { class: "menu" },
+    h("summary", { class: "btn" + (iconOnly ? " btn-icon" : ""), "aria-label": label, title: label }, icon(iconName), iconOnly ? null : label),
+    list);
+  for (const [text, ic, onclick, opts = {}] of items) {
+    list.append(h("button", { type: "button", role: "menuitem", class: "menu-item", disabled: opts.disabled || undefined, title: opts.title,
+      onclick: () => { root.open = false; onclick(); } }, icon(ic), text));
+  }
+  document.addEventListener("click", (e) => { if (root.open && !root.contains(e.target)) root.open = false; });
+  return root;
 }
 
 // --- Toasts ---

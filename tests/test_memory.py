@@ -77,6 +77,8 @@ class ChooseOffloadForTheJob(unittest.TestCase):
 class FakeTorch:
     """Just enough of torch for the planner: Module, and a card with this much memory."""
     class Tensor:
+        device = types.SimpleNamespace(type="cpu")       # parts wait in system RAM until the offload hooks move them
+
         def __init__(self, gb):
             self.gb = gb
 
@@ -134,6 +136,55 @@ class AutoOffload(unittest.TestCase):
 
     def test_sizes_ignore_things_that_are_not_modules(self):
         self.assertEqual(set(memplan.component_gb(self.pipe(transformer=2.0, vae=0.5), FakeTorch(10, 16))), {"transformer", "vae"})
+
+
+class ReplanForTheJob(AutoOffload):
+    """Auto is chosen again for each generate request: a bigger clip moves to a smaller offload mode and back."""
+
+    def adapter(self, offload, free, total=15.9):
+        a = super().adapter(offload, free, total)
+        a.load_req = {"offload": offload}
+        a.torch.nn = types.SimpleNamespace(Module=FakeTorch.Module)
+        a.offload_active = "none"
+        a.free_run_memory = lambda: None
+        return a
+
+    def run_replan(self, free, work, active="none"):
+        a = self.adapter("auto", free=free)
+        a.offload_active = active
+        a.pipe = self.pipe(transformer=7.1, vae=0.5)
+        a.pipe.remove_all_hooks = mock.Mock()
+        a.pipe.to = mock.Mock()
+        a.pipe.enable_model_cpu_offload = mock.Mock()
+        a.pipe.enable_sequential_cpu_offload = mock.Mock()
+        a.req = {"offload": "auto", "plan": {"work_gb": work}}
+        with mock.patch.object(base, "emit"):
+            a.replan_offload()
+        return a
+
+    def test_a_big_job_moves_a_model_that_was_all_on_the_gpu_to_model_offload(self):
+        a = self.run_replan(free=14.7, work=6.5, active="none")
+        self.assertEqual(a.offload_active, "model")
+        a.pipe.enable_model_cpu_offload.assert_called_once()
+        a.pipe.remove_all_hooks.assert_called_once()
+
+    def test_the_same_job_changes_nothing(self):
+        a = self.run_replan(free=14.7, work=1.0, active="none")
+        self.assertEqual(a.offload_active, "none")
+        a.pipe.remove_all_hooks.assert_not_called()
+
+    def test_a_job_without_a_plan_is_left_alone(self):
+        a = self.run_replan(free=14.7, work=0.0, active="model")
+        self.assertEqual(a.offload_active, "model")
+        a.pipe.enable_model_cpu_offload.assert_not_called()
+
+    def test_a_fixed_mode_is_never_replanned(self):
+        a = self.adapter("model", free=14.7)
+        a.pipe = self.pipe(transformer=7.1)
+        a.pipe.remove_all_hooks = mock.Mock()
+        a.req = {"plan": {"work_gb": 9.0}}
+        a.replan_offload()
+        a.pipe.remove_all_hooks.assert_not_called()
 
 
 class OfferAuto(unittest.TestCase):

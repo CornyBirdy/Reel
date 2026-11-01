@@ -81,7 +81,7 @@ def describe(recipe: dict, gpu: dict | None = None) -> dict:
         "limits": recipe["limits"], "defaults": recipe["defaults"], "memory": recipe.get("memory", {}),
         "native": recipe.get("native"), "native_label": recipes.native_label(recipe), "unlock": recipes.unlock_limits(recipe),
         "recommended": bool(recipe.get("recommended")), "settings": model_settings.get(mid),
-        "modes": recipes.modes_of(recipe), "inputs": recipe.get("inputs"),
+        "modes": recipes.modes_of(recipe), "inputs": recipe.get("inputs"), "controls": recipe.get("controls") or {},
         "state": state, "installed": state == "installed", "installed_info": info,
         "disk": disk_usage(mid), "install": job.to_dict() if job else None,
         "blocked_reason": blocked,

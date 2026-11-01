@@ -1,17 +1,19 @@
-// Pickers for the pictures and videos a model takes as input (edit, start/end frames, replace a person).
+// Pickers for the pictures, videos and recordings a model takes as input (edit, start/end frames, replace a person, references).
 // An item is { ref, url, kind, w, h }: `ref` is what the server understands ("in:<id>" for an upload, "clip:<id>" for a
 // History item), `w`/`h` are the natural size once the browser has read it.
 import { h, icon, clear, toast } from "./ui.js";
 import { api } from "./api.js";
 
-const ACCEPT = { image: "image/png,image/jpeg,image/webp", video: "video/mp4,video/webm" };
-const NOUN = { image: "picture", video: "video" };
+const ACCEPT = { image: "image/png,image/jpeg,image/webp", video: "video/mp4,video/webm", audio: "audio/wav,audio/mpeg,audio/flac,audio/ogg,audio/mp4,audio/x-m4a,.wav,.mp3,.flac,.ogg,.m4a" };
+const NOUN = { image: "picture", video: "video", audio: "recording" };
+const TAG = { image: "Picture", video: "Video", audio: "Audio" };        // how H3's prompt guide names references: <Picture 1>, <Video 1>, <Audio 1>
+export const kindsOf = (rule) => rule.type === "media" ? Object.keys(rule.max_by_kind || { image: 9, video: 3, audio: 3 }) : [rule.type];
 
 export const itemFromClip = (clip) => ({ ref: `clip:${clip.id}`, url: clip.url, kind: clip.kind });
 
 // Read an item's natural size into item.w / item.h, then call `done`.
 export function measure(item, done) {
-  if (item.w) return done();
+  if (item.w || item.kind === "audio") return done();
   if (item.kind === "video") {
     const v = document.createElement("video");
     v.preload = "metadata";
@@ -27,24 +29,26 @@ export function measure(item, done) {
 }
 
 function thumb(item) {
+  if (item.kind === "audio") return h("div", { class: "audio-tile", title: item.name || "Recording" }, icon("music"));
   return item.kind === "video"
     ? h("video", { src: `${item.url}#t=0.1`, preload: "metadata", muted: true, playsinline: true, tabindex: -1 })
     : h("img", { src: item.url, alt: "", loading: "lazy" });
 }
 
 // A dialog listing finished History items of one kind; resolves to the chosen items.
-async function chooseFromHistory(kind, room) {
+async function chooseFromHistory(kinds, room) {
   let clips = [];
-  try { clips = (await api.get(`/api/history?limit=200&kind=${kind}`)).clips; } catch (e) { toast(e.message, "danger"); return []; }
-  clips = clips.filter((c) => c.kind === kind);
+  const kind = kinds.length === 1 ? kinds[0] : "item";
+  try { clips = (await api.get(`/api/history?limit=200${kinds.length === 1 ? `&kind=${kinds[0]}` : ""}`)).clips; } catch (e) { toast(e.message, "danger"); return []; }
+  clips = clips.filter((c) => kinds.includes(c.kind));
   return new Promise((resolve) => {
     const chosen = [];
     const cells = [];
     const grid = h("div", { class: "pick-grid" });
     const count = h("span", { class: "muted" });
     const dlg = h("dialog", { class: "dialog dialog-wide", "aria-labelledby": "pick-title" },
-      h("h3", { id: "pick-title" }, `Choose ${room > 1 ? `up to ${room} ` : "a "}${NOUN[kind]}${room > 1 ? "s" : ""} from History`),
-      clips.length ? grid : h("div", { class: "empty" }, icon("clock"), h("div", {}, `No ${NOUN[kind]}s in History yet.`)),
+      h("h3", { id: "pick-title" }, `Choose ${room > 1 ? `up to ${room} ` : "a "}${NOUN[kind] || "picture or video"}${room > 1 ? "s" : ""} from History`),
+      clips.length ? grid : h("div", { class: "empty" }, icon("clock"), h("div", {}, `Nothing in History yet.`)),
       h("div", { class: "dialog-actions" }, count,
         h("button", { class: "btn", type: "button", onclick: () => dlg.close("cancel") }, "Cancel"),
         h("button", { class: "btn btn-primary", type: "button", onclick: () => dlg.close("ok") }, "Use selected")));
@@ -70,52 +74,90 @@ async function chooseFromHistory(kind, room) {
   });
 }
 
-// One input of type image or video, with up to `rule.max` items.
-export function filePicker(name, rule, { initial = [], onChange = () => {} } = {}) {
-  const kind = rule.type;
+// A flag: one checkbox.
+export function flagPicker(name, rule, { initial = false, onChange = () => {} } = {}) {
+  const box = h("input", { type: "checkbox", id: `flag-${name}`, checked: !!initial, onchange: () => onChange(box.checked) });
+  return { el: h("label", { class: "check" }, box, rule.label || name), value: () => box.checked };
+}
+
+// One input of type image, video, audio, or "media" (an ordered mix of them), with up to `rule.max` items.
+// With more than one slot the items are numbered, can be moved up and down the order, and a click on a number calls onInsert
+// (the form puts "picture 2" or "<Picture 2>" into the prompt), so several pictures can be mixed by name.
+export function filePicker(name, rule, { initial = [], onChange = () => {}, onInsert = null } = {}) {
+  const kinds = kindsOf(rule);
+  const mixed = rule.type === "media";
   const max = rule.max || 1;
-  let items = initial.slice(0, max);
+  const perKind = rule.max_by_kind || {};
+  const numbered = max > 1;
+  const noun = mixed ? "item" : NOUN[rule.type];
+  let items = initial.filter((i) => kinds.includes(i.kind)).slice(0, max);
   const list = h("div", { class: "batch-strip input-items" });
   const status = h("span", { class: "muted field-hint" });
-  const file = h("input", { type: "file", accept: ACCEPT[kind], multiple: max > 1 || undefined, hidden: true, "aria-label": `Choose ${NOUN[kind]} file` });
-  const addBtn = h("button", { class: "btn", type: "button", onclick: () => file.click() }, icon("upload"), `Add ${NOUN[kind]}`);
-  const histBtn = h("button", { class: "btn", type: "button", onclick: async () => {
-    const got = await chooseFromHistory(kind, max - items.length);
+  const accept = kinds.map((k) => ACCEPT[k]).join(",");
+  const file = h("input", { type: "file", accept, multiple: max > 1 || undefined, hidden: true, "aria-label": `Choose ${noun} file` });
+  const addBtn = h("button", { class: "btn", type: "button", onclick: () => file.click() }, icon("upload"), mixed ? "Add files" : `Add ${noun}`);
+  const histKinds = kinds.filter((k) => k !== "audio");
+  const histBtn = histKinds.length ? h("button", { class: "btn", type: "button", onclick: async () => {
+    const got = await chooseFromHistory(histKinds, max - items.length);
     if (got.length) add(got);
-  } }, icon("clock"), "From History…");
+  } }, icon("clock"), "From History…") : null;
   const zone = h("div", { class: "input-zone stack-8", role: "group", "aria-label": rule.label || name },
     list, h("div", { class: "row-8" }, addBtn, histBtn, status), file);
 
+  const countOf = (k, upTo = items.length) => items.slice(0, upTo).filter((i) => i.kind === k).length;
+  const tagFor = (i) => mixed ? `<${TAG[items[i].kind]} ${countOf(items[i].kind, i + 1)}>` : `${NOUN[items[i].kind]} ${i + 1}`;
+  const roomFor = (k) => Math.min(max - items.length, perKind[k] === undefined ? max : perKind[k] - countOf(k));
+
   function render() {
     clear(list);
-    items.forEach((it, i) => list.append(h("div", { class: "batch-thumb input-thumb", title: it.w ? `${it.w} × ${it.h}` : undefined },
-      thumb(it),
-      h("button", { type: "button", class: "input-remove", title: "Remove", "aria-label": `Remove ${NOUN[kind]} ${i + 1}`, onclick: () => { items.splice(i, 1); changed(); } }, icon("x")))));
+    items.forEach((it, i) => {
+      const label = numbered ? (mixed ? tagFor(i).replace(/[<>]/g, "") : String(i + 1)) : null;
+      list.append(h("div", { class: "batch-thumb input-thumb" + (it.kind === "audio" ? " is-audio" : ""), title: it.w ? `${it.w} × ${it.h}` : it.name || undefined },
+        thumb(it),
+        label ? h("button", { type: "button", class: "input-tag", disabled: !onInsert || undefined,
+          title: onInsert ? `Put "${tagFor(i)}" in the prompt` : label, "aria-label": `Refer to ${tagFor(i)} in the prompt`,
+          onclick: () => onInsert && onInsert(tagFor(i)) }, label) : null,
+        h("button", { type: "button", class: "input-remove", title: "Remove", "aria-label": `Remove ${noun} ${i + 1}`, onclick: () => { items.splice(i, 1); changed(); } }, icon("x")),
+        numbered && items.length > 1 ? h("span", { class: "input-move" },
+          h("button", { type: "button", title: "Move earlier", "aria-label": "Move earlier", disabled: i === 0 || undefined, onclick: () => move(i, -1) }, "\u2039"),
+          h("button", { type: "button", title: "Move later", "aria-label": "Move later", disabled: i === items.length - 1 || undefined, onclick: () => move(i, 1) }, "\u203a")) : null));
+    });
     const full = items.length >= max;
-    addBtn.disabled = histBtn.disabled = full && max > 1;          // a single slot is replaced by adding another
-    status.textContent = max > 1 ? `${items.length} of ${max}` : "";
+    addBtn.disabled = full && max > 1;
+    if (histBtn) histBtn.disabled = full && max > 1;          // a single slot is replaced by adding another
+    status.textContent = max > 1 ? `${items.length} of ${max}${mixed ? ` · ${kinds.map((k) => `${countOf(k)}/${perKind[k]} ${NOUN[k]}s`).join(", ")}` : ""}` : "";
   }
   function changed() { render(); onChange(items.slice()); }
+  function move(i, by) { const j = i + by; if (j < 0 || j >= items.length) return; [items[i], items[j]] = [items[j], items[i]]; changed(); }
   function add(more) {
-    const room = max - items.length;
-    if (more.length > room && max > 1) toast(`Only ${max} allowed: the first ${room} were added.`, "warning", 3500);
     if (max === 1) items = [];
-    items.push(...more.slice(0, max === 1 ? 1 : room));
+    let skipped = 0;
+    for (const it of more) {
+      if (max === 1 ? items.length >= 1 : roomFor(it.kind) <= 0) { skipped++; continue; }
+      items.push(it);
+    }
+    if (skipped) toast(`${skipped === 1 ? "One was" : `${skipped} were`} left out: ${mixed ? "the limit for that kind is reached" : `only ${max} allowed`}.`, "warning", 3500);
     render();
     let pending = items.length;
     const done = () => { if (--pending <= 0) onChange(items.slice()); };
+    if (!pending) onChange(items.slice());
     for (const it of items) measure(it, done);
   }
 
   async function upload(files) {
-    const wanted = [...files].filter((f) => f.type.startsWith(`${kind}/`));
-    if (!wanted.length) { toast(`That is not a ${NOUN[kind]}.`, "warning"); return; }
+    const typeOk = (f) => kinds.some((k) => f.type.startsWith(`${k}/`) || (k === "audio" && /\.(wav|mp3|flac|ogg|m4a)$/i.test(f.name)));
+    const wanted = [...files].filter(typeOk);
+    if (!wanted.length) { toast(`That is not a ${mixed ? "picture, video or recording" : noun}.`, "warning"); return; }
     status.textContent = "Uploading…";
     try {
       const got = [];
-      for (const f of wanted.slice(0, Math.max(max - items.length, max === 1 ? 1 : 0))) {
+      const taken = { image: countOf("image"), video: countOf("video"), audio: countOf("audio") };
+      for (const f of wanted) {
+        if (max > 1 && (items.length + got.length >= max)) break;
+        if (max === 1 && got.length >= 1) break;
         const r = await api.upload(f);
-        got.push({ ref: r.ref, url: r.url, kind: r.kind });
+        if (max > 1 && perKind[r.kind] !== undefined && taken[r.kind] + got.filter((g) => g.kind === r.kind).length >= perKind[r.kind]) continue;
+        got.push({ ref: r.ref, url: r.url, kind: r.kind, name: f.name });
       }
       add(got);
     } catch (e) { toast(e.message, "danger", 8000); render(); }
@@ -131,7 +173,25 @@ export function filePicker(name, rule, { initial = [], onChange = () => {} } = {
     el: zone,
     items: () => items.slice(),
     refs: () => items.map((i) => i.ref),
+    add: (one) => add([one]),
   };
+}
+
+// The frame of a playing or paused video, as a PNG upload (a reference for Start frame, Reference, ...). The browser draws it,
+// so no tool is needed on the PC. `where` is "current" or "last".
+export async function captureFrame(videoUrl, where = "current", at = null) {
+  const v = document.createElement("video");
+  v.muted = true; v.preload = "auto"; v.crossOrigin = "anonymous"; v.src = videoUrl;
+  await new Promise((ok, no) => { v.onloadedmetadata = ok; v.onerror = () => no(new Error("The browser could not read that video.")); });
+  const target = where === "last" ? Math.max(v.duration - 0.05, 0) : (at ?? 0);
+  await new Promise((ok) => { v.onseeked = ok; v.currentTime = target; });
+  const c = document.createElement("canvas");
+  c.width = v.videoWidth; c.height = v.videoHeight;
+  c.getContext("2d").drawImage(v, 0, 0);
+  const blob = await new Promise((ok) => c.toBlob(ok, "image/png"));
+  if (!blob) throw new Error("Could not take the frame.");
+  const r = await api.upload(new File([blob], "frame.png", { type: "image/png" }));
+  return { ref: r.ref, url: r.url, kind: "image", w: c.width, h: c.height };
 }
 
 // "Which person?": the first frame of the video, cropped the way the model will see it; a click records where, as 0..1 of the
