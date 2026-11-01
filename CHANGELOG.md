@@ -8,8 +8,11 @@
 - **Reference mode** in Generate: a picker for pictures, videos and recordings with numbered thumbnails, reordering, and a click on a number to put `<Picture 1>` / `<Video 1>` / `<Audio 1>` in the prompt. An option sizes the clip to the first recording.
 - **Recordings** (WAV, MP3, FLAC, OGG, M4A) can be uploaded as inputs. Guidance and the negative prompt are hidden for models that do not use them (H3 is guidance-distilled).
 
+**Installing**
+- **A dropped connection no longer fails an install.** pip is now started again (up to 4 attempts, with longer timeouts) when the connection resets while it downloads PyTorch or the model libraries (WinError 10054), and gives a plain message if the network keeps cutting out.
+
 **Shelf tasks**
-- **Download speed limit** (Settings > Downloads). Automatic runs at full speed and drops to about 10 MB/s while a model is loading or generating; Fixed limit holds a speed you choose; an optional ceiling applies in both. It also caps how fast files are written, and applies to a download that is already running.
+- **Download speed limit** (Settings > Downloads): one switch, *Slow down while Reel is busy* (on by default; about 10 MB/s while a model loads or generates, full speed otherwise), plus an optional maximum speed. It also caps how fast files are written, and applies to a download that is already running.
 - **Auto offloading is sized for the job.** It used to look only at the weights, so a model that fit could still run out of memory on a long or large clip. It now adds the clip's own need (activations or VAE decode) and chooses again for every request, switching between None, Model offload and Sequential when the answer changes.
 - **Mixing pictures.** Edit models that take several pictures (Qwen-Image-Edit) number them, let you reorder them, and a click on a number puts "picture 2" in the prompt.
 

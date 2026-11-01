@@ -87,7 +87,7 @@ Install **Real-ESRGAN x4+**, then use **Upscale 2×** or **4×** from the **More
 
 Model storage folder, graphics card, how long an idle model stays loaded, the download speed limit, the window mode, Hugging Face and GitHub tokens, and updates.
 
-**Downloads** has three modes. *Automatic* runs at full speed and drops to about 10 MB/s while a model is loading or generating, so a download does not compete with it for the disk. *Fixed limit* holds the speed you choose. *No limit* turns it off. An optional ceiling applies in the first two. The limit also caps how fast files are written, and changes apply to a download that is already running.
+**Downloads** has one switch, *Slow down while Reel is busy*, on by default. On, downloads run at full speed and drop to about 10 MB/s while a model is loading or generating, so they do not compete with it for the disk. Off, they always run at full speed. An optional maximum speed (MB/s) is a ceiling in either case, and with the switch off it acts as a fixed limit. The limit also caps how fast files are written, and changes apply to a download that is already running.
 
 ### Updating
 

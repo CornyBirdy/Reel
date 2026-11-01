@@ -178,22 +178,20 @@ export async function mount(root) {
 
   function downloadsCard(s) {
     const lim = s.download_limit;
-    const mode = h("select", { id: "dl-mode", class: "select" },
-      [["auto", "Automatic"], ["manual", "Fixed limit"], ["off", "No limit"]].map(([v, label]) => h("option", { value: v, selected: v === lim.mode }, label)));
-    const speed = h("input", { id: "dl-mbps", class: "input", type: "number", min: 0, max: 10000, step: 1, value: lim.mb_per_s || "" });
-    const sync = () => { speed.disabled = mode.value === "off"; speed.placeholder = mode.value === "manual" ? "e.g. 40" : "no ceiling"; };
-    mode.addEventListener("change", sync);
-    sync();
+    const auto = h("input", { id: "dl-auto", type: "checkbox", checked: lim.mode === "auto" });
+    const speed = h("input", { id: "dl-mbps", class: "input", type: "number", min: 0, max: 10000, step: 1, value: lim.mb_per_s || "", placeholder: "No limit" });
     return h("section", { class: "card stack-16" },
       h("h3", {}, "Downloads"),
-      h("div", { class: "field" }, h("label", { for: "dl-mode" }, "Speed limit"), mode,
-        h("span", { class: "field-hint" }, "Automatic runs at full speed, and slows to about 10 MB/s while a model is loading or generating, so a download does not compete with it for the disk. The limit also caps how fast files are written.")),
-      h("div", { class: "field" }, h("label", { for: "dl-mbps" }, "Maximum speed (MB/s)"), speed,
-        h("span", { class: "field-hint" }, "Fixed limit: the speed to hold. Automatic: an optional ceiling. 1 MB/s is about 8 Mbit/s. Applies to a download already running.")),
+      h("label", { class: "check" }, auto, "Slow down while Reel is busy",
+        tip("On: downloads run at full speed, and drop to about 10 MB/s while a model is loading or generating, so they do not compete with it for the disk. Off: always full speed.")),
+      h("div", { class: "field" }, h("div", { class: "label-row" }, h("label", { for: "dl-mbps" }, "Maximum speed (MB/s)"),
+        tip("Optional. A ceiling for downloads at all times, which also limits how fast files are written. 1 MB/s is about 8 Mbit/s. Leave empty for none. Applies to a download already running.")), speed),
       h("div", { class: "row-8" }, h("button", { class: "btn btn-primary", type: "button", onclick: async () => {
         const v = Number(speed.value || 0);
         if (!Number.isFinite(v) || v < 0) { toast("Enter a speed of 0 or more.", "warning"); return; }
-        try { await api.put("/api/settings", { set_download_limit: true, download_limit_mode: mode.value, download_limit_mbps: v }); toast("Saved.", "success"); }
+        // toggle on: automatic (the number is a ceiling); toggle off: full speed, or a fixed limit if a number is set
+        const mode = auto.checked ? "auto" : v > 0 ? "manual" : "off";
+        try { await api.put("/api/settings", { set_download_limit: true, download_limit_mode: mode, download_limit_mbps: v }); toast("Saved.", "success"); }
         catch (e) { toast(e.message, "danger"); }
       } }, "Save")));
   }

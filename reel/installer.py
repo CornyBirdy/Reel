@@ -35,6 +35,17 @@ PHASES = [
 DISK_HEADROOM_GB = 9.0  # venv with CUDA PyTorch is ~7 GB, plus slack
 
 
+NETWORK_ERRORS = ("ConnectionResetError", "ProtocolError", "Connection broken", "Read timed out", "ReadTimeout", "ConnectTimeout",
+                  "Connection aborted", "Temporary failure in name resolution", "Max retries exceeded", "IncompleteRead", "10054", "10053", "10060")
+PIP_ATTEMPTS = 4
+
+
+def is_network_failure(lines) -> bool:
+    """Did pip fail because the connection dropped (so trying again is likely to work)?"""
+    text = "\n".join(lines)
+    return any(marker in text for marker in NETWORK_ERRORS)
+
+
 class InstallError(Exception):
     pass
 
@@ -435,15 +446,17 @@ class InstallManager:
 
             def do_torch():
                 cmd = [str(py), "-m", "pip", "install", "--no-cache-dir", "--progress-bar", "off",
-                       "--disable-pip-version-check", "--index-url", pyc["torch_index"], *pyc["torch"]]
-                self._run_cmd(job, log, cmd, env=pip_env)
+                       "--disable-pip-version-check", "--retries", "10", "--timeout", "60",
+                       "--index-url", pyc["torch_index"], *pyc["torch"]]
+                self._run_pip(job, log, cmd, env=pip_env)
 
             def do_packages():
                 # Keep the CUDA PyTorch that was just installed: without this a package that wants torch could pull the
                 # CPU-only build from PyPI, and the model would then silently run on the CPU.
                 cmd = [str(py), "-m", "pip", "install", "--no-cache-dir", "--progress-bar", "off",
-                       "--disable-pip-version-check", *torch_constraints(py, tmp / "constraints.txt"), *pyc["packages"]]
-                self._run_cmd(job, log, cmd, env=pip_env)
+                       "--disable-pip-version-check", "--retries", "10", "--timeout", "60",
+                       *torch_constraints(py, tmp / "constraints.txt"), *pyc["packages"]]
+                self._run_pip(job, log, cmd, env=pip_env)
                 # Fail now, not after a 30 GB download, if this diffusers has no such pipeline class.
                 cls = (recipe.get("adapter_config") or {}).get("pipeline")
                 if cls:
@@ -525,6 +538,26 @@ class InstallManager:
         finally:
             job.finished = time.time()
             log_file.close()
+
+    def _run_pip(self, job: Job, log, cmd: list[str], env: dict | None = None) -> None:
+        """pip, started again when the connection drops. A big wheel (PyTorch is 2 to 3 GB) over a flaky link or a
+        sleeping laptop fails with "connection forcibly closed" (WinError 10054); that is the network, not the install."""
+        for attempt in range(1, PIP_ATTEMPTS + 1):
+            try:
+                return self._run_cmd(job, log, cmd, env=env)
+            except InstallError as exc:
+                recent = list(job.log)[-40:] + [str(exc)]
+                if attempt == PIP_ATTEMPTS or not is_network_failure(recent):
+                    if is_network_failure(recent):
+                        raise InstallError("The connection kept dropping while pip downloaded packages (the last error was "
+                                           "'connection forcibly closed'). Check the network (a VPN, a firewall or antivirus can "
+                                           "cut long downloads) and press Install again.") from exc
+                    raise
+                wait = 5 * attempt
+                log(f"The connection dropped. Trying again in {wait} s (attempt {attempt + 1} of {PIP_ATTEMPTS}).")
+                job.message = f"Connection dropped; retrying in {wait} s"
+                if job.cancel.wait(wait):
+                    raise Cancelled()
 
     def _run_cmd(self, job: Job, log, cmd: list[str], env: dict | None = None,
                  json_lines: bool = False, capture: list[str] | None = None) -> None:
