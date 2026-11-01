@@ -238,16 +238,50 @@ class BaseAdapter:
                     pass
         self.apply_attention_backend(pipe)
 
-    def resolve_offload(self, pipe) -> str:
-        """The offload mode to apply. "auto" weighs the loaded parts against the VRAM that is really free right now."""
+    def resolve_offload(self, pipe, extra_free_gb: float = 0.0) -> str:
+        """The offload mode to apply. "auto" weighs the loaded parts and the job's own need against the VRAM that is really
+        free right now (extra_free_gb: weights of this pipeline that are on the GPU and would be moved)."""
         mode = self.req.get("offload", "model")
         if mode == "auto":
             free, total = self.torch.cuda.mem_get_info()
-            mode, why = memplan.choose_offload(memplan.component_gb(pipe, self.torch), free / memplan.GB, total / memplan.GB)
+            work = float((self.req.get("plan") or {}).get("work_gb") or 0.0)
+            mode, why = memplan.choose_offload(memplan.component_gb(pipe, self.torch), free / memplan.GB + extra_free_gb,
+                                               total / memplan.GB, work)
             emit(event="log", message=f"Offloading 'auto' chose {mode}: {why}.")
             self.offload_why = why
         self.offload_active = mode
         return mode
+
+    def replan_offload(self) -> None:
+        """Auto only: the mode was chosen when the model loaded, for the size of the first job. A bigger clip needs more room
+        for its activations, a smaller one less, so choose again for this request and switch if the answer changed. Switching
+        is cheap (the weights stay where they are; only the hooks change). Never fails the run."""
+        pipe = getattr(self, "pipe", None)
+        if (self.device != "cuda" or self.load_req.get("offload") != "auto" or pipe is None
+                or not (self.req.get("plan") or {}).get("work_gb") or not hasattr(pipe, "remove_all_hooks")):
+            return
+        try:
+            before = self.offload_active
+            resident = memplan.gpu_resident_gb(pipe, self.torch)
+            free, total = self.torch.cuda.mem_get_info()
+            mode, why = memplan.choose_offload(memplan.component_gb(pipe, self.torch), free / memplan.GB + resident,
+                                               total / memplan.GB, float(self.req["plan"]["work_gb"]))
+            if mode == before:
+                self.offload_why = why
+                return
+            emit(event="log", message=f"This job needs different offloading ({before} -> {mode}): {why}.")
+            pipe.remove_all_hooks()
+            pipe.to("cpu")
+            self.free_run_memory()
+            if mode == "sequential":
+                pipe.enable_sequential_cpu_offload()
+            elif mode == "model":
+                pipe.enable_model_cpu_offload()
+            else:
+                pipe.to("cuda")
+            self.offload_active, self.offload_why = mode, why
+        except Exception as exc:  # noqa: BLE001 - keep the mode that was working
+            emit(event="log", message=f"Could not change the offload mode for this job ({type(exc).__name__}: {exc}); keeping {self.offload_active}.")
 
     def apply_attention_backend(self, pipe) -> None:
         """Switch the denoiser's attention kernel when the recipe/request asks for one; never fail the run over it.
@@ -430,6 +464,8 @@ class BaseAdapter:
             self.steps_done = 0
             t_item = time.time()
             emit(event="item_start", index=i, items=self.n_items, seed=self.seed)
+            if i == 0:
+                self.replan_offload()
             frames = self.sample()
             check_cancel()
             self.phase("encoding", "Saving image" if self.kind == "image" else "Encoding mp4")

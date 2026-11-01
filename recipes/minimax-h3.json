@@ -1,0 +1,235 @@
+{
+  "schema": 1,
+  "id": "minimax-h3",
+  "name": "MiniMax-H3",
+  "family": "MiniMax",
+  "version": "text and frames, video with sound",
+  "status": "ready",
+  "kind": "video",
+  "verified": false,
+  "hf_repo": "MiniMaxAI/MiniMax-H3",
+  "modes": [
+    "video",
+    "frames"
+  ],
+  "summary": "MiniMax's video model: it makes the picture and the soundtrack (stereo, dialogue in 11 languages) together in one clip, 5 to 15 seconds at 24 fps. This install does text-to-video and first/last frame. 33B transformer plus a 32B text encoder: a 144 GB download, and it needs far more system RAM than a 32 GB PC has unless it runs 4-bit.",
+  "license": "MiniMax H3 Community License",
+  "license_url": "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE",
+  "tasks": [
+    "text-to-video",
+    "audio",
+    "image-to-video"
+  ],
+  "adapter": "minimax_h3",
+  "adapter_config": {
+    "workflows": [
+      "t2va",
+      "fl2va"
+    ],
+    "transformer_dir": "transformer",
+    "transformer_gb": 66.3,
+    "text_encoder_gb": 66.7
+  },
+  "download_gb": 144.1,
+  "vram_gb": 12,
+  "vram_note": "Estimate, not measured: the transformer streams through the GPU a block at a time (under 1 GB resident), the video and audio decoders stay on the card (about 6 GB), and the rest is the activations for the clip. System RAM is the limit, not VRAM.",
+  "python": {
+    "torch_index": "https://download.pytorch.org/whl/cu128",
+    "torch": [
+      "torch>=2.7",
+      "torchvision"
+    ],
+    "packages": [
+      "diffusers>=0.41",
+      "transformers>=4.57",
+      "accelerate>=1.4",
+      "bitsandbytes>=0.46",
+      "torchao>=0.13",
+      "kernels",
+      "sentencepiece",
+      "protobuf",
+      "ftfy",
+      "safetensors",
+      "huggingface_hub",
+      "imageio",
+      "imageio-ffmpeg",
+      "numpy",
+      "Pillow",
+      "av"
+    ]
+  },
+  "weights": [
+    {
+      "repo_id": "MiniMaxAI/MiniMax-H3",
+      "revision": "42ed227ee7df40d41602854ae760620d6eb651fe",
+      "dest": ".",
+      "allow_patterns": [
+        "model_index.json",
+        "modular_model_index.json",
+        "scheduler/*",
+        "audio_scheduler/*",
+        "tokenizer/*",
+        "processor/*",
+        "text_encoder/*",
+        "vae/*",
+        "audio_vae/*",
+        "transformer/*"
+      ]
+    }
+  ],
+  "limits": {
+    "max_width": 1024,
+    "max_height": 1024,
+    "size_multiple": 32,
+    "frames": {
+      "step": 17,
+      "offset": 5,
+      "min": 124,
+      "max": 124,
+      "default": 124
+    },
+    "fps": 24,
+    "steps": {
+      "min": 2,
+      "max": 100
+    },
+    "presets": [
+      {
+        "w": 640,
+        "h": 352
+      },
+      {
+        "w": 768,
+        "h": 448
+      },
+      {
+        "w": 960,
+        "h": 544
+      },
+      {
+        "w": 1024,
+        "h": 576
+      },
+      {
+        "w": 544,
+        "h": 960
+      }
+    ]
+  },
+  "native": {
+    "label": "1344×768",
+    "resolutions": [
+      {
+        "w": 1344,
+        "h": 768,
+        "label": "1344×768 (16:9, trained)"
+      },
+      {
+        "w": 768,
+        "h": 1344,
+        "label": "768×1344 (9:16, trained)"
+      }
+    ],
+    "frames": [
+      124,
+      243,
+      362
+    ],
+    "fps": 24,
+    "source": "https://huggingface.co/MiniMaxAI/MiniMax-H3 and https://huggingface.co/docs/diffusers/api/pipelines/minimax_h3",
+    "note": "H3 is trained on a 768 pixel short edge at 24 fps. Width and height are multiples of 32 and frames are 17n+5 (124 = 5 s, 243 = 10 s, 362 = 15 s). Smaller sizes are much faster: 960×544 runs about 2.3× faster per step than 1344×768."
+  },
+  "unlock": {
+    "max_width": 1344,
+    "max_height": 1344,
+    "max_frames": 362,
+    "known": true,
+    "note": "The diffusers docs: 5 to 15 seconds at 24 fps, short edge 768. 2K output needs MiniMax's hosted Regenerate-2K module, which is not open source."
+  },
+  "defaults": {
+    "width": 960,
+    "height": 544,
+    "steps": 50,
+    "guidance": 1.0,
+    "negative_prompt": "",
+    "offload": "auto",
+    "vae_tiling": true,
+    "quantization": "int8",
+    "fps": 24
+  },
+  "memory": {
+    "offload_options": [
+      "auto",
+      "sequential"
+    ],
+    "quantization_options": [
+      "none",
+      "int8",
+      "nf4"
+    ],
+    "notes": "H3 has a 33B transformer (66 GB in bf16) and a 32B Qwen3-VL text encoder (67 GB). Reel reads the prompt with the text encoder first and frees it, then runs the transformer with its blocks streamed through the GPU. The diffusers docs put the host RAM need at about 75 GB with 8-bit weights; with 32 GB of RAM the two parts are loaded one after the other (slower: the transformer is read again for every clip) and 4-bit weights are the only way to fit. The model is guidance-distilled, so there is no guidance or negative prompt.",
+    "estimate": {
+      "weights_gb": {
+        "transformer": 66.3,
+        "text_encoder": 66.7,
+        "vae": 5.2,
+        "audio_vae": 0.6
+      },
+      "quantized": [
+        "transformer",
+        "text_encoder"
+      ],
+      "denoiser": "transformer",
+      "tokens": {
+        "spatial": 32,
+        "temporal": 4
+      },
+      "hidden": 5376,
+      "vae_mb_per_mpx_frame": 768,
+      "vae_tile_mpx_frames": 1.5,
+      "transient": [
+        "text_encoder"
+      ],
+      "gpu_resident": [
+        "vae",
+        "audio_vae"
+      ],
+      "stages": "one_at_a_time",
+      "auto_offload": "sequential"
+    }
+  },
+  "verify_modules": [
+    "diffusers",
+    "transformers",
+    "accelerate",
+    "imageio_ffmpeg",
+    "bitsandbytes",
+    "torchao",
+    "av"
+  ],
+  "inputs": {
+    "start_image": {
+      "type": "image",
+      "max": 1,
+      "modes": [
+        "frames"
+      ],
+      "label": "Start frame",
+      "help": "The clip begins on this picture and takes its shape.",
+      "required": true
+    },
+    "end_image": {
+      "type": "image",
+      "max": 1,
+      "modes": [
+        "frames"
+      ],
+      "label": "End frame (optional)",
+      "help": "The clip finishes on this picture."
+    }
+  },
+  "controls": {
+    "guidance": false,
+    "negative_prompt": false
+  }
+}

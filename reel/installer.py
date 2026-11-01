@@ -23,7 +23,7 @@ import time
 from collections import deque
 from pathlib import Path
 
-from . import config, procs, recipes, system
+from . import config, procs, recipes, system, throttle
 
 PHASES = [
     ("env", "Create environment", 0.02),
@@ -285,6 +285,7 @@ class InstallManager:
         self._jobs: dict[str, Job] = {}
         self._uninstalling: set[str] = set()
         self.is_model_busy = lambda model_id: False  # set by the generation manager
+        self.is_pc_busy = lambda: False              # set by the generation manager: a model is loading or generating
 
     # -- queries ---------------------------------------------------------
     def job(self, model_id: str) -> Job | None:
@@ -454,15 +455,16 @@ class InstallManager:
 
             def do_weights():
                 spec = mdir / "download_spec.json"
-                spec.write_text(json.dumps({"weights_dir": str(mdir / "weights"), "weights": recipe["weights"]}),
-                                encoding="utf-8")
+                spec.write_text(json.dumps({"weights_dir": str(mdir / "weights"), "weights": recipe["weights"],
+                                            "throttle_file": str(throttle.THROTTLE_FILE)}), encoding="utf-8")
                 env = {"HF_HUB_DISABLE_TELEMETRY": "1", "HF_HUB_DISABLE_SYMLINKS_WARNING": "1",
                        "HF_HUB_DISABLE_PROGRESS_BARS": "1"}
                 token = config.load_settings().get("hf_token")
                 if token:
                     env["HF_TOKEN"] = token
-                self._run_cmd(job, log, [str(py), str(config.ADAPTERS_DIR / "download.py"), str(spec)],
-                              env=env, json_lines=True)
+                with throttle.Follower(lambda: self.is_pc_busy()):
+                    self._run_cmd(job, log, [str(py), str(config.ADAPTERS_DIR / "download.py"), str(spec)],
+                                  env=env, json_lines=True)
                 if job.bytes_total and job.bytes_done < job.bytes_total * 0.999:
                     raise InstallError("Download finished but some files are missing; run Install again to resume.")
 

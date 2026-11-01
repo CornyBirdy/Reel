@@ -6,6 +6,9 @@ Prints one JSON object per line: files / progress / done / error.
 Progress is the number of bytes on disk under weights_dir (completed files plus
 partial downloads), against the total taken from the Hub API.
 
+A speed limit can be set while a download runs: Reel writes a small JSON file (spec["throttle_file"]) and this script
+re-reads it every second, see Throttle. That caps the bytes written to disk as well, since everything downloaded is written.
+
 Every file is fetched here with plain HTTP range requests rather than by the Hub client: current versions of
 huggingface_hub download into a throw-away temporary file and delete it when the transfer stops, so a cancelled or
 dropped download always started that file again from zero. Here a file in progress lives at
@@ -35,6 +38,74 @@ TIMEOUT = 30          # seconds without a byte before a connection is treated as
 MAX_FAILURES = 8      # attempts in a row that bring no new bytes before a file is given up on
 WORKERS = 8
 REPLACE_ATTEMPTS = 8   # tries at renaming a finished file before copying it instead; about 30 seconds in all
+
+
+class Throttle:
+    """One speed limit shared by every download thread.
+
+    The limit comes from a JSON file that Reel rewrites whenever the setting (or what the PC is doing) changes:
+
+        {"mode": "off" | "manual" | "auto", "mb_per_s": 0, "busy": false, "busy_mb_per_s": 10}
+
+    off     no limit.
+    manual  never faster than mb_per_s (0 = no limit).
+    auto    full speed while the PC is idle; while a model is loading or generating ("busy") only busy_mb_per_s, so a
+            download does not fight the model for the disk and the CPU. mb_per_s, when set, is a ceiling in both cases.
+
+    An unreadable or missing file means no limit. Each thread asks wait() before writing a block; the threads share one
+    schedule, so the limit is for the whole download, not per file.
+    """
+
+    def __init__(self, path=None, clock=time.monotonic, sleep=time.sleep, reread=1.0):
+        self.path, self.clock, self.sleep, self.reread = path, clock, sleep, reread
+        self._lock = threading.Lock()
+        self._next = 0.0
+        self._read_at = -1e9
+        self._limit = None
+
+    def limit(self):
+        """Bytes per second, or None for no limit."""
+        now = self.clock()
+        if now - self._read_at >= self.reread:
+            self._read_at, self._limit = now, self._load()
+        return self._limit
+
+    def _load(self):
+        if not self.path:
+            return None
+        try:
+            cfg = json.loads(Path(self.path).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        mode, cap = cfg.get("mode", "off"), float(cfg.get("mb_per_s") or 0)
+        if mode == "manual":
+            mbps = cap
+        elif mode == "auto":
+            mbps = float(cfg.get("busy_mb_per_s") or 10) if cfg.get("busy") else 0.0
+            if cap:
+                mbps = min(mbps, cap) if mbps else cap
+        else:
+            mbps = 0.0
+        return mbps * 1_000_000 if mbps > 0 else None
+
+    def wait(self, nbytes, abort=None):
+        """Block until `nbytes` more may be written."""
+        limit = self.limit()
+        if not limit:
+            with self._lock:
+                self._next = self.clock()
+            return
+        with self._lock:
+            now = self.clock()
+            start = max(self._next, now)
+            self._next = start + nbytes / limit
+            delay = start - now
+        while delay > 0:
+            if abort is not None and abort.is_set():
+                raise Aborted()
+            step = min(delay, 0.25)
+            self.sleep(step)
+            delay -= step
 
 
 def emit(**kw):
@@ -106,7 +177,7 @@ def file_url(repo: str, revision: str | None, path: str) -> str:
             f"{urllib.parse.quote(revision or 'main', safe='')}/{urllib.parse.quote(path)}")
 
 
-def _stream(url: str, part: Path, have: int, token: str | None, abort: threading.Event) -> tuple[int, int]:
+def _stream(url: str, part: Path, have: int, token: str | None, abort: threading.Event, throttle: "Throttle | None" = None) -> tuple[int, int]:
     """Append what the server has beyond `have` bytes to `part`. Returns (bytes now in part, size the server says the file has)."""
     headers = {"User-Agent": "reel-installer"}
     if token:
@@ -144,6 +215,8 @@ def _stream(url: str, part: Path, have: int, token: str | None, abort: threading
                 block = resp.read(CHUNK)
                 if not block:
                     break
+                if throttle is not None:
+                    throttle.wait(len(block), abort)
                 try:
                     out.write(block)
                 except OSError as exc:
@@ -190,7 +263,7 @@ def move_into_place(part: Path, dest: Path, abort: threading.Event, sleep=time.s
 
 
 def fetch_file(url: str, dest: Path, part: Path, size: int, token: str | None, abort: threading.Event,
-               sleep=time.sleep) -> None:
+               sleep=time.sleep, throttle: "Throttle | None" = None) -> None:
     """Download `url` to `dest`, continuing `part` if an earlier run left one. `dest` only ever appears complete."""
     if dest.exists():
         if not size or dest.stat().st_size == size:
@@ -211,7 +284,7 @@ def fetch_file(url: str, dest: Path, part: Path, size: int, token: str | None, a
         furthest, why = max(furthest, have), None
         if not size or have != size:
             try:
-                have, total = _stream(url, part, have, token, abort)
+                have, total = _stream(url, part, have, token, abort, throttle)
                 want = size or total
                 if want and have != want:
                     why = Retry(f"the connection closed after {have:,} of {want:,} bytes")
@@ -255,6 +328,7 @@ def main(spec_path):
 
     stop = threading.Event()
     abort = threading.Event()
+    throttle = Throttle(spec.get("throttle_file"))
 
     def poll():
         last, last_t = bytes_on_disk(weights_dir), time.time()
@@ -277,7 +351,7 @@ def main(spec_path):
             emit(event="repo", repo=entry["repo_id"])
             futures = [
                 pool.submit(fetch_file, file_url(entry["repo_id"], entry.get("revision"), name), dest / name,
-                            dest / ".cache" / "reel" / (name + ".part"), size, token, abort)
+                            dest / ".cache" / "reel" / (name + ".part"), size, token, abort, throttle=throttle)
                 for name, size in sorted(files, key=lambda f: -f[1])]   # the big files first, so none is left for last
             for fut in as_completed(futures):
                 fut.result()

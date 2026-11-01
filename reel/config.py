@@ -29,6 +29,8 @@ DEFAULTS = {
     "window_mode": None,   # None/"auto" | "native" | "app" | "browser"
     "gpu": None,           # None = automatic (most VRAM); else an NVIDIA GPU uuid
     "idle_unload_minutes": 30,   # unload the loaded model after this long without use; 0 = never
+    "download_limit_mode": "auto",   # auto (slow down while the PC is busy) | manual | off
+    "download_limit_mbps": 0,        # megabytes per second; a ceiling in auto, the limit in manual; 0 = none
 }
 
 

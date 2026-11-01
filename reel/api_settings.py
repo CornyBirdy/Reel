@@ -9,7 +9,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from . import config, recipes, system, window
+from . import config, recipes, system, throttle, window
 from .installer import installs
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
@@ -25,6 +25,9 @@ class SettingsUpdate(BaseModel):
     set_window_mode: bool = False
     idle_unload_minutes: int | None = None   # 0 = never
     set_idle_unload: bool = False
+    download_limit_mode: str | None = None   # auto | manual | off
+    download_limit_mbps: float | None = None  # 0 = no ceiling
+    set_download_limit: bool = False
     set_models_dir: bool = False
     set_hf_token: bool = False
     set_github_token: bool = False
@@ -42,6 +45,7 @@ def _view() -> dict:
         "github_token_set": bool(s.get("github_token")),
         "window_mode": s.get("window_mode") or "auto",
         "idle_unload_minutes": s.get("idle_unload_minutes", 30),
+        "download_limit": throttle.settings(),
         "native_window": window.status(),
         "disk_free": system.disk_free(root),
         "gpu": system.gpu_info(refresh=True),
@@ -91,6 +95,17 @@ def update_settings(body: SettingsUpdate) -> dict:
         if not 0 <= minutes <= 1440:
             raise HTTPException(400, "Use 0 (never) to 1440 minutes.")
         config.save_settings(idle_unload_minutes=minutes)
+    if body.set_download_limit:
+        mode = body.download_limit_mode or "auto"
+        mbps = body.download_limit_mbps or 0
+        if mode not in throttle.MODES:
+            raise HTTPException(400, "Unknown download limit mode.")
+        if not 0 <= mbps <= 10000:
+            raise HTTPException(400, "Use 0 (no ceiling) to 10000 megabytes per second.")
+        if mode == "manual" and mbps <= 0:
+            raise HTTPException(400, "Enter a speed above 0, or choose Off.")
+        config.save_settings(download_limit_mode=mode, download_limit_mbps=mbps)
+        throttle.write(False)    # a download in progress sees the new limit within a second
     if body.set_github_token:
         config.save_settings(github_token=(body.github_token or "").strip() or None)
     if body.set_hf_token:

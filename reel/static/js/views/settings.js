@@ -10,7 +10,7 @@ export async function mount(root) {
   async function load() {
     const [s, stored] = await Promise.all([api.get("/api/settings"), api.get("/api/settings/stored-models")]);
     clear(body);
-    body.append(updatesCard(s), changelogCard(), gpuCard(s), memoryCard(s), windowCard(s), storageCard(s, stored), tokenCard(s), systemCard(s));
+    body.append(updatesCard(s), changelogCard(), gpuCard(s), memoryCard(s), downloadsCard(s), windowCard(s), storageCard(s, stored), tokenCard(s), systemCard(s));
     refreshUpdates(false);
   }
 
@@ -174,6 +174,28 @@ export async function mount(root) {
         const v = Number(input.value);
         if (!Number.isInteger(v) || v < 0 || v > 1440) { toast("Enter a whole number of minutes from 0 to 1440.", "warning"); return; }
         try { await api.put("/api/settings", { set_idle_unload: true, idle_unload_minutes: v }); toast(v ? `Models unload after ${v} minutes idle.` : "Models stay loaded until you unload them.", "success"); }
+        catch (e) { toast(e.message, "danger"); }
+      } }, "Save")));
+  }
+
+  function downloadsCard(s) {
+    const lim = s.download_limit;
+    const mode = h("select", { id: "dl-mode", class: "select" },
+      [["auto", "Automatic"], ["manual", "Fixed limit"], ["off", "No limit"]].map(([v, label]) => h("option", { value: v, selected: v === lim.mode }, label)));
+    const speed = h("input", { id: "dl-mbps", class: "input", type: "number", min: 0, max: 10000, step: 1, value: lim.mb_per_s || "" });
+    const sync = () => { speed.disabled = mode.value === "off"; speed.placeholder = mode.value === "manual" ? "e.g. 40" : "no ceiling"; };
+    mode.addEventListener("change", sync);
+    sync();
+    return h("section", { class: "card stack-16" },
+      h("h3", {}, "Downloads"),
+      h("div", { class: "field" }, h("label", { for: "dl-mode" }, "Speed limit"), mode,
+        h("span", { class: "field-hint" }, "Automatic runs at full speed, and slows to about 10 MB/s while a model is loading or generating, so a download does not compete with it for the disk. The limit also caps how fast files are written.")),
+      h("div", { class: "field" }, h("label", { for: "dl-mbps" }, "Maximum speed (MB/s)"), speed,
+        h("span", { class: "field-hint" }, "Fixed limit: the speed to hold. Automatic: an optional ceiling. 1 MB/s is about 8 Mbit/s. Applies to a download already running.")),
+      h("div", { class: "row-8" }, h("button", { class: "btn btn-primary", type: "button", onclick: async () => {
+        const v = Number(speed.value || 0);
+        if (!Number.isFinite(v) || v < 0) { toast("Enter a speed of 0 or more.", "warning"); return; }
+        try { await api.put("/api/settings", { set_download_limit: true, download_limit_mode: mode.value, download_limit_mbps: v }); toast("Saved.", "success"); }
         catch (e) { toast(e.message, "danger"); }
       } }, "Save")));
   }

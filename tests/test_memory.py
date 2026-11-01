@@ -57,6 +57,23 @@ class ChooseOffload(unittest.TestCase):
         self.assertFalse(memplan.keep_in_ram(11.4, None))       # unknown RAM: be careful
 
 
+class ChooseOffloadForTheJob(unittest.TestCase):
+    """Auto sizes its choice for the request, not only for the weights."""
+
+    def test_weights_that_fit_are_not_enough_when_the_clip_is_large(self):
+        parts = {"transformer": 7.1, "vae": 0.5}
+        self.assertEqual(memplan.choose_offload(parts, free_gb=14.7, total_gb=15.9)[0], "none")           # a small clip
+        mode, why = memplan.choose_offload(parts, free_gb=14.7, total_gb=15.9, work_gb=6.5)               # a long 720p one
+        self.assertEqual(mode, "model")
+        self.assertIn("6.5 GB on top of the weights", why)
+
+    def test_a_job_too_big_even_for_one_part_goes_layer_by_layer(self):
+        self.assertEqual(memplan.choose_offload({"transformer": 7.1, "vae": 0.5}, free_gb=14.7, total_gb=15.9, work_gb=9.0)[0], "sequential")
+
+    def test_a_small_job_changes_nothing(self):
+        self.assertEqual(memplan.choose_offload({"unet": 5.1, "vae": 0.3}, free_gb=14.7, total_gb=15.9, work_gb=0.4)[0], "none")
+
+
 class FakeTorch:
     """Just enough of torch for the planner: Module, and a card with this much memory."""
     class Tensor:

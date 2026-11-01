@@ -18,8 +18,8 @@ STATUSES = {"ready", "placeholder"}
 KINDS = {"image", "video", "upscale"}
 # What a model can be used for, and the kind of thing each produces. A recipe lists the modes it supports ("modes"); without
 # the list it is the plain mode of its kind. A mode other than the plain ones needs inputs (a recipe's "inputs" block).
-MODE_KIND = {"image": "image", "edit": "image", "video": "video", "frames": "video", "replace": "video"}
-INPUT_TYPES = ("image", "video", "point")
+MODE_KIND = {"image": "image", "edit": "image", "video": "video", "frames": "video", "replace": "video", "reference": "video"}
+INPUT_TYPES = ("image", "video", "audio", "point", "media", "flag")
 
 
 def validate_base(r: dict) -> list[str]:
@@ -90,7 +90,7 @@ def task_errors(r: dict, kind: str) -> list[str]:
             if m not in modes:
                 errs.append(f"inputs.{name} is for mode {m}, which the recipe does not list")
     for mode in modes:
-        if mode in ("edit", "frames", "replace") and not any(
+        if mode in ("edit", "frames", "replace", "reference") and not any(
                 rule.get("required") and mode in (rule.get("modes") or modes) for rule in spec.values()):
             errs.append(f"mode {mode} needs at least one required input")
     return errs
