@@ -1,7 +1,7 @@
 // Pickers for the pictures, videos and recordings a model takes as input (edit, start/end frames, replace a person, references).
 // An item is { ref, url, kind, w, h }: `ref` is what the server understands ("in:<id>" for an upload, "clip:<id>" for a
 // History item), `w`/`h` are the natural size once the browser has read it.
-import { h, icon, clear, toast } from "./ui.js";
+import { h, icon, clear, toast, lazyVideo } from "./ui.js";
 import { api } from "./api.js";
 
 const ACCEPT = { image: "image/png,image/jpeg,image/webp", video: "video/mp4,video/webm", audio: "audio/wav,audio/mpeg,audio/flac,audio/ogg,audio/mp4,audio/x-m4a,.wav,.mp3,.flac,.ogg,.m4a" };
@@ -31,7 +31,7 @@ export function measure(item, done) {
 function thumb(item) {
   if (item.kind === "audio") return h("div", { class: "audio-tile", title: item.name || "Recording" }, icon("music"));
   return item.kind === "video"
-    ? h("video", { src: `${item.url}#t=0.1`, preload: "metadata", muted: true, playsinline: true, tabindex: -1 })
+    ? lazyVideo(item.url)
     : h("img", { src: item.url, alt: "", loading: "lazy" });
 }
 

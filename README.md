@@ -22,7 +22,7 @@ Reel itself needs only FastAPI and uvicorn. PyTorch and the model libraries are 
 
 Reel opens in its own window using the WebView2 runtime that ships with Windows 11. If that is unavailable it falls back to an app-style window from Edge, Chrome, Brave or Vivaldi, then to your default browser. The choice is under **Settings > Window**, or set `REEL_WINDOW` to `native`, `app` or `browser`. `start-in-browser.bat` always uses the browser. If WebView2 was removed, `winget install -e --id Microsoft.EdgeWebView2Runtime` restores it.
 
-Keep the console window open while Reel runs; closing it stops the server. `make-shortcut.bat` creates a desktop shortcut.
+Reel runs without a console window: only its own window is on screen, and closing that window stops Reel. If it is open in a browser instead, use **Quit Reel** at the bottom of the sidebar. Its messages go to `data/logs/reel.log`. To see them live, start it with `start-with-console.bat`. `make-shortcut.bat` creates a desktop shortcut.
 
 ### Environment variables
 
@@ -33,6 +33,7 @@ Keep the console window open while Reel runs; closing it stops the server. `make
 | `REEL_WINDOW` | auto | `native`, `app` or `browser` |
 | `REEL_BROWSER` | | Path to a browser executable to use |
 | `REEL_NO_BROWSER` | | Set to `1` to start without opening a window |
+| `REEL_CONSOLE` | | Set to `1` to run in the console window (what `start-with-console.bat` does) |
 
 ### Troubleshooting
 
@@ -44,6 +45,8 @@ Keep the console window open while Reel runs; closing it stops the server. `make
 | No window opens | Open the address printed in the console (http://127.0.0.1:8765) in a browser. |
 | The Library says the driver is too old | Update the NVIDIA driver and restart Reel. |
 | Port 8765 is in use | Close the other Reel window, or set `REEL_PORT`. |
+| A download sits at 100% or the speed hovers at a few MB/s | Reel is probably inside a OneDrive (or Dropbox) folder. The Library shows a warning when it is. The sync client holds each finished file open, so Reel copies it into place instead, which is slow for a multi-GB file. Move Reel to a plain folder such as `C:\Reel`. |
+| The window is blank after restoring it from the taskbar | Reel turns off Chromium's window-occlusion handling, which is the usual cause. If it still happens, set `REEL_WINDOW=browser`. |
 | An install fails or stalls | Press **Install** again; finished downloads are kept. The log is `data/models/<model>/install.log`. |
 | Out of VRAM | Lower the resolution, set Offloading to Sequential, or use 4-bit quantization (Advanced). |
 | A model stays on "Loading the model's Python libraries" | Cancel the load, update Reel, restart it. If it persists, run `tools\import_probe.py` with the model's Python and send the output. The latest "Timeout (0:02:00)" block in `data\logs` shows where it is stuck. |
@@ -62,14 +65,16 @@ One card per model, showing the download size, VRAM need and whether it suits yo
 
 ### Generate
 
-| Mode | Input | What it does |
+| Mode | You give it | You get |
 | --- | --- | --- |
-| Image | text | Text to image |
-| Video | text | Text to video |
-| Edit | 1 to 3 pictures | Changes pictures from an instruction. Several pictures are numbered; refer to them as "picture 1", "picture 2" |
-| Frames | start picture, optional end picture | A clip that starts on (and optionally ends on) your pictures |
-| Replace | a video, 1 to 3 photos | Swaps a person in a video for someone else |
-| Reference | pictures, videos, recordings | A clip with sound built from references you arrange in order |
+| Image | a description | a new picture |
+| Video | a description | a new clip |
+| Edit | one or more pictures and an instruction | your picture, changed. With several pictures they are numbered; refer to them as "picture 1", "picture 2" |
+| Frames | a start picture, optionally an end picture | a clip that begins on (and optionally ends on) your pictures |
+| Swap person | a video you already have, and 1 to 3 photos | the same video with one person replaced. Everything else in it stays |
+| Compose | pictures, videos and recordings, in an order you choose | a new clip with sound, using them as ingredients: faces, motion, voices, music. Nothing is kept from them as is |
+
+Swap person edits a video you already have. Compose makes a new one from ingredients.
 
 Inputs can be dragged in, chosen from disk, or taken from History. A finished result has a **More** menu that sends it straight into another mode, takes a frame from it (**Start frame: this frame**, **Continue from the last frame**) and upscales it. Taking a frame is how clips are chained: the last frame of one becomes the start of the next.
 
@@ -100,7 +105,7 @@ Model storage folder, graphics card, how long an idle model stays loaded, the do
 
 ## Models
 
-Built in: SDXL 1.0 and FLUX.1 schnell (images); Qwen-Image-Edit 2509 and FLUX.1 Kontext dev (editing); Wan2.1 VACE 1.3B (replace a person); LTX-Video, LTX-2, Wan 2.2, CogVideoX, HunyuanVideo and HunyuanVideo 1.5 (video); MiniMax-H3 and MiniMax-H3 Reference (video with sound); Real-ESRGAN x4+ (upscaler).
+Built in: SDXL 1.0 and FLUX.1 schnell (images); Qwen-Image-Edit 2509 and FLUX.1 Kontext dev (editing); Wan2.1 VACE 1.3B (replace a person); LTX-Video, LTX-2, Wan 2.2, CogVideoX, HunyuanVideo and HunyuanVideo 1.5 (video); MiniMax-H3, MiniMax-H3 Reference and MiniMax-H3 (ComfyUI) (video with sound); Real-ESRGAN x4+ (upscaler).
 
 Only LTX-Video has been run end to end on real hardware. Every other model, and anything you import, is marked **Unverified**. Sizes and memory figures come from the model cards and from the real tensor sizes in the weights.
 
@@ -113,11 +118,15 @@ LTX-2 and MiniMax-H3 generate sound with the picture. Reel writes it into the MP
 MiniMax-H3 produces video and a stereo soundtrack in one pass, 5 to 15 seconds at 24 fps, with dialogue in 11 languages. It is installed as two models because MiniMax ships two checkpoints:
 
 - **MiniMax-H3** (Video and Frames modes): text to video, and first and last frame.
-- **MiniMax-H3 Reference** (Reference mode): up to 9 pictures, 3 videos and 3 recordings, in the order you arrange them. The order is meaningful. Number badges on the thumbnails match `<Picture 1>`, `<Video 1>` and `<Audio 1>` in the prompt, and clicking a badge inserts it. A recording needs at least one picture or video beside it. *Make the clip as long as the first recording* sizes the clip to the audio.
+- **MiniMax-H3 Reference** (Compose mode): up to 9 pictures, 3 videos and 3 recordings, in the order you arrange them. The order is meaningful. Number badges on the thumbnails match `<Picture 1>`, `<Video 1>` and `<Audio 1>` in the prompt, and clicking a badge inserts it. A recording needs at least one picture or video beside it. *Make the clip as long as the first recording* sizes the clip to the audio.
 
 Both use the models' own limits: 24 fps, frame counts of 17n+5 (124 = 5 s, 243 = 10 s, 362 = 15 s), sizes in multiples of 32. The model is guidance-distilled, so there is no guidance or negative prompt. Smaller sizes are much faster; 960×544 runs about 2.3 times faster per step than the trained 1344×768.
 
-**Hardware.** This is the largest model in Reel: a 33B transformer and a 32B text encoder, about 144 GB to download for each of the two models. The diffusers documentation puts host RAM at about 75 GB with 8-bit weights, and 12 to 16 GB cards need the transformer streamed from system memory. Reel does this in stages: it reads the prompt and references with the text encoder, frees it, then runs the transformer with its blocks streamed through the GPU. When RAM cannot hold both parts it loads them one after the other, which adds the transformer's load time to every clip. With 32 GB of RAM, 4-bit quantization is the only setting that has a chance, and the memory estimate marks it as likely to fail. A PC with 64 GB or more is a realistic target. These models have been written against the diffusers 0.41 source and documentation but have not been run on a GPU.
+**Two ways to run it.** *MiniMax-H3 (ComfyUI)* is the one for a 16 GB card with 32 GB of RAM. *MiniMax-H3* and *MiniMax-H3 Reference* run the official full-size weights through diffusers and are for PCs with much more memory.
+
+**MiniMax-H3 (ComfyUI).** Reel installs a pinned copy of [ComfyUI](https://github.com/comfyanonymous/ComfyUI) into the model's own folder (`engine/`), together with the community-packaged files from Comfy-Org/MiniMax-H3: the pruned 8-bit transformer (21 GB, one each for text/frames and for Compose), the 4-bit text encoder (15.7 GB), the video and sound decoders and the 4-step turbo LoRA, about 65 GB in all. You never open ComfyUI. Reel starts it in the background on a free local port, sends it a workflow for each clip, shows its progress, and stops it when the model is unloaded. One install does Video, Frames and Compose. Steps of 8 or fewer switch on the turbo LoRA, which is much faster at some cost in quality. ComfyUI reads pictures first, then videos, then recordings, each numbered from 1 within its kind. This route has not been run on a GPU yet: Reel checks that the installed ComfyUI has every node it needs before the first clip and says what is missing.
+
+**Hardware (diffusers route).** This is the largest model in Reel: a 33B transformer and a 32B text encoder, about 144 GB to download for each of the two models. The diffusers documentation puts host RAM at about 75 GB with 8-bit weights, and 12 to 16 GB cards need the transformer streamed from system memory. Reel does this in stages: it reads the prompt and references with the text encoder, frees it, then runs the transformer with its blocks streamed through the GPU. When RAM cannot hold both parts it loads them one after the other, which adds the transformer's load time to every clip. With 32 GB of RAM, 4-bit quantization is the only setting that has a chance, and the memory estimate marks it as likely to fail. A PC with 64 GB or more is a realistic target. These models have been written against the diffusers 0.41 source and documentation but have not been run on a GPU.
 
 H3 works best with structured prompts. MiniMax's own preprocessing step (H3-Context-IR) is not open source; their [prompt guides](https://huggingface.co/MiniMaxAI/MiniMax-H3/tree/main/docs) describe the format. The H3 license has regional conditions: read it on the model page before installing.
 
@@ -195,7 +204,7 @@ A model is a **recipe** (JSON: Hugging Face repositories and file patterns, Pyth
 2. Write `adapters/<name>.py` with `class Adapter(BaseAdapter)` and a `sample()` method that returns a list of PIL frames. `adapters/base.py` documents the request format and handles seeds, memory options, progress, cancellation, OOM reporting and MP4 export. To skip the adapter, set `"adapter": "diffusers_auto"` and `"adapter_config": {"pipeline": "<PipelineClass>"}`.
 3. Set `"status": "ready"`. `python tools/recipe_sizes.py` fills in exact download sizes.
 
-A recipe can set `"modes"` and an `"inputs"` block to take pictures, videos, recordings or an ordered mix of them (`"type": "media"`), and `"controls"` to hide settings the model does not use. Each loaded model is one long-lived process, `adapters/worker.py`, running in that model's environment. Reel sends it JSON lines on stdin (`load`, `generate`, `cancel`, `exit`) and reads one JSON event per line on stdout. The protocol is described at the top of that file.
+A recipe can name an `"engine"` (a pinned release ZIP that is unpacked into the model's folder, with its requirements installed into the model's environment, as ComfyUI is for MiniMax-H3 (ComfyUI)); the adapter then drives it. It can also set `"modes"` and an `"inputs"` block to take pictures, videos, recordings or an ordered mix of them (`"type": "media"`), and `"controls"` to hide settings the model does not use. Each loaded model is one long-lived process, `adapters/worker.py`, running in that model's environment. Reel sends it JSON lines on stdin (`load`, `generate`, `cancel`, `exit`) and reads one JSON event per line on stdout. The protocol is described at the top of that file.
 
 ### Tests
 

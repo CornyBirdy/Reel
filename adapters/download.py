@@ -124,11 +124,16 @@ class Aborted(Exception):
     pass
 
 
+FINISHING: set[str] = set()      # files being copied into place because the rename was blocked (see move_into_place)
+
+
 def bytes_on_disk(root: Path) -> int:
+    """Bytes of completed files plus partial downloads. A copy being made of a finished file is not counted: it duplicates
+    bytes already counted, and it used to push the total past 100% while the last file was still being copied."""
     total = 0
     for dirpath, _dirs, files in os.walk(root):
         for name in files:
-            if name.endswith(".lock"):
+            if name.endswith((".lock", ".copying")):
                 continue
             try:
                 total += os.path.getsize(os.path.join(dirpath, name))
@@ -247,6 +252,7 @@ def move_into_place(part: Path, dest: Path, abort: threading.Event, sleep=time.s
             sleep(delay)
             delay = min(delay * 2, 10)
     copy = dest.with_name(dest.name + ".copying")
+    FINISHING.add(dest.name)
     try:
         shutil.copyfile(part, copy)
         os.replace(copy, dest)
@@ -256,6 +262,8 @@ def move_into_place(part: Path, dest: Path, abort: threading.Event, sleep=time.s
                     "the file open (antivirus scanning it, or an earlier Reel download that is still running; "
                     "restarting Reel or the PC clears the second). The file is complete and will not be downloaded "
                     f"again: press Install once the program lets go. ({last or exc})") from exc
+    finally:
+        FINISHING.discard(dest.name)
     try:
         part.unlink()
     except OSError:
@@ -339,7 +347,7 @@ def main(spec_path):
             inst = (now - last) / max(t - last_t, 1e-6)
             speed = inst if speed == 0 else 0.7 * speed + 0.3 * inst
             last, last_t = now, t
-            emit(event="progress", done=min(now, total), total=total, speed=max(speed, 0.0))
+            emit(event="progress", done=min(now, total), total=total, speed=max(speed, 0.0), finishing=len(FINISHING))
 
     thread = threading.Thread(target=poll, daemon=True)
     thread.start()

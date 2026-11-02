@@ -11,7 +11,7 @@
   "modes": [
     "reference"
   ],
-  "summary": "The same MiniMax-H3 with its reference checkpoint: up to 9 pictures, 3 videos and 3 recordings, in the order you arrange them, steer who and what appears, how it moves and what it sounds like. Needs its own 144 GB download (the text encoder is not shared with MiniMax-H3 text/frames) and, like it, far more system RAM than a 32 GB PC has unless it runs 4-bit.",
+  "summary": "For PCs with 64 GB of RAM or more: the official full-precision route through diffusers. On 16 GB of VRAM and 32 GB of RAM use MiniMax-H3 (ComfyUI) instead. The same MiniMax-H3 with its reference checkpoint: up to 9 pictures, 3 videos and 3 recordings, in the order you arrange them, steer who and what appears, how it moves and what it sounds like. Needs its own 144 GB download (the text encoder is not shared with MiniMax-H3 text/frames) and, like it, far more system RAM than a 32 GB PC has unless it runs 4-bit.",
   "license": "MiniMax H3 Community License",
   "license_url": "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE",
   "tasks": [

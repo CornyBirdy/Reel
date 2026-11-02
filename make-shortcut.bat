@@ -11,6 +11,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$lnk.WorkingDirectory = '%ROOT%';" ^
   "$lnk.IconLocation = '%ROOT%\reel\static\icons\reel.ico,0';" ^
   "$lnk.Description = 'Reel - local AI video generation';" ^
+  "$lnk.WindowStyle = 7;" ^
   "$lnk.Save();" ^
   "Write-Host ('Created ' + (Join-Path $desktop 'Reel.lnk'))"
 

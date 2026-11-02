@@ -171,3 +171,15 @@ def disk_free(path: Path) -> int:
     while not probe.exists() and probe != probe.parent:
         probe = probe.parent
     return shutil.disk_usage(probe).free
+
+
+def storage_warning(path) -> str | None:
+    """A sentence if `path` is inside a folder that a cloud client syncs. OneDrive uploads every model file (tens of GB), and while it
+    does it holds files open, which blocks Reel from finishing downloads (they are then copied instead, slowly) and slows loading."""
+    text = str(path).replace("\\", "/").lower()
+    for name in ("onedrive", "dropbox", "google drive", "icloud"):
+        if f"/{name}" in text:
+            return (f"This folder is synced by {name.title() if name != 'onedrive' else 'OneDrive'}, which uploads every model file and holds "
+                    "them open while it does. Downloads can stall at the end and models load slowly. Move Reel to a plain folder such as "
+                    "C:\\Reel, or choose a storage folder outside it in Settings.")
+    return None

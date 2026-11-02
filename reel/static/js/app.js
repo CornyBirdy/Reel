@@ -3,8 +3,8 @@ import { getTheme, setTheme, applyTheme } from "./theme.js";
 import { api } from "./api.js";
 
 const ROUTES = {
-  generate:   { label: "Generate", icon: "generate", load: () => import("./views/generate.js") },
-  library:    { label: "Library",  icon: "library",  load: () => import("./views/library.js") },
+  generate:   { label: "Generate", icon: "generate", keep: true, load: () => import("./views/generate.js") },
+  library:    { label: "Library",  icon: "library",  keep: true, load: () => import("./views/library.js") },
   settings:   { label: "Settings", icon: "settings", load: () => import("./views/settings.js") },
   styleguide: { label: "Styleguide", hidden: true,    load: () => import("./views/styleguide.js") },
 };
@@ -12,28 +12,52 @@ const DEFAULT_ROUTE = "generate";
 
 const viewEl = document.getElementById("view");
 const navEl = document.getElementById("nav");
-let current = null;
+let current = null;     // the view that is showing: { el, name, view, keep }
+const kept = new Map(); // Generate and Library stay mounted when you leave them, so coming back is instant
 
 function routeFromHash() {
   const name = location.hash.replace(/^#\/?/, "").split("?")[0];
   return ROUTES[name] ? name : DEFAULT_ROUTE;
 }
 
+// A view that is kept alive is only hidden when you go elsewhere, so switching tabs does not rebuild the page and wait for the
+// server again (that wait was the blank screen). It is told to refresh when it comes back. A link with a query (for example
+// #/generate?model=...) mounts it afresh, because the view reads those at start-up.
 async function render() {
   const name = routeFromHash();
-  if (current && current.unmount) { try { current.unmount(); } catch (e) { console.error(e); } }
-  current = null;
+  const route = ROUTES[name];
+  const hasQuery = location.hash.includes("?");
+  if (current) {
+    current.scroll = viewEl.scrollTop;
+    for (const v of current.el.querySelectorAll("video")) v.pause();        // a clip must not keep playing behind another page
+    if (current.keep && !(current.name === name && hasQuery)) current.el.hidden = true;
+    else { try { current.view && current.view.unmount && current.view.unmount(); } catch (e) { console.error(e); } current.el.remove(); kept.delete(current.name); }
+    current = null;
+  }
   for (const a of navEl.querySelectorAll("a")) {
     if (a.dataset.route === name) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
   }
-  clear(viewEl);
+  const again = kept.get(name);
+  if (again && !hasQuery) {
+    again.el.hidden = false;
+    current = again;
+    viewEl.scrollTop = again.scroll || 0;
+    document.dispatchEvent(new CustomEvent("reel:wake"));       // refresh what may have changed while it was hidden
+    return;
+  }
+  if (again) { again.el.remove(); kept.delete(name); }
+  const el = h("div", { class: "route", "data-route": name });
+  viewEl.append(el);
   viewEl.scrollTop = 0;
+  const entry = { el, name, view: null, keep: !!route.keep, scroll: 0 };
+  current = entry;
+  if (route.keep) kept.set(name, entry);
   try {
-    const mod = await ROUTES[name].load();
-    current = (await mod.mount(viewEl)) || {};
+    const mod = await route.load();
+    entry.view = (await mod.mount(el)) || {};
   } catch (err) {
     console.error(err);
-    viewEl.append(h("div", { class: "view" }, h("div", { class: "notice notice-danger" }, icon("error"), `Could not load this page: ${err.message}`)));
+    el.append(h("div", { class: "view" }, h("div", { class: "notice notice-danger" }, icon("error"), `Could not load this page: ${err.message}`)));
   }
 }
 
@@ -131,10 +155,32 @@ function wake() {
   document.dispatchEvent(new CustomEvent("reel:wake"));
   refreshGpuChip();
 }
+// A minimised window should not keep decoding video. Pause what is playing and carry on when it is back.
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    for (const v of document.querySelectorAll("video")) if (!v.paused) { v.dataset.wasPlaying = "1"; v.pause(); }
+  } else {
+    for (const v of document.querySelectorAll("video[data-was-playing]")) { delete v.dataset.wasPlaying; v.play().catch(() => {}); }
+  }
+});
 document.addEventListener("visibilitychange", wake);
 window.addEventListener("focus", wake);
 window.addEventListener("pageshow", wake);
 window.addEventListener("resize", () => { if (!document.hidden) document.dispatchEvent(new CustomEvent("reel:wake")); });
+
+// Without a console window there is nothing to close to stop Reel when it is open in a browser tab: offer a Quit button.
+(async () => {
+  try {
+    const health = await (await fetch("/api/health", { cache: "no-store" })).json();
+    if (!health.windowless) return;
+    const btn = document.getElementById("quit-btn");
+    btn.hidden = false;
+    btn.addEventListener("click", async () => {
+      try { await api.post("/api/update/quit"); document.body.replaceChildren(h("main", { class: "view" }, h("h1", {}, "Reel has stopped"), h("p", { class: "muted" }, "You can close this tab. Start Reel again with start.bat."))); }
+      catch (e) { toast(e.message, "danger", 6000); }
+    });
+  } catch { /* not reachable: nothing to offer */ }
+})();
 
 applyTheme(getTheme());
 buildNav();

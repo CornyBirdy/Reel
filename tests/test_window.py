@@ -200,3 +200,15 @@ class Status(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RenderFlags(unittest.TestCase):
+    def test_the_occlusion_switches_are_added_once_and_keep_existing_ones(self):
+        import os
+        from unittest import mock
+        with mock.patch.dict(os.environ, {"WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS": "--foo"}):
+            window._keep_rendering_when_hidden()
+            window._keep_rendering_when_hidden()
+            value = os.environ["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"]
+        self.assertTrue(value.startswith("--foo "))
+        self.assertEqual(value.count("CalculateNativeWinOcclusion"), 1)
