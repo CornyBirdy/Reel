@@ -23,7 +23,7 @@ import time
 from collections import deque
 from pathlib import Path
 
-from . import config, procs, recipes, system, throttle
+from . import config, engine, procs, recipes, system, throttle
 
 PHASES = [
     ("env", "Create environment", 0.02),
@@ -450,6 +450,27 @@ class InstallManager:
                        "--index-url", pyc["torch_index"], *pyc["torch"]]
                 self._run_pip(job, log, cmd, env=pip_env)
 
+            def do_engine():
+                """A bundled engine (ComfyUI): unpack it beside the model, then install its requirements into the same venv."""
+                spec = recipe["engine"]
+                dest = mdir / "engine"
+                if engine.is_installed(spec, dest):
+                    log(f"{spec.get('name', 'Engine')} {spec['version']} is already installed.")
+                    return
+                try:
+                    engine.install(spec, dest, tmp, say=lambda m: setattr(job, "message", m), cancelled=job.cancel.is_set)
+                except engine.EngineError as exc:
+                    if job.cancel.is_set():
+                        raise Cancelled()
+                    raise InstallError(str(exc)) from exc
+                log(f"Unpacked {spec.get('name', 'the engine')} {spec['version']} into {dest}")
+                job.message = f"Installing {spec.get('name', 'the engine')}'s packages"
+                cmd = [str(py), "-m", "pip", "install", "--no-cache-dir", "--progress-bar", "off", "--disable-pip-version-check",
+                       "--retries", "10", "--timeout", "60", *torch_constraints(py, tmp / "constraints.txt"),
+                       "-r", str(dest / spec.get("requirements", "requirements.txt"))]
+                self._run_pip(job, log, cmd, env=pip_env)
+                engine.mark_done(spec, dest)
+
             def do_packages():
                 # Keep the CUDA PyTorch that was just installed: without this a package that wants torch could pull the
                 # CPU-only build from PyPI, and the model would then silently run on the CPU.
@@ -457,6 +478,8 @@ class InstallManager:
                        "--disable-pip-version-check", "--retries", "10", "--timeout", "60",
                        *torch_constraints(py, tmp / "constraints.txt"), *pyc["packages"]]
                 self._run_pip(job, log, cmd, env=pip_env)
+                if recipe.get("engine"):
+                    do_engine()
                 # Fail now, not after a 30 GB download, if this diffusers has no such pipeline class.
                 cls = (recipe.get("adapter_config") or {}).get("pipeline")
                 if cls:

@@ -12,7 +12,7 @@
     "video",
     "frames"
   ],
-  "summary": "MiniMax's video model: it makes the picture and the soundtrack (stereo, dialogue in 11 languages) together in one clip, 5 to 15 seconds at 24 fps. This install does text-to-video and first/last frame. 33B transformer plus a 32B text encoder: a 144 GB download, and it needs far more system RAM than a 32 GB PC has unless it runs 4-bit.",
+  "summary": "For PCs with 64 GB of RAM or more: the official full-precision route through diffusers. On 16 GB of VRAM and 32 GB of RAM use MiniMax-H3 (ComfyUI) instead. MiniMax's video model: it makes the picture and the soundtrack (stereo, dialogue in 11 languages) together in one clip, 5 to 15 seconds at 24 fps. This install does text-to-video and first/last frame. 33B transformer plus a 32B text encoder: a 144 GB download, and it needs far more system RAM than a 32 GB PC has unless it runs 4-bit.",
   "license": "MiniMax H3 Community License",
   "license_url": "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE",
   "tasks": [
