@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+**ComfyUI engine for MiniMax-H3**
+- **New model: MiniMax-H3 (ComfyUI).** The route for 16 GB of VRAM and 32 GB of RAM. Reel installs a pinned ComfyUI (v0.43.0) into the model's own folder and downloads the community-packaged files (pruned 8-bit transformer, 4-bit text encoder, decoders, turbo LoRA; about 65 GB), then runs ComfyUI in the background and sends it a workflow per clip. Video, Frames and Compose all work from one install. You never open ComfyUI. Not yet run on a GPU. The diffusers-based H3 models remain, for PCs with much more memory.
+- Reel checks the running ComfyUI for every node and input it needs before the first clip, and reports what is missing instead of failing mid-run. Cancel stops ComfyUI's current job; Pause is not available for this model.
+
+**Wording**
+- **Replace is now "Swap person" and Reference is now "Compose".** Swap person changes a video you already have; Compose makes a new clip from your pictures, videos and recordings. Every tab has a one-sentence tooltip.
+
+**Speed and the blank window**
+- **Switching between Generate and Library is instant.** Both pages stay in memory instead of being rebuilt, with their form and scroll position, and refresh when you return. Opening Generate asks the server for its data in parallel instead of one request after another. History loads 24 items (with Show more) and a clip's thumbnail loads only when it scrolls into view; before, 60 videos started loading at once.
+- **A window restored from the taskbar should no longer stay blank.** Chromium's window-occlusion tracking is switched off for Reel's window, background timers are not throttled, and a playing clip is paused while the window is hidden.
+
+**Fixes**
+- **The download bar no longer runs past 100%.** When Windows would not let Reel rename a finished file, Reel copies it, and the copy was counted on top of the original (and its speed read as the download speed). The copy is not counted any more, and the card says "Finishing N large files". The Library warns when Reel is in a OneDrive, Dropbox or similar folder, the usual cause.
+- **Reel runs without a console window.** `start.bat` starts it with pythonw, so only the app window is shown. Messages go to `data/logs/reel.log`; `start-with-console.bat` shows them live. A *Quit Reel* button appears in the sidebar for when it is open in a browser. Updating still restarts Reel by itself. The desktop shortcut is created minimised so the launcher does not flash.
+
 **MiniMax-H3**
 - **New models: MiniMax-H3 and MiniMax-H3 Reference.** One model that makes the picture and a stereo soundtrack together (5 to 15 seconds at 24 fps). *MiniMax-H3* does text to video and first/last frame (Video and Frames modes); *MiniMax-H3 Reference* takes up to 9 pictures, 3 videos and 3 recordings in an order you set (the new Reference mode). The sound is written into the mp4. Both are marked Unverified: they were written against the diffusers 0.41 source and documentation and have not been run on a GPU.
 - **It is very large.** A 33B transformer and a 32B text encoder, 144 GB to download per model. The diffusers documentation puts the host RAM at about 75 GB with 8-bit weights. Reel runs it in stages (read the prompt with the text encoder, free it, then run the transformer with its blocks streamed through the GPU) so VRAM stays low, and when RAM cannot hold both parts it loads them one after the other. A PC with 32 GB of RAM is below what is documented; the memory estimate says so rather than promising it.

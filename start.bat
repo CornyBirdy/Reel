@@ -44,6 +44,16 @@ if errorlevel 1 echo [Reel] Could not install it - Reel will open in a browser w
 copy /y "%~dp0requirements-native.txt" "%NATIVE_STAMP%" >nul
 
 :launch
+rem Normally Reel runs without a console window (pythonw), so only its own window is on screen. Set REEL_CONSOLE=1, or use
+rem start-with-console.bat, to run it in this window instead: handy for seeing its messages. Its log is data\logs\reel.log.
+if "%REEL_CONSOLE%"=="1" goto :launch_console
+set "VENV_PYW=%VENV_DIR%\Scripts\pythonw.exe"
+if not exist "%VENV_PYW%" goto :launch_console
+set "REEL_LAUNCHER=hidden"
+start "" "%VENV_PYW%" -m reel
+exit /b 0
+
+:launch_console
 set "REEL_LAUNCHER=bat"
 rem Everything that happens after Reel exits is inside ONE parenthesised block. cmd reads a block into
 rem memory before running it, so Reel can safely replace this very file while it is running (updates).

@@ -628,7 +628,11 @@ class InstallManager:
             job.bytes_total = evt.get("total", job.bytes_total)
             job.speed = evt.get("speed", 0.0)
             job.weights_fraction = job.bytes_done / job.bytes_total if job.bytes_total else 0.0
-            job.message = "Downloading weights"
+            n = evt.get("finishing", 0)
+            job.message = (f"Finishing {n} large file{'s' if n != 1 else ''} (Windows is not letting go of {'them' if n != 1 else 'it'}, so "
+                           "Reel copies instead: this can take a few minutes)") if n else "Downloading weights"
+            if n:
+                job.speed = 0.0
         elif kind == "repo":
             log(f"Fetching {evt['repo']}")
         elif kind == "error":

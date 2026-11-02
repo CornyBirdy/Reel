@@ -77,6 +77,20 @@ export function icon(name) {
   return wrap.firstChild;
 }
 
+// A video thumbnail that loads its first frame only when it scrolls into view. A History page of 60 clips otherwise starts 60 video
+// loads at once, which keeps the window busy (and blank) for seconds.
+let thumbObserver = null;
+export function lazyVideo(url, props = {}) {
+  const v = h("video", { preload: "none", muted: true, playsinline: true, tabindex: -1, ...props });
+  if (typeof IntersectionObserver === "undefined") { v.preload = "metadata"; v.src = `${url}#t=0.1`; return v; }
+  thumbObserver = thumbObserver || new IntersectionObserver((entries) => {
+    for (const e of entries) if (e.isIntersecting) { thumbObserver.unobserve(e.target); e.target.preload = "metadata"; e.target.src = e.target.dataset.src; }
+  }, { rootMargin: "300px" });
+  v.dataset.src = `${url}#t=0.1`;
+  thumbObserver.observe(v);
+  return v;
+}
+
 // A small (i) that explains a control on hover or keyboard focus. Use it instead of a line of grey text under the control.
 export function tip(text) {
   return h("span", { class: "tip", tabindex: "0", role: "img", "aria-label": text, "data-tip": text }, icon("info"));

@@ -290,7 +290,7 @@ class Adapter(BaseAdapter):
         if r.get("mode") == "reference":
             refs = given.get("references") or []
             if not refs:
-                raise ComfyError("Reference mode needs at least one picture or video.")
+                raise ComfyError("Compose needs at least one picture or video.")
             if given.get("match_audio"):
                 n = self.audio_frames(refs)
                 if n:

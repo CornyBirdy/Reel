@@ -1,4 +1,4 @@
-import { h, icon, clear, toast, fmtDuration, fmtDate, progressBar, statusBadge, viewLog, tip, menuButton } from "../ui.js";
+import { h, icon, clear, toast, fmtDuration, fmtDate, progressBar, statusBadge, viewLog, tip, menuButton, lazyVideo } from "../ui.js";
 import { api } from "../api.js";
 import { KEEPS_MEMORY, crashNotice, holdsText, holdsTitle, idleText, loadButton, loadingNote, logButton, stateChip, stateOf, watchWorker } from "../worker.js";
 import { ATTN_LABEL, OFFLOAD_HINT, OFFLOAD_LABEL, QUANT_LABEL, describeCeiling, dims, resolutionChoices, snapFrames } from "../limits.js";
@@ -17,14 +17,24 @@ const PHASES = {
 };
 const KIND_LABEL = { image: "Image", video: "Video" };
 // What the form can do. A model lists the modes it supports; the first three produce a picture, the rest a video.
-const MODES = [["image", "Image", "image"], ["video", "Video", "generate"], ["edit", "Edit", "edit"], ["frames", "Frames", "load"], ["replace", "Replace", "rerun"], ["reference", "Reference", "frame"]];
+const MODES = [["image", "Image", "image"], ["video", "Video", "generate"], ["edit", "Edit", "edit"], ["frames", "Frames", "load"], ["replace", "Swap person", "rerun"], ["reference", "Compose", "frame"]];
 const MODE_KIND = { image: "image", edit: "image", video: "video", frames: "video", replace: "video", reference: "video" };
-const MODE_LABEL = { image: "Image", video: "Video", edit: "Edit a picture (or mix several)", frames: "Start and end frames", replace: "Replace a person", reference: "From references: pictures, videos and recordings" };
+const MODE_LABEL = { image: "Image", video: "Video", edit: "Edit", frames: "Frames", replace: "Swap person", reference: "Compose" };
+// What each mode does, in one sentence (the tab's tooltip). The last two are the easy ones to confuse: Swap person changes a video
+// you already have; Compose makes a new clip out of ingredients.
+const MODE_TIP = {
+  image: "Make a picture from a written description.",
+  video: "Make a clip from a written description.",
+  edit: "Change a picture you give it, from an instruction. Give it several pictures to mix them.",
+  frames: "Make a clip that starts on a picture you give it, and optionally ends on another.",
+  replace: "Take a video you already have and swap one person in it for someone from a photo. The rest of the video stays.",
+  reference: "Make a new clip from your own ingredients: pictures (faces, places, objects), videos (motion, camera work) and recordings (voices, music). Nothing is kept from them as is.",
+};
 const MODE_HELP = {
   edit: "Edit models change a picture you give them, from a written instruction. Install Qwen-Image-Edit or FLUX.1 Kontext from the Library.",
   frames: "Frames mode makes a clip that starts on (and optionally ends on) pictures you choose. LTX-Video does it: install it from the Library.",
-  replace: "Replace mode swaps a person in a video for someone from a photo. Install Wan2.1 VACE from the Library.",
-  reference: "Reference mode makes a clip with sound from pictures, videos and recordings you arrange. Install MiniMax-H3 Reference from the Library.",
+  replace: "Swap person changes a video you already have: it replaces one person with someone from a photo. Install Wan2.1 VACE from the Library.",
+  reference: "Compose makes a new clip, with sound, from pictures, videos and recordings you choose. Install MiniMax-H3 (ComfyUI) from the Library.",
 };
 const PLACEHOLDER = {
   image: "A watercolor fox in a misty pine forest, soft morning light, detailed fur…",
@@ -67,6 +77,7 @@ export async function mount(root) {
   let activeJob = null;
   let shownClipId = null;
   let history = { clips: [], total: 0 };
+  let historyLimit = 24;
   const saved = loadForm();
   for (const [name, v] of Object.entries(saved.inputs || {})) if (Array.isArray(v) || v === true) inputVals[name] = v;   // what was added before leaving this page
   let userPicked = false;   // the viewer shows something chosen from History: a finished run must not take it over
@@ -99,7 +110,7 @@ export async function mount(root) {
   function modeSwitch() {
     const seg = h("div", { class: "seg seg-fill", role: "group", "aria-label": "What to generate" });
     for (const [v, label, ic] of MODES) {
-      seg.append(h("button", { type: "button", "aria-pressed": String(mode === v), title: MODE_LABEL[v], disabled: activeRunning() || undefined,
+      seg.append(h("button", { type: "button", "aria-pressed": String(mode === v), title: MODE_TIP[v], disabled: activeRunning() || undefined,
         onclick: () => { if (mode === v) return; setMode(v); wantedModel = null; persist(); buildForm(); renderOutput(); } }, icon(ic), label));
     }
     return seg;
@@ -128,7 +139,7 @@ export async function mount(root) {
     if (!list.length) {
       model = null;
       formCard.append(h("div", { class: "empty" }, icon(kind === "image" ? "image" : "generate"),
-        h("div", {}, h("strong", {}, `No ${MODE_LABEL[mode].toLowerCase()} models installed yet`),
+        h("div", {}, h("strong", {}, `No model for “${MODE_LABEL[mode]}” installed yet`),
           h("div", {}, MODE_HELP[mode] || "Install one from the Library, or add one from Hugging Face.")),
         h("a", { class: "btn btn-primary", href: "#/library" }, icon("library"), "Open Library")));
       return;
@@ -500,13 +511,13 @@ export async function mount(root) {
     return null;
   }
 
-  // "Edit this picture", "Use as start frame", "Replace a person in this video": send an item from the viewer into the form.
+  // "Edit this picture", "Use as start frame", "Swap a person in this video": send an item from the viewer into the form.
   const USES = {
     edit: { mode: "edit", input: "images", label: "Edit picture", ic: "edit" },
     start: { mode: "frames", input: "start_image", label: "Start frame", ic: "load" },
     end: { mode: "frames", input: "end_image", label: "End frame", ic: "load" },
-    replace: { mode: "replace", input: "video", label: "Replace a person", ic: "rerun" },
-    reference: { mode: "reference", input: "references", label: "Use as reference", ic: "frame" },
+    replace: { mode: "replace", input: "video", label: "Swap a person", ic: "rerun" },
+    reference: { mode: "reference", input: "references", label: "Add to Compose", ic: "frame" },
   };
   const canUse = (use) => models.some((m) => supports(m, use.mode) && m.inputs && m.inputs[use.input]);
 
@@ -830,7 +841,7 @@ export async function mount(root) {
     return h("div", { class: "batch-strip", role: "list", "aria-label": "This batch" }, job.clips.map((c, i) => {
       const img = isImageUrl(c.url)
         ? h("img", { src: c.url, alt: "", loading: "lazy" })
-        : h("video", { src: `${c.url}#t=0.1`, preload: "metadata", muted: true, playsinline: true, tabindex: -1 });
+        : lazyVideo(c.url);
       const on = c.id === shownClipId;
       return interactive
         ? h("button", { type: "button", class: "batch-thumb", role: "listitem", "aria-current": on ? "true" : undefined, "aria-label": `Result ${i + 1} of ${job.clips.length}, seed ${c.params.seed}`,
@@ -843,7 +854,7 @@ export async function mount(root) {
 
   // ---- history ----
   async function loadHistory() {
-    history = await api.get("/api/history?limit=60");
+    history = await api.get(`/api/history?limit=${historyLimit}`);
     renderHistory();
   }
 
@@ -861,6 +872,10 @@ export async function mount(root) {
       return;
     }
     historyEl.append(h("div", { class: "history-grid" }, shown.map(clipCard)));
+    if (history.total > history.clips.length) {
+      historyEl.append(h("div", { class: "row-8" }, h("button", { class: "btn", type: "button", onclick: () => { historyLimit += 24; loadHistory(); } },
+        `Show more (${history.total - history.clips.length} older)`)));
+    }
   }
 
   function clipCard(clip) {
@@ -870,7 +885,7 @@ export async function mount(root) {
       h("button", { class: "clip-thumb", type: "button", "aria-label": `Show: ${clip.prompt.slice(0, 60)}`, onclick: () => { view(clip.id); outputCard.scrollIntoView({ behavior: "smooth", block: "nearest" }); } },
         isImageUrl(clip.url)
           ? h("img", { src: clip.url, alt: "", loading: "lazy" })
-          : h("video", { src: `${clip.url}#t=0.1`, preload: "metadata", muted: true, playsinline: true, tabindex: -1 })),
+          : lazyVideo(clip.url)),
       h("div", { class: "clip-body stack-8" },
         h("div", { class: "clip-prompt", title: clip.prompt }, clip.prompt),
         h("div", { class: "muted clip-meta" }, `${clip.model_name} · ${p.width}×${p.height}${isImageUrl(clip.url) ? "" : ` · ${p.frames}f`} · seed ${p.seed}`),
@@ -916,7 +931,13 @@ export async function mount(root) {
   }
 
   // ---- go ----
-  await loadModels();
+  // Everything the page needs is asked for at once, not one request after another.
+  const [, firstHistory, firstJob] = await Promise.all([
+    loadModels(),
+    api.get(`/api/history?limit=${historyLimit}`).catch(() => ({ clips: [], total: 0 })),
+    api.get("/api/generate/current").catch(() => ({ job: null })),
+  ]);
+  history = firstHistory;
   {
     const byQuery = models.find((m) => m.id === q.get("model"));
     const first = (m) => (m.modes || [m.kind])[0];
@@ -928,8 +949,7 @@ export async function mount(root) {
   watcher = watchWorker((w) => { worker = w; renderWorker(); });
   buildForm();
   dropGoneInputs();
-  await loadHistory();
-  const { job } = await api.get("/api/generate/current").catch(() => ({ job: null }));
+  const { job } = firstJob;
   if (job && (job.status === "running" || job.status === "failed")) { activeJob = job; if (history.clips.length) shownClipId = history.clips[0].id; }
   else if (job && job.status === "done" && job.clip && history.clips.some((c) => c.id === job.clip.id)) { activeJob = job; shownClipId = job.clip.id; }
   else if (history.clips.length) shownClipId = history.clips[0].id;

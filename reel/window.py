@@ -284,6 +284,19 @@ def _watch_restore(window, interval: float = 0.25) -> None:
     t.start()
 
 
+# Chromium stops painting a window it thinks is covered or minimised, and on some PCs it does not start again promptly when the window
+# comes back: the page stays blank for seconds. These switches turn that bookkeeping off. WebView2 reads them from this variable.
+RENDER_ARGS = ("--disable-features=CalculateNativeWinOcclusion --disable-backgrounding-occluded-windows "
+               "--disable-renderer-backgrounding --disable-background-timer-throttling")
+
+
+def _keep_rendering_when_hidden() -> None:
+    """Add RENDER_ARGS to WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS (keeping anything already there). Must run before the window is created."""
+    have = os.environ.get("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", "")
+    if "CalculateNativeWinOcclusion" not in have:
+        os.environ["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = (have + " " + RENDER_ARGS).strip()
+
+
 def run_native(url: str, *, webview=None, log=print, storage: Path | None = None) -> bool:
     """Show Reel in a native window and block until it is closed. False = could not open one."""
     try:
@@ -306,6 +319,7 @@ def run_native(url: str, *, webview=None, log=print, storage: Path | None = None
             pass
         if sys.platform == "win32":
             _set_taskbar_identity()
+            _keep_rendering_when_hidden()
         window = wv.create_window(**_filter_kwargs(wv.create_window, dict(
             title=TITLE, url=url, width=1360, height=900, min_size=(900, 600),
             background_color=FIRST_PAINT_COLOUR,

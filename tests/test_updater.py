@@ -11,6 +11,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from unittest import mock
 import urllib.request
 import zipfile
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -272,3 +273,47 @@ class RestartExitCode(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WindowlessLaunch(unittest.TestCase):
+    """start.bat runs Reel with pythonw (no console). Restart and Quit must then work without start.bat waiting."""
+
+    def test_health_says_whether_there_is_a_console(self):
+        from reel import app
+        with mock.patch.dict(os.environ, {"REEL_LAUNCHER": "hidden"}):
+            self.assertTrue(app.health()["windowless"])
+        with mock.patch.dict(os.environ, {"REEL_LAUNCHER": "bat"}):
+            self.assertFalse(app.health()["windowless"])
+
+    def test_quit_stops_the_models_and_the_process(self):
+        from reel import api_update
+        timers = []
+        with mock.patch.object(api_update, "_busy", return_value=None), mock.patch.object(api_update.workers.manager, "shutdown") as down, \
+                mock.patch.object(api_update.threading, "Timer", lambda delay, fn: mock.Mock(start=lambda: timers.append(fn))):
+            self.assertEqual(api_update.quit_reel(), {"quitting": True})
+        down.assert_called_once()
+        self.assertEqual(len(timers), 1)
+
+    def test_quit_is_refused_while_something_runs(self):
+        from fastapi import HTTPException
+        from reel import api_update
+        with mock.patch.object(api_update, "_busy", return_value="a generation is running"), self.assertRaises(HTTPException):
+            api_update.quit_reel()
+
+    def test_a_hidden_restart_starts_start_bat_again_without_a_window(self):
+        from reel import api_update
+        popen = mock.Mock()
+        fake_subprocess = mock.Mock(Popen=popen, CREATE_NO_WINDOW=0x08000000, DETACHED_PROCESS=0x8)
+        with mock.patch.object(api_update, "subprocess", fake_subprocess), mock.patch.object(api_update.sys, "platform", "win32"), \
+                mock.patch.object(api_update.threading, "Timer", lambda d, fn: mock.Mock(start=lambda: None)):
+            self.assertTrue(api_update.relaunch_hidden())
+        cmd = popen.call_args.args[0]
+        self.assertEqual(cmd[:2], ["cmd", "/c"])
+        self.assertIn("start.bat", cmd[2])
+        self.assertIn("hidden-restart", cmd[2])
+        self.assertEqual(popen.call_args.kwargs["creationflags"], 0x08000008)
+
+    def test_no_restart_helper_off_windows(self):
+        from reel import api_update
+        with mock.patch.object(api_update.sys, "platform", "linux"):
+            self.assertFalse(api_update.relaunch_hidden())

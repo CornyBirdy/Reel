@@ -372,3 +372,42 @@ def types_ns():
     ns.cancel = threading.Event()
     ns.cancel.wait = lambda t: False
     return ns
+
+
+class ProgressCounter(unittest.TestCase):
+    """A file being copied into place (rename blocked) must not be counted twice: that pushed the bar past 100% while it finished."""
+
+    def test_a_copy_in_progress_is_not_counted(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "a.bin").write_bytes(b"x" * 1000)
+            (root / "b.bin.copying").write_bytes(b"x" * 5000)
+            (root / "c.lock").write_bytes(b"x" * 7)
+            self.assertEqual(download.bytes_on_disk(root), 1000)
+
+    def test_the_copy_fallback_reports_that_it_is_finishing(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            part, dest = root / "f.part", root / "f.bin"
+            part.write_bytes(b"data")
+            seen = []
+            real_copy = download.shutil.copyfile
+
+            def copy(a, b):
+                seen.append(set(download.FINISHING))
+                return real_copy(a, b)
+
+            real_replace = os.replace
+            calls = {"n": 0}
+
+            def replace(a, b):
+                calls["n"] += 1
+                if calls["n"] <= download.REPLACE_ATTEMPTS:        # the rename is blocked every time, the copy's rename is not
+                    raise PermissionError("in use")
+                return real_replace(a, b)
+
+            with mock.patch.object(download.shutil, "copyfile", copy), mock.patch.object(download.os, "replace", replace):
+                download.move_into_place(part, dest, threading.Event(), sleep=lambda s: None)
+            self.assertEqual(dest.read_bytes(), b"data")
+            self.assertEqual(seen, [{"f.bin"}])
+            self.assertEqual(download.FINISHING, set())

@@ -316,6 +316,9 @@ export async function mount(root) {
     ctx.worker = data.worker;
     const installed = data.models.filter((m) => m.state === "installed");
     const used = data.models.reduce((a, m) => a + m.disk.total, 0);
+    if (data.storage_warning && !summary.parentElement.querySelector(".storage-warning")) {
+      summary.after(h("div", { class: "notice notice-warning storage-warning" }, icon("alert"), data.storage_warning));
+    }
     setText(summary, `${installed.length} of ${data.models.length} installed · ${fmtBytes(used)} used · ${fmtBytes(data.disk_free)} free in ${data.models_dir}`);
     once(notices, JSON.stringify([sys.gpu.cuda_12_8_ok, sys.gpu.driver, data.recipe_problems, data.worker.last_crash]), () => {
       const crash = crashNotice(data.worker, refresh);

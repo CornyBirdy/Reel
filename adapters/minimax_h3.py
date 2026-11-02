@@ -309,7 +309,7 @@ class Adapter(BaseAdapter):
         if self.workflows() == ["ref2va"]:
             refs = given.get("references") or []
             if not refs:
-                raise RuntimeError("Reference mode needs at least one picture or video.")
+                raise RuntimeError("Compose needs at least one picture or video.")
             call["references"] = self.references(refs)
             emit(event="log", message=f"References, in order: {reference_labels(refs)}. Mention them in the prompt as written.")
             if given.get("match_audio"):

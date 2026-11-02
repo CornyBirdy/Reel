@@ -7,6 +7,8 @@ import json
 import re
 from contextlib import asynccontextmanager
 
+import os
+
 from fastapi import FastAPI
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -33,7 +35,7 @@ app.include_router(api_update.router)
 
 @app.get("/api/health")
 def health() -> dict:
-    return {"app": "reel", "version": __version__}
+    return {"app": "reel", "version": __version__, "windowless": os.environ.get("REEL_LAUNCHER") == "hidden"}
 
 
 @app.get("/api/system")

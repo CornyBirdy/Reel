@@ -99,6 +99,7 @@ def list_models() -> dict:
         "worker": workers.manager.status(),
         "recipe_problems": problems,
         "models_dir": str(root),
+        "storage_warning": system.storage_warning(root) or system.storage_warning(config.ROOT),
         "disk_free": system.disk_free(root),
     }
 
