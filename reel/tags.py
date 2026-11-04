@@ -30,10 +30,7 @@ def capability_tags(r: dict) -> list[dict]:
     if kind == "video":
         tags.append(_tag("silent", "No sound", "The clip has no audio track."))
 
-    # Size and length.
-    w, h = lim.get("max_width"), lim.get("max_height")
-    if w and h:
-        tags.append(_tag("resolution", f"Up to {w} × {h}", "The largest size Reel lets this model make."))
+    # Length (the card already lists the largest size).
     fr, fps = lim.get("frames"), lim.get("fps")
     if kind == "video" and fr and fps:
         secs = fr["max"] / fps
@@ -64,8 +61,6 @@ def capability_tags(r: dict) -> list[dict]:
     if dflt.get("quantization") not in (None, "none"):
         tags.append(_tag("quantized", "Quantized by default",
                          "Runs with compressed weights to fit a 16 GB card, with a small quality cost. Change it under Memory options."))
-    if r.get("gated"):
-        tags.append(_tag("gated", "Gated", "Needs its terms accepted on Hugging Face and a token in Settings.", "info"))
 
     for extra in r.get("tags") or []:
         if isinstance(extra, str) and extra.strip():

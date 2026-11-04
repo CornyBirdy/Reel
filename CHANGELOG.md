@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+**New**
+- **Capability tags** on every model in the Library and under the model picker on the Generate tab: what it makes from what (text to image or video), the longest clip, whether it's fast or slow by default, whether it understands a negative prompt, how heavy it is on VRAM, whether it's quantized by default, and that it takes a prompt only (no starting image) and has no sound. They're worked out from each model's own limits and defaults, so models added from Hugging Face get them too; a recipe can add its own with a `"tags"` list.
+
 ## 0.1.0 - 2026-10-29
 
 First release.

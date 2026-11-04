@@ -85,7 +85,7 @@ class Tags(unittest.TestCase):
 
     def test_distilled_model_is_fast_and_ignores_negative_prompts(self):
         k = self.keys("flux1-schnell")
-        self.assertTrue({"fast", "no-negative", "gated", "quantized"} <= k)
+        self.assertTrue({"fast", "no-negative", "quantized"} <= k)
         self.assertIn("negative", self.keys("sdxl-base"))
 
     def test_recipes_can_add_their_own_tags(self):
