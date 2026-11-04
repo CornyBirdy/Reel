@@ -4,27 +4,136 @@ Usage: python download.py SPEC.json
 SPEC: {"weights_dir": str, "weights": [recipe weights entries]}
 Prints one JSON object per line: files / progress / done / error.
 Progress is the number of bytes on disk under weights_dir (completed files plus
-partial downloads), against the total taken from the Hub API. Finished files are kept if a download
-is interrupted; a partly downloaded file starts over.
+partial downloads), against the total taken from the Hub API.
+
+A speed limit can be set while a download runs: Reel writes a small JSON file (spec["throttle_file"]) and this script
+re-reads it every second, see Throttle. That caps the bytes written to disk as well, since everything downloaded is written.
+
+Every file is fetched here with plain HTTP range requests rather than by the Hub client: current versions of
+huggingface_hub download into a throw-away temporary file and delete it when the transfer stops, so a cancelled or
+dropped download always started that file again from zero. Here a file in progress lives at
+<dest>/.cache/reel/<path>.part and the next run asks the server for the rest of it. Only a finished file is moved to
+<dest>/<path>, so a file at its real name is always complete.
 """
+from __future__ import annotations
+
+import errno
 import fnmatch
+import http.client
 import json
 import os
+import shutil
 import sys
 import threading
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+
+ENDPOINT = os.environ.get("HF_ENDPOINT", "https://huggingface.co").rstrip("/")
+CHUNK = 1 << 20
+TIMEOUT = 30          # seconds without a byte before a connection is treated as dropped
+MAX_FAILURES = 8      # attempts in a row that bring no new bytes before a file is given up on
+WORKERS = 8
+REPLACE_ATTEMPTS = 8   # tries at renaming a finished file before copying it instead; about 30 seconds in all
+
+
+class Throttle:
+    """One speed limit shared by every download thread.
+
+    The limit comes from a JSON file that Reel rewrites whenever the setting (or what the PC is doing) changes:
+
+        {"mode": "off" | "manual" | "auto", "mb_per_s": 0, "busy": false, "busy_mb_per_s": 10}
+
+    off     no limit.
+    manual  never faster than mb_per_s (0 = no limit).
+    auto    full speed while the PC is idle; while a model is loading or generating ("busy") only busy_mb_per_s, so a
+            download does not fight the model for the disk and the CPU. mb_per_s, when set, is a ceiling in both cases.
+
+    An unreadable or missing file means no limit. Each thread asks wait() before writing a block; the threads share one
+    schedule, so the limit is for the whole download, not per file.
+    """
+
+    def __init__(self, path=None, clock=time.monotonic, sleep=time.sleep, reread=1.0):
+        self.path, self.clock, self.sleep, self.reread = path, clock, sleep, reread
+        self._lock = threading.Lock()
+        self._next = 0.0
+        self._read_at = -1e9
+        self._limit = None
+
+    def limit(self):
+        """Bytes per second, or None for no limit."""
+        now = self.clock()
+        if now - self._read_at >= self.reread:
+            self._read_at, self._limit = now, self._load()
+        return self._limit
+
+    def _load(self):
+        if not self.path:
+            return None
+        try:
+            cfg = json.loads(Path(self.path).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        mode, cap = cfg.get("mode", "off"), float(cfg.get("mb_per_s") or 0)
+        if mode == "manual":
+            mbps = cap
+        elif mode == "auto":
+            mbps = float(cfg.get("busy_mb_per_s") or 10) if cfg.get("busy") else 0.0
+            if cap:
+                mbps = min(mbps, cap) if mbps else cap
+        else:
+            mbps = 0.0
+        return mbps * 1_000_000 if mbps > 0 else None
+
+    def wait(self, nbytes, abort=None):
+        """Block until `nbytes` more may be written."""
+        limit = self.limit()
+        if not limit:
+            with self._lock:
+                self._next = self.clock()
+            return
+        with self._lock:
+            now = self.clock()
+            start = max(self._next, now)
+            self._next = start + nbytes / limit
+            delay = start - now
+        while delay > 0:
+            if abort is not None and abort.is_set():
+                raise Aborted()
+            step = min(delay, 0.25)
+            self.sleep(step)
+            delay -= step
 
 
 def emit(**kw):
     print(json.dumps(kw), flush=True)
 
 
+class Fatal(Exception):
+    """Retrying would not help."""
+
+
+class Retry(Exception):
+    """The connection failed; ask for the rest again."""
+
+
+class Aborted(Exception):
+    pass
+
+
+FINISHING: set[str] = set()      # files being copied into place because the rename was blocked (see move_into_place)
+
+
 def bytes_on_disk(root: Path) -> int:
+    """Bytes of completed files plus partial downloads. A copy being made of a finished file is not counted: it duplicates
+    bytes already counted, and it used to push the total past 100% while the last file was still being copied."""
     total = 0
     for dirpath, _dirs, files in os.walk(root):
         for name in files:
-            if name.endswith(".lock"):
+            if name.endswith((".lock", ".copying")):
                 continue
             try:
                 total += os.path.getsize(os.path.join(dirpath, name))
@@ -34,11 +143,8 @@ def bytes_on_disk(root: Path) -> int:
 
 
 def drop_partials(root: Path) -> int:
-    """Delete half-downloaded files. Finished files are kept and skipped by the Hub client.
-
-    hf_xet starts a fresh .incomplete file instead of continuing an old one, so
-    stale partials would only waste disk and inflate the progress counter.
-    """
+    """Delete what the Hub client used to leave behind. Its .incomplete files cannot be continued (hf_xet writes them
+    out of order), so they would only waste disk and inflate the progress counter. Reel's own .part files are kept."""
     n = 0
     for path in root.glob(".cache/huggingface/download/**/*.incomplete"):
         try:
@@ -58,6 +164,154 @@ def selected(api, entry):
             and not any(fnmatch.fnmatch(s.rfilename, p) for p in ignore)]
 
 
+class _Redirects(urllib.request.HTTPRedirectHandler):
+    """Follow redirects, but send the access token to huggingface.co only: the bytes themselves come from a CDN."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is not None and urllib.parse.urlsplit(newurl).netloc != urllib.parse.urlsplit(req.full_url).netloc:
+            new.headers.pop("Authorization", None)
+        return new
+
+
+_opener = urllib.request.build_opener(_Redirects)
+
+
+def file_url(repo: str, revision: str | None, path: str) -> str:
+    return (f"{ENDPOINT}/{urllib.parse.quote(repo, safe='/')}/resolve/"
+            f"{urllib.parse.quote(revision or 'main', safe='')}/{urllib.parse.quote(path)}")
+
+
+def _stream(url: str, part: Path, have: int, token: str | None, abort: threading.Event, throttle: "Throttle | None" = None) -> tuple[int, int]:
+    """Append what the server has beyond `have` bytes to `part`. Returns (bytes now in part, size the server says the file has)."""
+    headers = {"User-Agent": "reel-installer"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    if have:
+        headers["Range"] = f"bytes={have}-"
+    try:
+        resp = _opener.open(urllib.request.Request(url, headers=headers), timeout=TIMEOUT)
+    except urllib.error.HTTPError as exc:
+        if exc.code == 416:                      # what is on disk does not fit the file: start it again
+            part.unlink(missing_ok=True)
+            raise Retry("the server did not accept the range") from exc
+        if exc.code in (401, 403):
+            raise Fatal(f"Hugging Face refused access (HTTP {exc.code}). A gated model needs its terms accepted on the "
+                        "model page and a valid access token saved in Settings.") from exc
+        if exc.code == 404:
+            raise Fatal(f"Hugging Face has no such file ({url}).") from exc
+        if exc.code == 429 or exc.code >= 500:
+            raise Retry(f"HTTP {exc.code}") from exc
+        raise Fatal(f"HTTP {exc.code} for {url}") from exc
+    with resp:
+        if have and resp.status != 206:          # the server ignored the range and is sending the whole file
+            have = 0
+        total = None
+        content_range = resp.headers.get("Content-Range")        # bytes 100-999/1000
+        if resp.status == 206 and content_range and "/" in content_range:
+            tail = content_range.rsplit("/", 1)[1]
+            total = int(tail) if tail.isdigit() else None
+        elif resp.headers.get("Content-Length", "").isdigit():
+            total = have + int(resp.headers["Content-Length"])
+        with part.open("ab" if have else "wb") as out:
+            while True:
+                if abort.is_set():
+                    raise Aborted()
+                block = resp.read(CHUNK)
+                if not block:
+                    break
+                if throttle is not None:
+                    throttle.wait(len(block), abort)
+                try:
+                    out.write(block)
+                except OSError as exc:
+                    reason = "The disk is full" if exc.errno == errno.ENOSPC else f"Could not write the file ({exc})"
+                    raise Fatal(f"{reason}: {part}") from exc
+                have += len(block)
+    return have, total or 0
+
+
+def move_into_place(part: Path, dest: Path, abort: threading.Event, sleep=time.sleep) -> None:
+    """Make a finished .part file appear at its real name.
+
+    On Windows the rename fails with "being used by another process" (WinError 32) for as long as anything else has the
+    file open: a virus scanner or the search indexer opens a freshly written multi-GB file for a while, and an earlier
+    download process that was never closed can hold it indefinitely. So wait and retry first; if the file stays locked,
+    copy it instead (reading is allowed where renaming is not) and rename the copy. If even that fails the .part file is
+    left where it is: the next Install finds it already complete and only has to move it.
+    """
+    delay, last = 0.25, None
+    for _ in range(REPLACE_ATTEMPTS):
+        try:
+            os.replace(part, dest)
+            return
+        except PermissionError as exc:
+            last = exc
+            if abort.is_set():
+                break
+            sleep(delay)
+            delay = min(delay * 2, 10)
+    copy = dest.with_name(dest.name + ".copying")
+    FINISHING.add(dest.name)
+    try:
+        shutil.copyfile(part, copy)
+        os.replace(copy, dest)
+    except OSError as exc:
+        copy.unlink(missing_ok=True)
+        raise Fatal(f"Downloaded {dest.name}, but Windows would not let Reel finish it because another program has "
+                    "the file open (antivirus scanning it, or an earlier Reel download that is still running; "
+                    "restarting Reel or the PC clears the second). The file is complete and will not be downloaded "
+                    f"again: press Install once the program lets go. ({last or exc})") from exc
+    finally:
+        FINISHING.discard(dest.name)
+    try:
+        part.unlink()
+    except OSError:
+        pass                                        # still locked; the finished copy is what counts
+
+
+def fetch_file(url: str, dest: Path, part: Path, size: int, token: str | None, abort: threading.Event,
+               sleep=time.sleep, throttle: "Throttle | None" = None) -> None:
+    """Download `url` to `dest`, continuing `part` if an earlier run left one. `dest` only ever appears complete."""
+    if dest.exists():
+        if not size or dest.stat().st_size == size:
+            try:
+                part.unlink(missing_ok=True)             # a leftover from a rename that was blocked
+            except OSError:
+                pass
+            return
+        dest.unlink()                            # a damaged or older copy: fetch it again
+    part.parent.mkdir(parents=True, exist_ok=True)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    failures, furthest = 0, 0
+    while True:
+        have = part.stat().st_size if part.exists() else 0
+        if size and have > size:
+            part.unlink()
+            have = 0
+        furthest, why = max(furthest, have), None
+        if not size or have != size:
+            try:
+                have, total = _stream(url, part, have, token, abort, throttle)
+                want = size or total
+                if want and have != want:
+                    why = Retry(f"the connection closed after {have:,} of {want:,} bytes")
+                    have = part.stat().st_size
+            except (Retry, urllib.error.URLError, http.client.HTTPException, OSError) as exc:
+                why = exc
+        if why is None:
+            move_into_place(part, dest, abort, sleep)
+            return
+        if abort.is_set():
+            raise Aborted()
+        reached = part.stat().st_size if part.exists() else 0
+        failures = 0 if reached > furthest else failures + 1     # only getting further than ever before counts as progress
+        furthest = max(furthest, reached)
+        if failures >= MAX_FAILURES:
+            raise Fatal(f"Could not download {dest.name}: {why}. Press Install again to continue from where it stopped.")
+        sleep(min(2 ** failures, 30))
+
+
 def main(spec_path):
     spec = json.load(open(spec_path, encoding="utf-8"))
     weights_dir = Path(spec["weights_dir"])
@@ -67,7 +321,7 @@ def main(spec_path):
         drop_partials(weights_dir / entry.get("dest", "."))
     drop_partials(weights_dir)
 
-    from huggingface_hub import HfApi, snapshot_download
+    from huggingface_hub import HfApi
     api = HfApi(token=token)
 
     plan = []
@@ -81,6 +335,8 @@ def main(spec_path):
     emit(event="files", total=total, files=sum(len(f) for _e, f in plan), repos=[e["repo_id"] for e, _f in plan])
 
     stop = threading.Event()
+    abort = threading.Event()
+    throttle = Throttle(spec.get("throttle_file"))
 
     def poll():
         last, last_t = bytes_on_disk(weights_dir), time.time()
@@ -91,30 +347,33 @@ def main(spec_path):
             inst = (now - last) / max(t - last_t, 1e-6)
             speed = inst if speed == 0 else 0.7 * speed + 0.3 * inst
             last, last_t = now, t
-            emit(event="progress", done=min(now, total), total=total, speed=max(speed, 0.0))
+            emit(event="progress", done=min(now, total), total=total, speed=max(speed, 0.0), finishing=len(FINISHING))
 
     thread = threading.Thread(target=poll, daemon=True)
     thread.start()
+    pool = ThreadPoolExecutor(max_workers=WORKERS)
     try:
-        for entry, _files in plan:
+        for entry, files in plan:
             dest = (weights_dir / entry.get("dest", ".")).resolve()
             dest.mkdir(parents=True, exist_ok=True)
             emit(event="repo", repo=entry["repo_id"])
-            snapshot_download(
-                repo_id=entry["repo_id"],
-                revision=entry.get("revision"),
-                local_dir=str(dest),
-                allow_patterns=entry.get("allow_patterns"),
-                ignore_patterns=entry.get("ignore_patterns"),
-                token=token,
-                max_workers=8,
-            )
+            futures = [
+                pool.submit(fetch_file, file_url(entry["repo_id"], entry.get("revision"), name), dest / name,
+                            dest / ".cache" / "reel" / (name + ".part"), size, token, abort, throttle=throttle)
+                for name, size in sorted(files, key=lambda f: -f[1])]   # the big files first, so none is left for last
+            for fut in as_completed(futures):
+                fut.result()
     except KeyboardInterrupt:
         return 130
+    except Fatal as exc:
+        emit(event="error", message=str(exc))
+        return 1
     except Exception as exc:  # noqa: BLE001 - report any failure to the app
         emit(event="error", message=f"{type(exc).__name__}: {exc}")
         return 1
     finally:
+        abort.set()
+        pool.shutdown(wait=True, cancel_futures=True)
         stop.set()
         thread.join(timeout=2)
     drop_partials(weights_dir)

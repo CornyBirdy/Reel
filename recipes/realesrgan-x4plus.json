@@ -1,0 +1,69 @@
+{
+  "schema": 1,
+  "id": "realesrgan-x4plus",
+  "name": "Real-ESRGAN x4+",
+  "family": "Xintao / Tencent ARC",
+  "version": "x4plus",
+  "status": "ready",
+  "kind": "upscale",
+  "verified": false,
+  "hf_repo": "lllyasviel/Annotators",
+  "gated": false,
+  "summary": "Makes finished images and clips bigger and sharper: 2× or 4×. A small, fast AI upscaler that runs frame by frame in tiles, so it fits on almost any NVIDIA card. The weights are tiny; like every model here it gets its own PyTorch environment (about 8 GB of disk).",
+  "license": "BSD-3-Clause",
+  "license_url": "https://github.com/xinntao/Real-ESRGAN/blob/master/LICENSE",
+  "tasks": [
+    "upscale"
+  ],
+  "adapter": "upscale_esrgan",
+  "adapter_config": {
+    "weights_file": "RealESRGAN_x4plus.pth"
+  },
+  "verify_modules": [
+    "spandrel",
+    "imageio_ffmpeg",
+    "PIL"
+  ],
+  "download_gb": 0.07,
+  "vram_gb": 2,
+  "vram_note": "Works in tiles, so the peak stays small whatever the picture size. Reel shows the real peak per result in History.",
+  "python": {
+    "torch_index": "https://download.pytorch.org/whl/cu128",
+    "torch": [
+      "torch>=2.7",
+      "torchvision"
+    ],
+    "packages": [
+      "spandrel>=0.4",
+      "safetensors",
+      "numpy",
+      "imageio",
+      "imageio-ffmpeg",
+      "Pillow"
+    ]
+  },
+  "weights": [
+    {
+      "repo_id": "lllyasviel/Annotators",
+      "revision": "982e7edaec38759d914a963c48c4726685de7d96",
+      "dest": ".",
+      "allow_patterns": [
+        "RealESRGAN_x4plus.pth"
+      ]
+    }
+  ],
+  "limits": {
+    "scales": [
+      2,
+      4
+    ],
+    "native_scale": 4,
+    "max_output_pixels": 33177600,
+    "max_frames": 600,
+    "max_video_pixels": 8294400
+  },
+  "defaults": {
+    "scale": 2,
+    "tile": 512
+  }
+}

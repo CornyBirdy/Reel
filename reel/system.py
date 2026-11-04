@@ -90,6 +90,61 @@ def gpu_env() -> dict:
     return {"CUDA_VISIBLE_DEVICES": chosen["uuid"], "CUDA_DEVICE_ORDER": "PCI_BUS_ID"}
 
 
+def ram_info() -> dict:
+    """{"total_gb", "available_gb"} of system RAM ({} if it cannot be read). Same reader the model processes use."""
+    global _sysinfo
+    if _sysinfo is None:
+        import importlib.util
+        from . import config
+        spec = importlib.util.spec_from_file_location("reel_sysinfo", config.ADAPTERS_DIR / "sysinfo.py")
+        _sysinfo = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_sysinfo)
+    return _sysinfo.host_memory()
+
+
+_sysinfo = None
+
+
+def memory_info() -> dict | None:
+    """Physical RAM and commit (RAM + pagefile) in bytes: ram_total, ram_free, commit_total, commit_free. None if unknown."""
+    try:
+        if os.name == "nt":
+            import ctypes
+
+            class MEMORYSTATUSEX(ctypes.Structure):
+                _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong),
+                            ("ullTotalPhys", ctypes.c_ulonglong), ("ullAvailPhys", ctypes.c_ulonglong),
+                            ("ullTotalPageFile", ctypes.c_ulonglong), ("ullAvailPageFile", ctypes.c_ulonglong),
+                            ("ullTotalVirtual", ctypes.c_ulonglong), ("ullAvailVirtual", ctypes.c_ulonglong),
+                            ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
+
+            st = MEMORYSTATUSEX()
+            st.dwLength = ctypes.sizeof(st)
+            if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(st)):
+                return None
+            return {"ram_total": st.ullTotalPhys, "ram_free": st.ullAvailPhys,
+                    "commit_total": st.ullTotalPageFile, "commit_free": st.ullAvailPageFile}
+        meminfo = {}
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            key, _, rest = line.partition(":")
+            meminfo[key] = int(rest.split()[0]) * 1024
+        return {"ram_total": meminfo["MemTotal"], "ram_free": meminfo["MemAvailable"],
+                "commit_total": meminfo["CommitLimit"],
+                "commit_free": max(meminfo["CommitLimit"] - meminfo["Committed_AS"], 0)}
+    except (OSError, ValueError, KeyError, AttributeError):
+        return None
+
+
+def memory_summary() -> str:
+    """One line for logs and error messages, e.g. 'RAM 21.4 of 31.9 GB free, 40.2 GB of commit (RAM + pagefile) free'."""
+    m = memory_info()
+    if not m:
+        return ""
+    gb = lambda n: f"{n / 1e9:.1f}"  # noqa: E731
+    return (f"RAM {gb(m['ram_free'])} of {gb(m['ram_total'])} GB free, "
+            f"{gb(m['commit_free'])} GB of commit (RAM + pagefile) free")
+
+
 def dir_size(path: Path) -> int:
     """Total bytes under path (0 if missing). Does not follow symlinks."""
     total = 0
@@ -116,3 +171,15 @@ def disk_free(path: Path) -> int:
     while not probe.exists() and probe != probe.parent:
         probe = probe.parent
     return shutil.disk_usage(probe).free
+
+
+def storage_warning(path) -> str | None:
+    """A sentence if `path` is inside a folder that a cloud client syncs. OneDrive uploads every model file (tens of GB), and while it
+    does it holds files open, which blocks Reel from finishing downloads (they are then copied instead, slowly) and slows loading."""
+    text = str(path).replace("\\", "/").lower()
+    for name in ("onedrive", "dropbox", "google drive", "icloud"):
+        if f"/{name}" in text:
+            return (f"This folder is synced by {name.title() if name != 'onedrive' else 'OneDrive'}, which uploads every model file and holds "
+                    "them open while it does. Downloads can stall at the end and models load slowly. Move Reel to a plain folder such as "
+                    "C:\\Reel, or choose a storage folder outside it in Settings.")
+    return None

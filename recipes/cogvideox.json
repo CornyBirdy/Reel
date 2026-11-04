@@ -74,6 +74,29 @@
       }
     ]
   },
+  "native": {
+    "label": "720×480",
+    "resolutions": [
+      {
+        "w": 720,
+        "h": 480,
+        "label": "720×480 (the only supported size)"
+      }
+    ],
+    "frames": [
+      49
+    ],
+    "fps": 8,
+    "source": "https://huggingface.co/THUDM/CogVideoX-5b",
+    "note": "The card: 720×480, \"no support for other resolutions\"; 6 seconds, 8 fps, 49 frames. Guidance 6, 50 steps."
+  },
+  "unlock": {
+    "max_width": 720,
+    "max_height": 480,
+    "max_frames": 49,
+    "known": true,
+    "note": "CogVideoX-5b supports only its native size and length, so there is no extra headroom to unlock."
+  },
   "defaults": {
     "width": 720,
     "height": 480,
@@ -95,7 +118,26 @@
       "int8",
       "nf4"
     ],
-    "notes": ""
+    "notes": "",
+    "estimate": {
+      "weights_gb": {
+        "transformer": 11.1,
+        "text_encoder": 9.5,
+        "vae": 0.9
+      },
+      "quantized": [
+        "transformer",
+        "text_encoder"
+      ],
+      "denoiser": "transformer",
+      "tokens": {
+        "spatial": 16,
+        "temporal": 4
+      },
+      "hidden": 3072,
+      "vae_mb_per_mpx_frame": 768,
+      "vae_tile_mpx_frames": 1.5
+    }
   },
   "adapter_config": {
     "pipeline": "CogVideoXPipeline",

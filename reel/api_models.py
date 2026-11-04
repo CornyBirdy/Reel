@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import json
+import shutil
 import threading
 import time
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
-from . import config, hf, recipes, system
+from . import config, fit, generation, hf, model_settings, recipes, system, verify, workers
 from .installer import InstallError, installs, installed_info, model_dir
 from .tags import capability_tags
 
@@ -39,7 +42,13 @@ def disk_usage(model_id: str) -> dict:
     return usage
 
 
-def describe(recipe: dict) -> dict:
+def hf_url(recipe: dict) -> str | None:
+    """The model's page on Hugging Face: the repo it was imported from, or the first repo its recipe downloads."""
+    repo = recipe.get("hf_repo") or next((w["repo_id"] for w in recipe.get("weights", []) if w.get("repo_id")), None)
+    return f"https://huggingface.co/{repo}" if repo else None
+
+
+def describe(recipe: dict, gpu: dict | None = None) -> dict:
     mid = recipe["id"]
     info = installed_info(mid)
     job = installs.job(mid)
@@ -66,14 +75,19 @@ def describe(recipe: dict) -> dict:
         "status": recipe["status"], "summary": recipe.get("summary"),
         "kind": recipe.get("kind", "video"), "source": recipe.get("source", "builtin"),
         "verified": recipe.get("verified", True), "gated": bool(recipe.get("gated")), "hf_repo": recipe.get("hf_repo"),
+        "hf_url": hf_url(recipe),
         "license": recipe.get("license"), "license_url": recipe.get("license_url"),
         "tasks": recipe.get("tasks", []),
         "tags": capability_tags(recipe),
         "download_gb": recipe["download_gb"], "vram_gb": recipe["vram_gb"], "vram_note": recipe.get("vram_note"),
         "limits": recipe["limits"], "defaults": recipe["defaults"], "memory": recipe.get("memory", {}),
+        "native": recipe.get("native"), "native_label": recipes.native_label(recipe), "unlock": recipes.unlock_limits(recipe),
+        "recommended": bool(recipe.get("recommended")), "settings": model_settings.get(mid),
+        "modes": recipes.modes_of(recipe), "inputs": recipe.get("inputs"), "controls": recipe.get("controls") or {},
         "state": state, "installed": state == "installed", "installed_info": info,
         "disk": disk_usage(mid), "install": job.to_dict() if job else None,
         "blocked_reason": blocked,
+        "fit": fit.assess(recipe, gpu),
     }
 
 
@@ -81,10 +95,13 @@ def describe(recipe: dict) -> dict:
 def list_models() -> dict:
     found, problems = recipes.load_all()
     root = config.models_root()
+    gpu = system.gpu_info().get("selected_gpu")
     return {
-        "models": [describe(r) for r in found.values()],
+        "models": [describe(r, gpu) for r in found.values()],
+        "worker": workers.manager.status(),
         "recipe_problems": problems,
         "models_dir": str(root),
+        "storage_warning": system.storage_warning(root) or system.storage_warning(config.ROOT),
         "disk_free": system.disk_free(root),
     }
 
@@ -96,9 +113,63 @@ def _recipe_or_404(model_id: str) -> dict:
     return r
 
 
+def _release_worker(model_id: str) -> None:
+    """A loaded model has its environment and weights open; free them before they are changed or deleted."""
+    try:
+        workers.manager.unload(f"{model_id} is being changed", model_id=model_id)
+    except workers.WorkerBusy as exc:
+        raise HTTPException(409, str(exc))
+
+
+@router.get("/{model_id}/settings")
+def get_settings(model_id: str) -> dict:
+    """Saved settings for a model, and what it starts from when nothing is saved."""
+    recipe = _recipe_or_404(model_id)
+    gpu = system.gpu_info().get("selected_gpu")
+    saved = model_settings.get(model_id)
+    base = {k: v for k, v in model_settings.effective(recipe, gpu).items() if k not in saved}
+    return {"saved": saved, "effective": model_settings.effective(recipe, gpu), "default": {**base, **{k: None for k in saved}}}
+
+
+class SettingsBody(BaseModel):
+    quantization: str | None = None
+    offload: str | None = None
+    vae_tiling: bool | None = None
+    attention_backend: str | None = None
+    width: int | None = None
+    height: int | None = None
+    frames: int | None = None
+    fps: int | None = None
+    steps: int | None = None
+    guidance: float | None = None
+
+
+@router.put("/{model_id}/settings")
+def put_settings(model_id: str, body: SettingsBody) -> dict:
+    """Save a model's settings. They are checked the way a generation is, so a saved value can always be used."""
+    recipe = _recipe_or_404(model_id)
+    if recipe.get("kind") == "upscale":
+        raise HTTPException(409, f"{recipe['name']} has no settings to save.")
+    values = model_settings.clean(body.model_dump())
+    try:
+        generation.validate(recipe, {"prompt": "x", **values})
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(400, str(exc))
+    model_settings.save(model_id, values)
+    return get_settings(model_id)
+
+
+@router.delete("/{model_id}/settings")
+def reset_settings(model_id: str) -> dict:
+    _recipe_or_404(model_id)
+    model_settings.reset(model_id)
+    return get_settings(model_id)
+
+
 @router.post("/{model_id}/install")
 def install(model_id: str) -> dict:
     _recipe_or_404(model_id)
+    _release_worker(model_id)
     try:
         installs.start(model_id)
     except InstallError as exc:
@@ -110,6 +181,97 @@ def install(model_id: str) -> dict:
 def cancel(model_id: str) -> dict:
     _recipe_or_404(model_id)
     installs.cancel(model_id)
+    return {"ok": True}
+
+
+@router.post("/{model_id}/pause")
+def pause(model_id: str) -> dict:
+    _recipe_or_404(model_id)
+    try:
+        installs.pause(model_id)
+    except InstallError as exc:
+        raise HTTPException(409, str(exc))
+    return {"ok": True}
+
+
+@router.post("/{model_id}/resume")
+def resume(model_id: str) -> dict:
+    _recipe_or_404(model_id)
+    try:
+        installs.resume(model_id)
+    except InstallError as exc:
+        raise HTTPException(409, str(exc))
+    return {"ok": True}
+
+
+class VerifyBody(BaseModel):
+    deep: bool = False            # also read every file and compare its checksum (slow for big models)
+    environment: bool = True      # also test the model's Python environment and GPU
+
+
+@router.post("/{model_id}/verify")
+def start_verify(model_id: str, body: VerifyBody | None = None) -> dict:
+    """Check an installed model's files (and its environment) in the background; poll GET for the result."""
+    recipe = _recipe_or_404(model_id)
+    if recipe["status"] != "ready" or not model_dir(model_id).exists():
+        raise HTTPException(409, "This model is not installed.")
+    if installs.is_installing(model_id) or installs.is_uninstalling(model_id):
+        raise HTTPException(409, "Wait for the install to finish first.")
+    body = body or VerifyBody()
+    return verify.start(recipe, deep=body.deep, environment=body.environment).to_dict()
+
+
+@router.get("/{model_id}/verify")
+def get_verify(model_id: str) -> dict:
+    _recipe_or_404(model_id)
+    job = verify.get(model_id)
+    return {"verify": job.to_dict() if job else None}
+
+
+@router.post("/{model_id}/verify/cancel")
+def cancel_verify(model_id: str) -> dict:
+    _recipe_or_404(model_id)
+    verify.cancel(model_id)
+    return {"ok": True}
+
+
+@router.post("/{model_id}/repair")
+def repair(model_id: str) -> dict:
+    """Fix what the last verification found: delete damaged files so they download again, and rebuild the Python
+    environment if it cannot use the GPU. Then run the installer, which skips everything that is fine."""
+    _recipe_or_404(model_id)
+    job = verify.get(model_id)
+    if not job or job.state != "done":
+        raise HTTPException(409, "Verify the model first, then repair what it finds.")
+    if not job.problems:
+        raise HTTPException(409, "Verification found nothing to repair.")
+    _release_worker(model_id)
+    mdir = model_dir(model_id)
+    weights = mdir / "weights"
+    stages = {}
+    try:
+        stages = json.loads((mdir / "stages.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        pass
+    for rel in verify.damaged_paths(job):
+        target = (weights / rel).resolve()
+        if weights.resolve() in target.parents and target.is_file():
+            target.unlink()
+    if verify.damaged_paths(job) or not job.online:
+        stages["weights"] = False
+    if verify.needs_new_environment(job):
+        shutil.rmtree(mdir / "venv", ignore_errors=True)
+        for name in ("env", "torch", "packages", "verify"):
+            stages[name] = False
+    elif verify.only_packages_missing(job):
+        for name in ("packages", "verify"):          # pip adds what is missing; PyTorch and the weights stay as they are
+            stages[name] = False
+    (mdir / "stages.json").write_text(json.dumps(stages), encoding="utf-8")
+    (mdir / "install.json").unlink(missing_ok=True)
+    try:
+        installs.start(model_id)
+    except InstallError as exc:
+        raise HTTPException(409, str(exc))
     return {"ok": True}
 
 
@@ -146,6 +308,7 @@ def remove_recipe(model_id: str) -> dict:
 @router.delete("/{model_id}")
 def uninstall(model_id: str) -> dict:
     _recipe_or_404(model_id)
+    _release_worker(model_id)
     try:
         installs.uninstall(model_id)
     except InstallError as exc:

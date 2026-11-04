@@ -61,9 +61,13 @@ class PlanComponent(unittest.TestCase):
 
 class Classification(unittest.TestCase):
     def test_input_image_pipelines_are_refused_with_a_reason(self):
-        for cls in ("WanImageToVideoPipeline", "StableDiffusionXLImg2ImgPipeline", "FluxKontextPipeline",
+        for cls in ("WanImageToVideoPipeline", "StableDiffusionXLImg2ImgPipeline", "FluxKontextInpaintPipeline",
                     "StableDiffusionInpaintPipeline", "FluxControlNetPipeline", "StableVideoDiffusionPipeline"):
             self.assertIsNotNone(hf.unsupported_reason(cls), cls)
+
+    def test_picture_editing_pipelines_are_accepted_as_edit_models(self):
+        for cls in hf.EDIT_FAMILIES:
+            self.assertIsNone(hf.unsupported_reason(cls), cls)
 
     def test_text_to_x_pipelines_are_accepted(self):
         for cls in ("StableDiffusionXLPipeline", "FluxPipeline", "WanPipeline", "LTXPipeline", "SanaPipeline"):
@@ -161,6 +165,24 @@ class BuildRecipe(unittest.TestCase):
     def test_distilled_models_get_few_steps_and_no_guidance(self):
         recipe, _ = self.build("StableDiffusionXLPipeline", "image", {"unet": 5 * GB}, name="acme/sdxl-turbo")
         self.assertEqual((recipe["defaults"]["steps"], recipe["defaults"]["guidance"]), (4, 0.0))
+
+    def test_edit_models_get_an_edit_mode_and_a_required_picture(self):
+        for cls, many in (("QwenImageEditPlusPipeline", True), ("QwenImageEditPipeline", False), ("FluxKontextPipeline", False)):
+            recipe, warns = self.build(cls, "image", {"transformer": 24 * GB})
+            self.assertEqual(recipes.validate(recipe), [], cls)
+            self.assertEqual(recipes.modes_of(recipe), ["edit"])
+            self.assertTrue(recipe["inputs"]["images"]["required"])
+            self.assertEqual(recipe["inputs"]["images"]["max"] > 1, many)
+            self.assertEqual(bool(recipe["adapter_config"].get("multi_image")), many)
+            self.assertFalse(any("guesses" in w for w in warns), cls)
+        recipe, _ = self.build("QwenImageEditPipeline", "image", {"transformer": 24 * GB})
+        self.assertEqual(recipe["adapter_config"]["guidance_arg"], "true_cfg_scale")
+
+    def test_a_refresh_keeps_the_edit_inputs(self):
+        recipe, _ = self.build("FluxKontextPipeline", "image", {"transformer": 24 * GB})
+        old = {k: v for k, v in recipe.items() if k not in ("modes", "inputs")}
+        merged = hf.refresh_recipe(old, recipe)
+        self.assertEqual(recipes.modes_of(merged), ["edit"])
 
     def test_unknown_architecture_is_flagged_as_guessed(self):
         _, warns = self.build("SomethingNewPipeline", "image", {"unet": 5 * GB})

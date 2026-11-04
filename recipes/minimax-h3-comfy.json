@@ -1,0 +1,239 @@
+{
+  "schema": 1,
+  "id": "minimax-h3-comfy",
+  "name": "MiniMax-H3 (ComfyUI)",
+  "family": "MiniMax",
+  "version": "pruned 8-bit",
+  "status": "ready",
+  "kind": "video",
+  "verified": false,
+  "hf_repo": "Comfy-Org/MiniMax-H3",
+  "modes": [
+    "video",
+    "frames",
+    "reference"
+  ],
+  "summary": "The same MiniMax-H3 (video with stereo sound, 5 to 15 s at 24 fps), run through a private copy of ComfyUI that Reel installs and manages for you. It uses the pruned 8-bit transformer (21 GB) and the 4-bit text encoder (15.7 GB), which is the build that fits a 16 GB card and 32 GB of RAM. One install does text, first/last frame and references. About 65 GB to download.",
+  "license": "MiniMax H3 Community License",
+  "license_url": "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE",
+  "tasks": [
+    "text-to-video",
+    "image-to-video",
+    "reference-to-video",
+    "audio"
+  ],
+  "controls": {
+    "guidance": false,
+    "negative_prompt": false
+  },
+  "inputs": {
+    "start_image": {
+      "type": "image",
+      "max": 1,
+      "required": true,
+      "modes": [
+        "frames"
+      ],
+      "label": "Start frame",
+      "help": "The clip begins on this picture and takes its shape."
+    },
+    "end_image": {
+      "type": "image",
+      "max": 1,
+      "modes": [
+        "frames"
+      ],
+      "label": "End frame (optional)",
+      "help": "The clip finishes on this picture."
+    },
+    "references": {
+      "type": "media",
+      "max": 12,
+      "max_by_kind": {
+        "image": 9,
+        "video": 3,
+        "audio": 3
+      },
+      "required": true,
+      "needs_visual": true,
+      "modes": [
+        "reference"
+      ],
+      "label": "References",
+      "help": "Pictures (people, places, objects), videos (motion, shots) and recordings (voices, music). Name them in the prompt as <Picture 1>, <Video 1>, <Audio 1>, numbered within each kind. ComfyUI reads pictures first, then videos, then recordings."
+    },
+    "match_audio": {
+      "type": "flag",
+      "modes": [
+        "reference"
+      ],
+      "label": "Make the clip as long as the first recording"
+    }
+  },
+  "adapter": "comfy_h3",
+  "adapter_config": {},
+  "engine": {
+    "name": "ComfyUI",
+    "version": "v0.43.0",
+    "zip_url": "https://github.com/comfyanonymous/ComfyUI/archive/refs/tags/v0.43.0.zip",
+    "requirements": "requirements.txt",
+    "size_mb": 40
+  },
+  "download_gb": 65.0,
+  "vram_gb": 10,
+  "vram_note": "Estimate, not measured. ComfyUI streams the transformer and the text encoder from system memory and keeps only what fits on the card; the decoders stay on it. Speed depends on how much has to be streamed.",
+  "python": {
+    "torch_index": "https://download.pytorch.org/whl/cu128",
+    "torch": [
+      "torch>=2.7",
+      "torchvision",
+      "torchaudio"
+    ],
+    "packages": [
+      "numpy",
+      "Pillow",
+      "av",
+      "imageio-ffmpeg",
+      "aiohttp",
+      "safetensors",
+      "huggingface_hub"
+    ]
+  },
+  "weights": [
+    {
+      "repo_id": "Comfy-Org/MiniMax-H3",
+      "revision": "912b6e38b2092ec4d2e86d24183e0d59ea059d48",
+      "dest": ".",
+      "allow_patterns": [
+        "text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+        "vae/minimax_h3_video_vae_int8_convrot.safetensors",
+        "vae/minimax_h3_audio_vae_fp32.safetensors",
+        "diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+        "diffusion_models/minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+        "loras/minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors",
+        "loras/minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors"
+      ]
+    }
+  ],
+  "limits": {
+    "max_width": 1024,
+    "max_height": 1024,
+    "size_multiple": 32,
+    "frames": {
+      "step": 17,
+      "offset": 5,
+      "min": 124,
+      "max": 124,
+      "default": 124
+    },
+    "fps": 24,
+    "steps": {
+      "min": 2,
+      "max": 100
+    },
+    "presets": [
+      {
+        "w": 640,
+        "h": 352
+      },
+      {
+        "w": 768,
+        "h": 448
+      },
+      {
+        "w": 960,
+        "h": 544
+      },
+      {
+        "w": 1024,
+        "h": 576
+      },
+      {
+        "w": 544,
+        "h": 960
+      }
+    ]
+  },
+  "native": {
+    "label": "1344×768",
+    "resolutions": [
+      {
+        "w": 1344,
+        "h": 768,
+        "label": "1344×768 (16:9, trained)"
+      },
+      {
+        "w": 768,
+        "h": 1344,
+        "label": "768×1344 (9:16, trained)"
+      }
+    ],
+    "frames": [
+      124,
+      243,
+      362
+    ],
+    "fps": 24,
+    "source": "https://huggingface.co/Comfy-Org/MiniMax-H3",
+    "note": "24 fps, frames are 17n+5 (124 = 5 s, 243 = 10 s, 362 = 15 s), sizes in multiples of 32. Steps of 8 or fewer switch on the 4-step turbo LoRA, which is much faster at some cost in quality."
+  },
+  "unlock": {
+    "max_width": 1344,
+    "max_height": 1344,
+    "max_frames": 362,
+    "known": true,
+    "note": "The model's own range: 5 to 15 seconds at 24 fps, short edge 768."
+  },
+  "defaults": {
+    "width": 960,
+    "height": 544,
+    "steps": 20,
+    "guidance": 1.0,
+    "negative_prompt": "",
+    "offload": "auto",
+    "vae_tiling": true,
+    "quantization": "none",
+    "fps": 24
+  },
+  "memory": {
+    "offload_options": [
+      "auto"
+    ],
+    "quantization_options": [
+      "none"
+    ],
+    "notes": "ComfyUI manages its own memory: it memory-maps the weights from disk and streams them to the card as needed, so the figures here are estimates. Offloading and quantization are fixed by the files used (8-bit transformer, 4-bit text encoder). Use 8 steps or fewer for the turbo LoRA.",
+    "estimate": {
+      "weights_gb": {
+        "transformer": 21.0,
+        "text_encoder": 15.7,
+        "vae": 2.8,
+        "audio_vae": 0.6
+      },
+      "quantized": [],
+      "denoiser": "transformer",
+      "tokens": {
+        "spatial": 32,
+        "temporal": 4
+      },
+      "hidden": 5376,
+      "vae_mb_per_mpx_frame": 768,
+      "vae_tile_mpx_frames": 1.5,
+      "transient": [
+        "text_encoder",
+        "transformer"
+      ],
+      "gpu_resident": [
+        "vae",
+        "audio_vae"
+      ],
+      "auto_offload": "sequential"
+    }
+  },
+  "verify_modules": [
+    "aiohttp",
+    "av",
+    "imageio_ffmpeg",
+    "safetensors"
+  ]
+}

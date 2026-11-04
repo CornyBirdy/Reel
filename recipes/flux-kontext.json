@@ -1,0 +1,177 @@
+{
+  "schema": 1,
+  "id": "flux-kontext",
+  "name": "FLUX.1 Kontext",
+  "family": "Black Forest Labs",
+  "version": "dev",
+  "status": "ready",
+  "kind": "image",
+  "verified": false,
+  "hf_repo": "black-forest-labs/FLUX.1-Kontext-dev",
+  "gated": true,
+  "modes": [
+    "edit"
+  ],
+  "summary": "Instruction-based picture editing that keeps the subject consistent (change one thing, keep the rest). 12B model, NF4 by default to fit 16 GB. Gated: accept the terms on Hugging Face and save a token in Settings first.",
+  "license": "FLUX.1 [dev] Non-Commercial License",
+  "license_url": "https://huggingface.co/black-forest-labs/FLUX.1-Kontext-dev/blob/main/LICENSE.md",
+  "tasks": [
+    "image-editing"
+  ],
+  "inputs": {
+    "images": {
+      "type": "image",
+      "max": 1,
+      "required": true,
+      "modes": [
+        "edit"
+      ],
+      "label": "Picture to edit"
+    }
+  },
+  "adapter": "diffusers_auto",
+  "adapter_config": {
+    "pipeline": "FluxKontextPipeline",
+    "variant": null
+  },
+  "download_gb": 33.7,
+  "vram_gb": 12,
+  "vram_note": "Estimate from the weights' real tensor sizes (the same 12B transformer as FLUX.1 schnell, plus the input picture's tokens); not measured.",
+  "python": {
+    "torch_index": "https://download.pytorch.org/whl/cu128",
+    "torch": [
+      "torch>=2.7",
+      "torchvision"
+    ],
+    "packages": [
+      "diffusers>=0.35",
+      "transformers>=4.49",
+      "accelerate>=1.4",
+      "bitsandbytes>=0.46",
+      "sentencepiece",
+      "protobuf",
+      "ftfy",
+      "safetensors",
+      "huggingface_hub",
+      "imageio",
+      "imageio-ffmpeg",
+      "numpy",
+      "Pillow",
+      "tiktoken"
+    ]
+  },
+  "weights": [
+    {
+      "repo_id": "black-forest-labs/FLUX.1-Kontext-dev",
+      "revision": "24e9dedc4ef646698dc8eb4e18ae2cec3c9fea0d",
+      "dest": ".",
+      "allow_patterns": [
+        "model_index.json",
+        "scheduler/*",
+        "text_encoder/*",
+        "text_encoder_2/*",
+        "tokenizer/*",
+        "tokenizer_2/*",
+        "transformer/*",
+        "vae/*"
+      ]
+    }
+  ],
+  "limits": {
+    "max_width": 1536,
+    "max_height": 1536,
+    "max_area": 1572864,
+    "size_multiple": 16,
+    "steps": {
+      "min": 1,
+      "max": 100
+    },
+    "presets": [
+      {
+        "w": 768,
+        "h": 768
+      },
+      {
+        "w": 1024,
+        "h": 1024
+      },
+      {
+        "w": 832,
+        "h": 1216
+      },
+      {
+        "w": 1216,
+        "h": 832
+      },
+      {
+        "w": 896,
+        "h": 1152
+      },
+      {
+        "w": 1152,
+        "h": 896
+      }
+    ]
+  },
+  "native": {
+    "label": "1024\u00d71024",
+    "resolutions": [
+      {
+        "w": 1024,
+        "h": 1024,
+        "label": "1024\u00d71024"
+      }
+    ],
+    "source": "https://huggingface.co/black-forest-labs/FLUX.1-Kontext-dev and https://huggingface.co/docs/diffusers/api/pipelines/flux",
+    "note": "Sizes must be multiples of 16. diffusers' FluxKontextPipeline example uses guidance 2.5; Use Match input to keep the picture's own proportions."
+  },
+  "unlock": {
+    "max_width": 2048,
+    "max_height": 2048,
+    "known": false,
+    "note": "Reel's own ceiling, not a model limit."
+  },
+  "defaults": {
+    "width": 1024,
+    "height": 1024,
+    "steps": 28,
+    "guidance": 2.5,
+    "negative_prompt": "",
+    "offload": "model",
+    "vae_tiling": true,
+    "quantization": "nf4"
+  },
+  "memory": {
+    "offload_options": [
+      "none",
+      "model",
+      "sequential"
+    ],
+    "quantization_options": [
+      "none",
+      "int8",
+      "nf4"
+    ],
+    "notes": "Quantization applies to the transformer and the T5 text encoder. The input picture adds as many image tokens as the output.",
+    "estimate": {
+      "weights_gb": {
+        "transformer": 23.8,
+        "text_encoder": 0.25,
+        "text_encoder_2": 9.5,
+        "vae": 0.2
+      },
+      "quantized": [
+        "transformer",
+        "text_encoder_2"
+      ],
+      "denoiser": "transformer",
+      "tokens": {
+        "spatial": 16
+      },
+      "hidden": 3072,
+      "doubles_tokens": true,
+      "vae_mb_per_mpx_frame": 1300,
+      "vae_tile_mpx_frames": 0.5
+    }
+  }
+}

@@ -1,16 +1,16 @@
-import { h, icon, clear, toast, confirmDialog, fmtBytes, statusBadge, restartReel } from "../ui.js";
+import { h, icon, clear, toast, confirmDialog, fmtBytes, statusBadge, restartReel, tip } from "../ui.js";
 import { api } from "../api.js";
 
 export async function mount(root) {
   const body = h("div", { class: "stack-16" });
   root.append(h("div", { class: "view" },
-    h("div", { class: "page-head" }, h("h1", {}, "Settings"), h("p", {}, "Where models live, access tokens, and what Reel found on this PC.")),
+    h("div", { class: "page-head" }, h("h1", {}, "Settings")),
     body));
 
   async function load() {
     const [s, stored] = await Promise.all([api.get("/api/settings"), api.get("/api/settings/stored-models")]);
     clear(body);
-    body.append(updatesCard(s), gpuCard(s), windowCard(s), storageCard(s, stored), tokenCard(s), systemCard(s));
+    body.append(updatesCard(s), changelogCard(), gpuCard(s), memoryCard(s), downloadsCard(s), windowCard(s), storageCard(s, stored), tokenCard(s), systemCard(s));
     refreshUpdates(false);
   }
 
@@ -88,8 +88,7 @@ export async function mount(root) {
       catch (e) { toast(e.message, "danger"); }
     };
     return h("section", { class: "card stack-16" },
-      h("h3", {}, "Updates"),
-      h("p", { class: "muted" }, "Updates Reel from GitHub in one click. Only the program files change; your models, clips, history and settings stay put. This is the only thing Reel contacts GitHub for."),
+      h("h3", {}, "Updates", tip("Updates Reel from GitHub in one click. Only the program files change; your models, clips, history and settings stay put. This is the only thing Reel contacts GitHub for.")),
       upd,
       h("details", {}, h("summary", {}, "Private repository?"),
         h("div", { class: "stack-12" },
@@ -98,6 +97,49 @@ export async function mount(root) {
           h("div", { class: "row-8" },
             h("button", { class: "btn", type: "button", onclick: () => tok.value.trim() ? saveTok(tok.value.trim()) : toast("Enter a token first.", "warning") }, "Save token"),
             h("button", { class: "btn", type: "button", disabled: !s.github_token_set, onclick: () => saveTok("") }, "Clear token")))));
+  }
+
+  // ---- Changelog ----
+  // CHANGELOG.md is small and hand-written, so a few rules are enough: "## version", "**Section**", "- item".
+  function inline(text) {
+    const out = [];
+    for (const part of text.split(/(\*\*[^*]+\*\*|`[^`]+`)/)) {
+      if (part.startsWith("**") && part.endsWith("**") && part.length > 4) out.push(h("strong", {}, part.slice(2, -2)));
+      else if (part.startsWith("`") && part.endsWith("`") && part.length > 2) out.push(h("code", {}, part.slice(1, -1)));
+      else if (part) out.push(part);
+    }
+    return out;
+  }
+
+  function renderChangelog(text) {
+    const root = h("div", { class: "stack-12 changelog-text" });
+    let list = null;
+    for (const raw of text.split("\n")) {
+      const line = raw.trimEnd();
+      if (line.startsWith("## ")) { list = null; root.append(h("h4", {}, line.slice(3))); }
+      else if (/^\*\*[^*]+\*\*$/.test(line)) { list = null; root.append(h("h5", {}, line.slice(2, -2))); }
+      else if (line.startsWith("- ")) {
+        if (!list) { list = h("ul", { class: "changelog" }); root.append(list); }
+        list.append(h("li", {}, inline(line.slice(2))));
+      } else if (line.trim() && !line.startsWith("# ")) { list = null; root.append(h("p", { class: "muted" }, inline(line))); }
+    }
+    return root;
+  }
+
+  function changelogCard() {
+    const slot = h("div", { class: "muted" }, "Loading…");
+    const details = h("details", {}, h("summary", {}, "What's changed in each version"), slot);
+    let loaded = false;
+    details.addEventListener("toggle", async () => {
+      if (!details.open || loaded) return;
+      loaded = true;
+      try {
+        const { text } = await api.get("/api/changelog");
+        clear(slot); slot.className = "";
+        slot.append(text ? renderChangelog(text) : h("p", { class: "muted" }, "No changelog was found."));
+      } catch (e) { slot.textContent = `Could not load it: ${e.message}`; }
+    });
+    return h("section", { class: "card stack-16" }, h("h3", {}, "Changelog"), details);
   }
 
   function gpuCard(s) {
@@ -118,6 +160,40 @@ export async function mount(root) {
         try { await api.put("/api/settings", { set_gpu: true, gpu: sel.value === "auto" ? "" : sel.value }); toast("GPU saved. It applies to the next generation.", "success"); await load(); }
         catch (e) { toast(e.message, "danger"); }
       } }, "Save")) : null);
+  }
+
+  function memoryCard(s) {
+    const input = h("input", { id: "idle-min", class: "input", type: "number", min: 0, max: 1440, step: 5, value: s.idle_unload_minutes });
+    return h("section", { class: "card stack-16" },
+      h("h3", {}, "Models in memory", tip("Reel keeps a model loaded after it generates, so the next run starts straight away. Only one model is on the GPU at a time; loading another unloads the current one, and Reel unloads everything when it closes.")),
+      h("div", { class: "field" }, h("label", { for: "idle-min" }, "Unload after this many minutes idle"), input,
+        h("span", { class: "field-hint" }, "0 = never. A loaded model keeps its memory (with CPU offload that is mostly system RAM) until it is unloaded.")),
+      h("div", { class: "row-8" }, h("button", { class: "btn btn-primary", type: "button", onclick: async () => {
+        const v = Number(input.value);
+        if (!Number.isInteger(v) || v < 0 || v > 1440) { toast("Enter a whole number of minutes from 0 to 1440.", "warning"); return; }
+        try { await api.put("/api/settings", { set_idle_unload: true, idle_unload_minutes: v }); toast(v ? `Models unload after ${v} minutes idle.` : "Models stay loaded until you unload them.", "success"); }
+        catch (e) { toast(e.message, "danger"); }
+      } }, "Save")));
+  }
+
+  function downloadsCard(s) {
+    const lim = s.download_limit;
+    const auto = h("input", { id: "dl-auto", type: "checkbox", checked: lim.mode === "auto" });
+    const speed = h("input", { id: "dl-mbps", class: "input", type: "number", min: 0, max: 10000, step: 1, value: lim.mb_per_s || "", placeholder: "No limit" });
+    return h("section", { class: "card stack-16" },
+      h("h3", {}, "Downloads"),
+      h("label", { class: "check" }, auto, "Slow down while Reel is busy",
+        tip("On: downloads run at full speed, and drop to about 10 MB/s while a model is loading or generating, so they do not compete with it for the disk. Off: always full speed.")),
+      h("div", { class: "field" }, h("div", { class: "label-row" }, h("label", { for: "dl-mbps" }, "Maximum speed (MB/s)"),
+        tip("Optional. A ceiling for downloads at all times, which also limits how fast files are written. 1 MB/s is about 8 Mbit/s. Leave empty for none. Applies to a download already running.")), speed),
+      h("div", { class: "row-8" }, h("button", { class: "btn btn-primary", type: "button", onclick: async () => {
+        const v = Number(speed.value || 0);
+        if (!Number.isFinite(v) || v < 0) { toast("Enter a speed of 0 or more.", "warning"); return; }
+        // toggle on: automatic (the number is a ceiling); toggle off: full speed, or a fixed limit if a number is set
+        const mode = auto.checked ? "auto" : v > 0 ? "manual" : "off";
+        try { await api.put("/api/settings", { set_download_limit: true, download_limit_mode: mode, download_limit_mbps: v }); toast("Saved.", "success"); }
+        catch (e) { toast(e.message, "danger"); }
+      } }, "Save")));
   }
 
   function windowCard(s) {
@@ -146,8 +222,7 @@ export async function mount(root) {
       } catch (e) { toast(e.message, "danger", 9000); }
     };
     return h("section", { class: "card stack-16" },
-      h("h3", {}, "Model storage"),
-      h("p", { class: "muted" }, "Each model gets its own folder here (environment + weights). Uninstalling deletes only that folder."),
+      h("h3", {}, "Model storage", tip("Each model gets its own folder here (environment + weights). Uninstalling deletes only that folder.")),
       h("div", { class: "field" },
         h("label", { for: "models-dir" }, "Storage folder"),
         h("div", { class: "row-8" },

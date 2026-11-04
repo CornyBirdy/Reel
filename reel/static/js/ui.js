@@ -37,6 +37,7 @@ const ICONS = {
   download: '<path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19.5h14"/>',
   trash: '<path d="M4 7h16M10 7V4.5h4V7M6.5 7l1 12.5h9l1-12.5M10 11v5M14 11v5"/>',
   play: '<path d="M8 5.5v13l11-6.5z"/>',
+  pause: '<path d="M8 5.5v13M16 5.5v13"/>',
   stop: '<rect x="6" y="6" width="12" height="12" rx="2"/>',
   rerun: '<path d="M20 11a8 8 0 0 0-14.3-4.5M4 5v4h4M4 13a8 8 0 0 0 14.3 4.5M20 19v-4h-4"/>',
   dice: '<rect x="4" y="4" width="16" height="16" rx="3"/><circle cx="9" cy="9" r=".6"/><circle cx="15" cy="9" r=".6"/><circle cx="9" cy="15" r=".6"/><circle cx="15" cy="15" r=".6"/>',
@@ -53,8 +54,19 @@ const ICONS = {
   load: '<path d="M4 12h12M11 7l5 5-5 5M20 4v16"/>',
   image: '<rect x="3.5" y="4.5" width="17" height="15" rx="3"/><circle cx="9" cy="10" r="1.6"/><path d="M4 17l5-4.5 4 3.5 3-2.5 4 3.5"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
+  upload: '<path d="M12 15V4M7.5 8.5 12 4l4.5 4.5M5 19.5h14"/>',
+  edit: '<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/>',
+  link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
+  upscale: '<path d="M14 4h6v6M20 4l-7 7M10 20H4v-6M4 20l7-7"/>',
   search: '<circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/>',
   back: '<path d="M10 6l-6 6 6 6M4 12h16"/>',
+  eject: '<path d="M12 5.5 20 14H4zM5 18.5h14"/>',
+  log: '<path d="M6 3.5h8.5L19 8v12.5H6z"/><path d="M14 3.5V8.5h5M9.5 12.5h6M9.5 16h6"/>',
+  music: '<path d="M9 18V6l10-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/>',
+  bookmark: '<path d="M6.5 4h11v16.5L12 16.5l-5.5 4z"/>',
+  wand: '<path d="M5 19 16 8M14 6l4 4M18 3v3M16.5 4.5h3M6 5v2M5 6h2M19 14v2M18 15h2"/>',
+  more: '<circle cx="5.5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="18.5" cy="12" r="1.2"/>',
+  frame: '<path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16"/>',
   box: '<path d="M12 3 20.5 7.5v9L12 21l-8.5-4.5v-9z"/><path d="M3.5 7.5 12 12l8.5-4.5M12 12v9"/>',
 };
 
@@ -63,6 +75,39 @@ export function icon(name) {
   wrap.innerHTML =
     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${ICONS[name] || ""}</svg>`;
   return wrap.firstChild;
+}
+
+// A video thumbnail that loads its first frame only when it scrolls into view. A History page of 60 clips otherwise starts 60 video
+// loads at once, which keeps the window busy (and blank) for seconds.
+let thumbObserver = null;
+export function lazyVideo(url, props = {}) {
+  const v = h("video", { preload: "none", muted: true, playsinline: true, tabindex: -1, ...props });
+  if (typeof IntersectionObserver === "undefined") { v.preload = "metadata"; v.src = `${url}#t=0.1`; return v; }
+  thumbObserver = thumbObserver || new IntersectionObserver((entries) => {
+    for (const e of entries) if (e.isIntersecting) { thumbObserver.unobserve(e.target); e.target.preload = "metadata"; e.target.src = e.target.dataset.src; }
+  }, { rootMargin: "300px" });
+  v.dataset.src = `${url}#t=0.1`;
+  thumbObserver.observe(v);
+  return v;
+}
+
+// A small (i) that explains a control on hover or keyboard focus. Use it instead of a line of grey text under the control.
+export function tip(text) {
+  return h("span", { class: "tip", tabindex: "0", role: "img", "aria-label": text, "data-tip": text }, icon("info"));
+}
+
+// A button that opens a small list of actions. `items` are [label, iconName, onclick, {disabled, title}] rows.
+export function menuButton(label, iconName, items, { iconOnly = false } = {}) {
+  const list = h("div", { class: "menu-list", role: "menu" });
+  const root = h("details", { class: "menu" },
+    h("summary", { class: "btn" + (iconOnly ? " btn-icon" : ""), "aria-label": label, title: label }, icon(iconName), iconOnly ? null : label),
+    list);
+  for (const [text, ic, onclick, opts = {}] of items) {
+    list.append(h("button", { type: "button", role: "menuitem", class: "menu-item", disabled: opts.disabled || undefined, title: opts.title,
+      onclick: () => { root.open = false; onclick(); } }, icon(ic), text));
+  }
+  document.addEventListener("click", (e) => { if (root.open && !root.contains(e.target)) root.open = false; });
+  return root;
 }
 
 // --- Toasts ---
@@ -90,6 +135,29 @@ export function confirmDialog({ title, body, confirmLabel = "Confirm", danger = 
     document.body.append(dlg);
     dlg.showModal();
   });
+}
+
+// Everything a model process wrote (data/logs/*.log), in a dialog.
+export async function viewLog(name) {
+  const body = h("pre", { class: "log mono log-full", tabindex: 0 }, "Loading...");
+  const dlg = h("dialog", { class: "dialog dialog-wide", "aria-labelledby": "log-title" },
+    h("h3", { id: "log-title" }, "Full log"),
+    h("div", { class: "muted mono" }, `data/logs/${name}`),
+    body,
+    h("div", { class: "dialog-actions" },
+      h("button", { class: "btn", type: "button", onclick: async () => {
+        try { await navigator.clipboard.writeText(body.textContent); toast("Log copied.", "success", 2000); }
+        catch { toast("Could not copy. Select the text and copy it by hand.", "warning"); }
+      } }, icon("copy"), "Copy"),
+      h("button", { class: "btn btn-primary", type: "button", onclick: () => dlg.close() }, "Close")));
+  dlg.addEventListener("close", () => dlg.remove());
+  document.body.append(dlg);
+  dlg.showModal();
+  try {
+    const res = await fetch(`/api/logs/${encodeURIComponent(name)}`, { cache: "no-store" });
+    body.textContent = res.ok ? await res.text() : "That log is gone (Reel keeps the most recent ones).";
+    body.scrollTop = body.scrollHeight;
+  } catch (e) { body.textContent = `Could not load the log: ${e.message}`; }
 }
 
 // --- Formatting ---
@@ -135,6 +203,7 @@ export function tagChips(tags, className = "tags") {
 }
 
 export function kindBadge(kind) {
+  if (kind === "upscale") return statusBadge("neutral", "Upscaler", "upscale");
   return statusBadge("neutral", kind === "image" ? "Image" : "Video", kind === "image" ? "image" : "generate");
 }
 

@@ -13,15 +13,17 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import stat
+import subprocess
 import sys
 import threading
 import time
 from collections import deque
 from pathlib import Path
 
-from . import config, procs, recipes, system
+from . import config, engine, procs, recipes, system, throttle
 
 PHASES = [
     ("env", "Create environment", 0.02),
@@ -33,12 +35,28 @@ PHASES = [
 DISK_HEADROOM_GB = 9.0  # venv with CUDA PyTorch is ~7 GB, plus slack
 
 
+NETWORK_ERRORS = ("ConnectionResetError", "ProtocolError", "Connection broken", "Read timed out", "ReadTimeout", "ConnectTimeout",
+                  "Connection aborted", "Temporary failure in name resolution", "Max retries exceeded", "IncompleteRead", "10054", "10053", "10060")
+PIP_ATTEMPTS = 4
+
+
+def is_network_failure(lines) -> bool:
+    """Did pip fail because the connection dropped (so trying again is likely to work)?"""
+    text = "\n".join(lines)
+    return any(marker in text for marker in NETWORK_ERRORS)
+
+
 class InstallError(Exception):
     pass
 
 
 class Cancelled(Exception):
     pass
+
+
+def package_name(spec: str) -> str:
+    """"diffusers>=0.35" -> "diffusers"; extras, markers and version pins are dropped."""
+    return re.split(r"[\s;\[<>=!~(]", spec.strip(), maxsplit=1)[0]
 
 
 def model_dir(model_id: str) -> Path:
@@ -73,6 +91,149 @@ def force_rmtree(path: Path) -> None:
     shutil.rmtree(path, onerror=onerror)
 
 
+_INSPECT = ("import importlib.metadata as m, json, sys\n"
+            "gone, have = [], {}\n"
+            "for name in sys.argv[1:]:\n"
+            "    try:\n"
+            "        have[name] = m.version(name)\n"
+            "    except m.PackageNotFoundError:\n"
+            "        gone.append(name)\n"
+            "print(json.dumps({'missing': gone, 'versions': have}))\n")
+
+
+def inspect_environment(recipe: dict, extra: tuple[str, ...] = ()) -> dict | None:
+    """{"missing": [...], "versions": {name: version}} for the recipe's packages (plus `extra`) as the model's Python environment
+    has them, or None when it cannot be asked."""
+    py = procs.venv_python(model_dir(recipe["id"]) / "venv")
+    names = [package_name(spec) for spec in recipe.get("python", {}).get("packages", [])] + list(extra)
+    if not py.exists() or not names:
+        return None
+    try:
+        out = subprocess.run([str(py), "-c", _INSPECT, *names], capture_output=True, text=True, timeout=60, check=True,
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout
+        found = json.loads(out.strip().splitlines()[-1])
+        return {"missing": [n for n in found["missing"] if isinstance(n, str)], "versions": dict(found["versions"])}
+    except (subprocess.SubprocessError, OSError, ValueError, IndexError, KeyError, TypeError):
+        return None
+
+
+def missing_packages(recipe: dict) -> list[str]:
+    """Packages a recipe lists that its installed Python environment does not have (a recipe can gain a package after
+    the model was installed). [] when the environment is complete or cannot be asked."""
+    found = inspect_environment(recipe)
+    return found["missing"] if found else []
+
+
+def torch_constraints(py: Path, out: Path) -> list[str]:
+    """pip arguments that keep the CUDA PyTorch already in the environment: without them a package that wants torch could
+    pull the CPU-only build from PyPI, and the model would then silently run on the CPU."""
+    found = subprocess.run([str(py), "-c", "import importlib.metadata as m; print(m.version('torch'))"], capture_output=True,
+                           text=True, timeout=60, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout.split()
+    if not found:
+        return []
+    out.write_text(f"torch=={found[-1]}\n", encoding="utf-8")
+    return ["-c", str(out)]
+
+
+def top_up_packages(recipe: dict, on_message=None, timeout: int = 900) -> list[str]:
+    """Install the packages a recipe needs that an older install lacks (just those: PyTorch and the weights are untouched).
+
+    Returns the names it installed; raises InstallError when pip fails, for example offline."""
+    missing = missing_packages(recipe)
+    if not missing:
+        return []
+    mdir = model_dir(recipe["id"])
+    py = procs.venv_python(mdir / "venv")
+    tmp = mdir / "tmp"
+    tmp.mkdir(exist_ok=True)
+    wanted = [spec for spec in recipe["python"]["packages"] if package_name(spec) in missing]
+    if on_message:
+        on_message(f"Installing {', '.join(missing)}, which this model now needs")
+    try:
+        cmd = [str(py), "-m", "pip", "install", "--no-cache-dir", "--progress-bar", "off", "--disable-pip-version-check",
+               *torch_constraints(py, tmp / "constraints.txt"), *wanted]
+        done = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                              env={**os.environ, "TMP": str(tmp), "TEMP": str(tmp), "TMPDIR": str(tmp), "PYTHONUTF8": "1"})
+    except (subprocess.SubprocessError, OSError) as exc:
+        raise InstallError(f"Could not install {', '.join(missing)}: {exc}") from exc
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    if done.returncode != 0:
+        tail = " | ".join((done.stdout + done.stderr).strip().splitlines()[-3:])
+        raise InstallError(f"Could not install {', '.join(missing)} (pip exited with code {done.returncode}): {tail}")
+    return missing
+
+
+# What the model process imports before it can load anything. Windows checks every program file the first time it is used
+# (antivirus, SmartScreen), and the first import after packages were installed or changed can sit silent for minutes. Doing it
+# here, once, under its own heading, means the load itself starts fast; and if something really hangs, the traceback says where.
+_WARM = ("import faulthandler, sys\n"
+         "faulthandler.dump_traceback_later(120, repeat=True, file=sys.stdout)\n"
+         "import torch, diffusers, transformers\n"
+         "for name in sys.argv[1:]:\n"
+         "    getattr(diffusers, name)\n")
+WARM_MESSAGE = ("Preparing the model's Python libraries. Windows checks new files the first time they are used, so this can take "
+                "a few minutes after an install or update. It happens once.")
+
+
+def environment_signature(recipe: dict) -> str | None:
+    """Changes when a package is installed, updated or removed, or the environment is rebuilt. None if it cannot be asked."""
+    found = inspect_environment(recipe, extra=("torch",))
+    if not found:
+        return None
+    cfg = procs.venv_python(model_dir(recipe["id"]) / "venv").parent.parent / "pyvenv.cfg"
+    try:
+        built = cfg.stat().st_mtime_ns
+    except OSError:
+        built = 0
+    return json.dumps({"versions": found["versions"], "built": built}, sort_keys=True)
+
+
+def warm_up(recipe: dict, on_message=None, on_line=None, cancel: threading.Event | None = None, timeout: int = 1800) -> bool:
+    """Import what the model process needs, once per environment state, before it starts. False if `cancel` was set meanwhile.
+
+    Raises InstallError when the imports fail or do not finish in `timeout` seconds; the caller then loads the model anyway
+    and the load reports the problem in its own words."""
+    sig = environment_signature(recipe)
+    mdir = model_dir(recipe["id"])
+    marker = mdir / "warm.json"
+    if sig is None or (read_json(marker) or {}).get("signature") == sig:
+        return True
+    if on_message:
+        on_message(WARM_MESSAGE)
+    py = procs.venv_python(mdir / "venv")
+    cls = (recipe.get("adapter_config") or {}).get("pipeline")
+    proc = procs.popen([str(py), "-c", _WARM, *([cls] if cls else [])], env={"HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1"}, cwd=mdir)
+    tail: deque[str] = deque(maxlen=30)
+
+    def drain() -> None:
+        try:
+            for raw in proc.stdout:                 # type: ignore[union-attr]
+                tail.append(raw.rstrip())
+                if on_line:
+                    on_line(raw.rstrip())
+        except (ValueError, OSError):
+            pass
+
+    reader = threading.Thread(target=drain, daemon=True, name=f"warm-{recipe['id']}")
+    reader.start()
+    end = time.time() + timeout
+    try:
+        while proc.poll() is None:
+            if cancel is not None and cancel.is_set():
+                return False
+            if time.time() > end:
+                raise InstallError(f"Preparing the Python libraries did not finish in {timeout // 60} minutes.")
+            time.sleep(0.3)
+    finally:
+        procs.kill_tree(proc)
+        reader.join(timeout=3)
+    if proc.returncode != 0:
+        raise InstallError("Preparing the Python libraries failed: " + " | ".join(list(tail)[-3:]))
+    marker.write_text(json.dumps({"signature": sig, "at": time.time()}), encoding="utf-8")
+    return True
+
+
 class Job:
     def __init__(self, model_id: str):
         self.model_id = model_id
@@ -91,6 +252,10 @@ class Job:
         self.cancel = threading.Event()
         self.proc = None
         self.weights_fraction = 0.0
+        self.paused = False          # frozen by the user (Pause); the install carries on when resumed
+        self.was_paused = False      # it was paused at some point: a step that then fails is retried
+        self.paused_total = 0.0
+        self.paused_at: float | None = None
 
     def overall(self) -> float:
         total = 0.0
@@ -108,14 +273,15 @@ class Job:
             eta = (self.bytes_total - self.bytes_done) / self.speed
         return {
             "status": self.status,
+            "paused": self.paused,
             "phase": self.phase,
             "phases": [{"id": p, "label": l, "state": self.phase_state[p]} for p, l, _w in PHASES],
             "message": self.message,
             "progress": self.overall(),
             "bytes_done": self.bytes_done,
             "bytes_total": self.bytes_total,
-            "speed": self.speed,
-            "eta": eta,
+            "speed": 0.0 if self.paused else self.speed,
+            "eta": None if self.paused else eta,
             "error": self.error,
             "warnings": self.warnings,
             "log": list(self.log)[-80:],
@@ -130,6 +296,7 @@ class InstallManager:
         self._jobs: dict[str, Job] = {}
         self._uninstalling: set[str] = set()
         self.is_model_busy = lambda model_id: False  # set by the generation manager
+        self.is_pc_busy = lambda: False              # set by the generation manager: a model is loading or generating
 
     # -- queries ---------------------------------------------------------
     def job(self, model_id: str) -> Job | None:
@@ -187,8 +354,33 @@ class InstallManager:
         job = self._jobs.get(model_id)
         if job and job.status == "running":
             job.cancel.set()
+            job.paused = False
             if job.proc:
                 procs.kill_tree(job.proc)
+
+    def pause(self, model_id: str) -> None:
+        """Freeze the running install (a download, a pip install, whatever it is doing) until resume()."""
+        job = self._jobs.get(model_id)
+        if not job or job.status != "running":
+            raise InstallError("Nothing is installing.")
+        if job.paused:
+            return
+        if job.proc and not procs.suspend_tree(job.proc):
+            raise InstallError("This PC would not let Reel pause the download. Use Pause instead: what is downloaded is kept and Install continues from where it stopped.")
+        job.paused, job.was_paused, job.paused_at = True, True, time.time()
+        job.log.append("Paused.")
+
+    def resume(self, model_id: str) -> None:
+        job = self._jobs.get(model_id)
+        if not job or job.status != "running" or not job.paused:
+            raise InstallError("This install is not paused.")
+        job.paused = False
+        if job.paused_at:
+            job.paused_total += time.time() - job.paused_at
+            job.paused_at = None
+        if job.proc:
+            procs.resume_tree(job.proc)
+        job.log.append("Resumed.")
 
     def _run(self, job: Job, recipe: dict) -> None:
         mdir = model_dir(job.model_id)
@@ -223,7 +415,17 @@ class InstallManager:
                     log(f"[{pid}] already done - skipping")
                     return
                 job.phase_state[pid] = "active"
-                fn()
+                for attempt in (1, 2, 3):
+                    try:
+                        fn()
+                        break
+                    except InstallError as exc:
+                        # A connection that sat frozen for a long time is usually dropped by the server. Finished files are
+                        # kept, so carrying on is cheap.
+                        if not (job.was_paused and attempt < 3 and not job.cancel.is_set()):
+                            raise
+                        log(f"[{pid}] stopped after the pause ({exc}); continuing")
+                        job.message = "Reconnecting after the pause"
                 job.phase_state[pid] = "done"
                 stages[pid] = True
                 (mdir / "stages.json").write_text(json.dumps(stages), encoding="utf-8")
@@ -244,13 +446,40 @@ class InstallManager:
 
             def do_torch():
                 cmd = [str(py), "-m", "pip", "install", "--no-cache-dir", "--progress-bar", "off",
-                       "--disable-pip-version-check", "--index-url", pyc["torch_index"], *pyc["torch"]]
-                self._run_cmd(job, log, cmd, env=pip_env)
+                       "--disable-pip-version-check", "--retries", "10", "--timeout", "60",
+                       "--index-url", pyc["torch_index"], *pyc["torch"]]
+                self._run_pip(job, log, cmd, env=pip_env)
+
+            def do_engine():
+                """A bundled engine (ComfyUI): unpack it beside the model, then install its requirements into the same venv."""
+                spec = recipe["engine"]
+                dest = mdir / "engine"
+                if engine.is_installed(spec, dest):
+                    log(f"{spec.get('name', 'Engine')} {spec['version']} is already installed.")
+                    return
+                try:
+                    engine.install(spec, dest, tmp, say=lambda m: setattr(job, "message", m), cancelled=job.cancel.is_set)
+                except engine.EngineError as exc:
+                    if job.cancel.is_set():
+                        raise Cancelled()
+                    raise InstallError(str(exc)) from exc
+                log(f"Unpacked {spec.get('name', 'the engine')} {spec['version']} into {dest}")
+                job.message = f"Installing {spec.get('name', 'the engine')}'s packages"
+                cmd = [str(py), "-m", "pip", "install", "--no-cache-dir", "--progress-bar", "off", "--disable-pip-version-check",
+                       "--retries", "10", "--timeout", "60", *torch_constraints(py, tmp / "constraints.txt"),
+                       "-r", str(dest / spec.get("requirements", "requirements.txt"))]
+                self._run_pip(job, log, cmd, env=pip_env)
+                engine.mark_done(spec, dest)
 
             def do_packages():
+                # Keep the CUDA PyTorch that was just installed: without this a package that wants torch could pull the
+                # CPU-only build from PyPI, and the model would then silently run on the CPU.
                 cmd = [str(py), "-m", "pip", "install", "--no-cache-dir", "--progress-bar", "off",
-                       "--disable-pip-version-check", *pyc["packages"]]
-                self._run_cmd(job, log, cmd, env=pip_env)
+                       "--disable-pip-version-check", "--retries", "10", "--timeout", "60",
+                       *torch_constraints(py, tmp / "constraints.txt"), *pyc["packages"]]
+                self._run_pip(job, log, cmd, env=pip_env)
+                if recipe.get("engine"):
+                    do_engine()
                 # Fail now, not after a 30 GB download, if this diffusers has no such pipeline class.
                 cls = (recipe.get("adapter_config") or {}).get("pipeline")
                 if cls:
@@ -262,15 +491,16 @@ class InstallManager:
 
             def do_weights():
                 spec = mdir / "download_spec.json"
-                spec.write_text(json.dumps({"weights_dir": str(mdir / "weights"), "weights": recipe["weights"]}),
-                                encoding="utf-8")
+                spec.write_text(json.dumps({"weights_dir": str(mdir / "weights"), "weights": recipe["weights"],
+                                            "throttle_file": str(throttle.THROTTLE_FILE)}), encoding="utf-8")
                 env = {"HF_HUB_DISABLE_TELEMETRY": "1", "HF_HUB_DISABLE_SYMLINKS_WARNING": "1",
                        "HF_HUB_DISABLE_PROGRESS_BARS": "1"}
                 token = config.load_settings().get("hf_token")
                 if token:
                     env["HF_TOKEN"] = token
-                self._run_cmd(job, log, [str(py), str(config.ADAPTERS_DIR / "download.py"), str(spec)],
-                              env=env, json_lines=True)
+                with throttle.Follower(lambda: self.is_pc_busy()):
+                    self._run_cmd(job, log, [str(py), str(config.ADAPTERS_DIR / "download.py"), str(spec)],
+                                  env=env, json_lines=True)
                 if job.bytes_total and job.bytes_done < job.bytes_total * 0.999:
                     raise InstallError("Download finished but some files are missing; run Install again to resume.")
 
@@ -278,18 +508,29 @@ class InstallManager:
 
             def do_verify():
                 lines: list[str] = []
-                self._run_cmd(job, log, [str(py), str(config.ADAPTERS_DIR / "verify_env.py")], capture=lines, env=system.gpu_env())
+                self._run_cmd(job, log, [str(py), str(config.ADAPTERS_DIR / "verify_env.py"), *recipe.get("verify_modules", [])],
+                              capture=lines, env=system.gpu_env())
                 for line in reversed(lines):
                     if line.startswith("{"):
                         verify_result.update(json.loads(line))
                         break
                 if not verify_result.get("ok"):
                     raise InstallError(verify_result.get("error") or "Environment check failed.")
+                gpu = system.gpu_info().get("selected_gpu")
+                if gpu and verify_result.get("cuda_available") is False:
+                    raise InstallError(
+                        f"This environment's PyTorch ({verify_result.get('torch')}, CUDA build {verify_result.get('cuda_build') or 'none'}) "
+                        f"cannot use your {gpu['name']}, so the model would run on the CPU and never finish. Update the NVIDIA driver "
+                        "(570 or newer) and press Install again; if it still fails, the log above shows which PyTorch pip installed.")
+                if gpu and verify_result.get("kernels_ok") is False:
+                    raise InstallError(
+                        f"This PyTorch ({verify_result.get('torch')}) has no kernels for your {gpu['name']} ({verify_result.get('capability')}); "
+                        "RTX 50-series cards need a CUDA 12.8 build. Press Install again after updating the NVIDIA driver.")
                 job.warnings.extend(verify_result.get("warnings", []))
 
             stage("env", "Creating isolated environment", do_env)
             stage("torch", "Installing PyTorch with CUDA 12.8 (this is the big one)", do_torch)
-            stage("packages", "Installing diffusers and dependencies", do_packages)
+            stage("packages", "Installing packages", do_packages)
             stage("weights", "Downloading weights from Hugging Face", do_weights)
             stages.pop("verify", None)
             stage("verify", "Verifying the environment", do_verify)
@@ -308,7 +549,7 @@ class InstallManager:
             log("=== Install complete ===")
         except Cancelled:
             job.status = "cancelled"
-            job.message = "Cancelled. Finished files are kept; Install continues with the rest (a file that was mid-download starts over)."
+            job.message = "Paused. Everything downloaded so far is kept; Install continues from where it stopped."
             log(job.message)
         except Exception as exc:  # noqa: BLE001
             job.status = "failed"
@@ -321,6 +562,26 @@ class InstallManager:
             job.finished = time.time()
             log_file.close()
 
+    def _run_pip(self, job: Job, log, cmd: list[str], env: dict | None = None) -> None:
+        """pip, started again when the connection drops. A big wheel (PyTorch is 2 to 3 GB) over a flaky link or a
+        sleeping laptop fails with "connection forcibly closed" (WinError 10054); that is the network, not the install."""
+        for attempt in range(1, PIP_ATTEMPTS + 1):
+            try:
+                return self._run_cmd(job, log, cmd, env=env)
+            except InstallError as exc:
+                recent = list(job.log)[-40:] + [str(exc)]
+                if attempt == PIP_ATTEMPTS or not is_network_failure(recent):
+                    if is_network_failure(recent):
+                        raise InstallError("The connection kept dropping while pip downloaded packages (the last error was "
+                                           "'connection forcibly closed'). Check the network (a VPN, a firewall or antivirus can "
+                                           "cut long downloads) and press Install again.") from exc
+                    raise
+                wait = 5 * attempt
+                log(f"The connection dropped. Trying again in {wait} s (attempt {attempt + 1} of {PIP_ATTEMPTS}).")
+                job.message = f"Connection dropped; retrying in {wait} s"
+                if job.cancel.wait(wait):
+                    raise Cancelled()
+
     def _run_cmd(self, job: Job, log, cmd: list[str], env: dict | None = None,
                  json_lines: bool = False, capture: list[str] | None = None) -> None:
         if job.cancel.is_set():
@@ -328,6 +589,8 @@ class InstallManager:
         log("$ " + " ".join(cmd))
         proc = procs.popen(cmd, env=env)
         job.proc = proc
+        if job.paused:                 # paused between two steps: the next one starts frozen
+            procs.suspend_tree(proc)
         try:
             assert proc.stdout is not None
             for raw in proc.stdout:
@@ -365,7 +628,11 @@ class InstallManager:
             job.bytes_total = evt.get("total", job.bytes_total)
             job.speed = evt.get("speed", 0.0)
             job.weights_fraction = job.bytes_done / job.bytes_total if job.bytes_total else 0.0
-            job.message = "Downloading weights"
+            n = evt.get("finishing", 0)
+            job.message = (f"Finishing {n} large file{'s' if n != 1 else ''} (Windows is not letting go of {'them' if n != 1 else 'it'}, so "
+                           "Reel copies instead: this can take a few minutes)") if n else "Downloading weights"
+            if n:
+                job.speed = 0.0
         elif kind == "repo":
             log(f"Fetching {evt['repo']}")
         elif kind == "error":

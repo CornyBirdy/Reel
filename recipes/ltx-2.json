@@ -1,0 +1,172 @@
+{
+  "schema": 1,
+  "id": "ltx-2",
+  "name": "LTX-2",
+  "family": "Lightricks",
+  "version": "19B, video with sound",
+  "status": "ready",
+  "kind": "video",
+  "verified": false,
+  "hf_repo": "Lightricks/LTX-2",
+  "summary": "Lightricks' newest video model: it makes the sound too (speech, music, effects) in the same clip. 19B transformer plus a 27B Gemma text encoder, both in 4-bit. Needs about 37 GB of system RAM and a 95 GB download, so a PC with 32 GB of RAM will probably run out: it is here for bigger machines.",
+  "license": "LTX-2 Community License",
+  "license_url": "https://huggingface.co/Lightricks/LTX-2",
+  "tasks": [
+    "text-to-video",
+    "audio"
+  ],
+  "adapter": "diffusers_auto",
+  "adapter_config": {
+    "pipeline": "LTX2Pipeline",
+    "variant": null
+  },
+  "download_gb": 94.8,
+  "vram_gb": 15,
+  "vram_note": "Estimate from the weights' real tensor sizes with the transformer and text encoder in 4-bit; not measured. The text encoder (about 14 GB in 4-bit) is the VRAM peak, and about 37 GB of system RAM is needed while offloaded: Generate's memory estimate says so for your PC.",
+  "python": {
+    "torch_index": "https://download.pytorch.org/whl/cu128",
+    "torch": [
+      "torch>=2.7",
+      "torchvision"
+    ],
+    "packages": [
+      "diffusers>=0.37",
+      "transformers>=4.57",
+      "accelerate>=1.4",
+      "bitsandbytes>=0.46",
+      "sentencepiece",
+      "protobuf",
+      "ftfy",
+      "safetensors",
+      "huggingface_hub",
+      "imageio",
+      "imageio-ffmpeg",
+      "numpy",
+      "Pillow",
+      "av"
+    ]
+  },
+  "weights": [
+    {
+      "repo_id": "Lightricks/LTX-2",
+      "revision": "64f65d09e0b76c96202b5bc09997673184cf9b5d",
+      "dest": ".",
+      "allow_patterns": [
+        "model_index.json",
+        "scheduler/*",
+        "tokenizer/*",
+        "text_encoder/config.json",
+        "text_encoder/generation_config.json",
+        "text_encoder/model-*.safetensors",
+        "text_encoder/model.safetensors.index.json",
+        "transformer/*",
+        "vae/*",
+        "audio_vae/*",
+        "vocoder/*",
+        "connectors/*"
+      ]
+    }
+  ],
+  "limits": {
+    "max_width": 1280,
+    "max_height": 768,
+    "size_multiple": 32,
+    "frames": {
+      "step": 8,
+      "offset": 1,
+      "min": 9,
+      "max": 121,
+      "default": 121
+    },
+    "fps": 24,
+    "steps": {
+      "min": 1,
+      "max": 100
+    },
+    "presets": [
+      {
+        "w": 512,
+        "h": 320
+      },
+      {
+        "w": 768,
+        "h": 512
+      },
+      {
+        "w": 960,
+        "h": 544
+      },
+      {
+        "w": 1280,
+        "h": 768
+      }
+    ]
+  },
+  "native": {
+    "label": "768\u00d7512",
+    "resolutions": [
+      {
+        "w": 768,
+        "h": 512,
+        "label": "768\u00d7512 (diffusers example)"
+      }
+    ],
+    "frames": [
+      121
+    ],
+    "fps": 24,
+    "source": "https://huggingface.co/Lightricks/LTX-2 and https://huggingface.co/docs/diffusers/api/pipelines/ltx2",
+    "note": "Width and height are multiples of 32 and frames are 8n+1. The diffusers example makes 121 frames (5 s) at 24 fps with 30 steps and guidance 3.0, and writes the sound into the same mp4."
+  },
+  "unlock": {
+    "max_width": 1920,
+    "max_height": 1088,
+    "max_frames": 481,
+    "known": false,
+    "note": "Reel's own ceiling. The pipeline allows up to 20 seconds; longer and larger clips need far more memory than a 16 GB card has."
+  },
+  "defaults": {
+    "width": 768,
+    "height": 512,
+    "steps": 30,
+    "guidance": 3.0,
+    "negative_prompt": "worst quality, inconsistent motion, blurry, jittery, distorted",
+    "offload": "model",
+    "vae_tiling": true,
+    "quantization": "nf4",
+    "fps": 24
+  },
+  "memory": {
+    "offload_options": [
+      "none",
+      "model",
+      "sequential"
+    ],
+    "quantization_options": [
+      "none",
+      "int8",
+      "nf4"
+    ],
+    "notes": "Quantization applies to the 19B transformer and the Gemma text encoder (4-bit by default). Loading reads about 90 GB from disk, so the first load takes several minutes.",
+    "estimate": {
+      "weights_gb": {
+        "transformer": 38.8,
+        "text_encoder": 49.7,
+        "connectors": 2.9,
+        "vae": 2.4
+      },
+      "quantized": [
+        "transformer",
+        "text_encoder"
+      ],
+      "denoiser": "transformer",
+      "tokens": {
+        "spatial": 32,
+        "temporal": 8
+      },
+      "hidden": 4096,
+      "vae_mb_per_mpx_frame": 768,
+      "vae_tile_mpx_frames": 1.5
+    }
+  }
+}

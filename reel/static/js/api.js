@@ -15,7 +15,18 @@ async function request(method, path, body) {
   return data;
 }
 
+// A picture or video chosen on this PC: the file is the request body (see POST /api/inputs).
+async function upload(file) {
+  const res = await fetch("/api/inputs", { method: "POST", headers: { "Content-Type": file.type || "application/octet-stream" }, body: file });
+  const text = await res.text();
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+  if (!res.ok) throw new Error((data && data.detail) || `Upload failed (${res.status}).`);
+  return data;
+}
+
 export const api = {
+  upload,
   get: (p) => request("GET", p),
   post: (p, b) => request("POST", p, b ?? {}),
   put: (p, b) => request("PUT", p, b ?? {}),

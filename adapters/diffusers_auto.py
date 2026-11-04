@@ -12,7 +12,7 @@ large text encoders (T5, Llama, ...). Loading never uses trust_remote_code.
 import inspect
 import json
 
-from base import BaseAdapter, emit
+from base import BaseAdapter, emit, open_image
 
 GB = 1e9
 
@@ -55,24 +55,40 @@ class Adapter(BaseAdapter):
                                           components_to_quantize=self.quant_components(comps))
 
     def call_kwargs(self) -> dict:
+        self.steps_done = 0
         params = inspect.signature(self.pipe.__call__).parameters
         accepts = lambda name: name in params  # noqa: E731 - **kwargs does not count as accepting
         r = self.req
         call = {"prompt": r["prompt"], "width": int(r["width"]), "height": int(r["height"]),
                 "num_inference_steps": self.total_steps, "generator": self.generator()}
         guidance = float(r["guidance"])
-        if accepts("guidance_scale"):
+        guidance_arg = self.cfg.get("guidance_arg")          # e.g. Qwen-Image-Edit: true_cfg_scale, not guidance_scale
+        if guidance_arg and accepts(guidance_arg):
+            call[guidance_arg] = guidance
+            if guidance_arg == "true_cfg_scale" and not r.get("negative_prompt") and accepts("negative_prompt"):
+                call["negative_prompt"] = " "                # the pipeline only uses true CFG when it has a negative prompt
+        elif accepts("guidance_scale"):
             call["guidance_scale"] = guidance
         elif accepts("true_cfg_scale"):
             call["true_cfg_scale"] = guidance
+        elif getattr(self.pipe, "guider", None) is not None:
+            # Pipelines built on diffusers' guiders (HunyuanVideo 1.5) take the scale from pipe.guider, not from the call.
+            self.pipe.guider = self.pipe.guider.new(guidance_scale=guidance)
+            emit(event="log", message=f"Guidance {guidance} is set on the pipeline's guider ({type(self.pipe.guider).__name__}).")
         if r.get("negative_prompt") and accepts("negative_prompt"):
             call["negative_prompt"] = r["negative_prompt"]
         if self.kind == "video" and accepts("num_frames"):
             call["num_frames"] = int(r["frames"])
+        if self.kind == "video" and accepts("frame_rate") and r.get("fps"):
+            call["frame_rate"] = float(r["fps"])          # LTX models condition on it (and LTX-2 times its sound by it)
+        images = (r.get("inputs") or {}).get("images")      # an image-editing model: the picture(s) to change
+        if images and accepts("image"):
+            pics = [open_image(p) for p in images]
+            call["image"] = pics if self.cfg.get("multi_image") else pics[0]
         if accepts("callback_on_step_end"):
             call["callback_on_step_end"] = self.step_callback
-        else:
-            emit(event="log", message="This pipeline does not report per-step progress.")
+        else:                          # e.g. HunyuanVideo 1.5: count the scheduler's steps instead
+            self.hook_scheduler_progress(self.pipe)
         return call
 
     def prepare(self):
@@ -103,9 +119,27 @@ class Adapter(BaseAdapter):
 
     def sample(self):
         call = self.call_kwargs()
+        self.log_generation(call)
         self.phase("denoising", "Generating")
         emit(event="progress", step=0, total=self.total_steps, item=self.item, items=self.n_items)
         out = self.pipe(**call)
         if self.kind == "image":
             return list(out.images)
+        # A model that makes sound with its video (LTX-2) returns it beside the frames; export() then writes both into the mp4.
+        audio = getattr(out, "audio", None)
+        self.audio = audio[0] if audio is not None else None
         return out.frames[0]
+
+    audio = None
+
+    def export(self, frames) -> None:
+        if self.kind == "video" and self.audio is not None:
+            from diffusers.utils import encode_video          # needs PyAV (the "av" package), which the recipe installs
+            rate = getattr(getattr(getattr(self.pipe, "vocoder", None), "config", None), "output_sampling_rate", None) or 24000
+            self.output_path.parent.mkdir(parents=True, exist_ok=True)
+            encode_video(list(frames), fps=int(self.req["fps"]), output_path=str(self.output_path),
+                         audio=self.audio.float().cpu(), audio_sample_rate=int(rate))
+            emit(event="log", message=f"Wrote the clip with sound ({rate} Hz).")
+            self.audio = None
+            return
+        super().export(frames)

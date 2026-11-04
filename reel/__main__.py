@@ -59,17 +59,54 @@ def start_server() -> tuple[uvicorn.Server, threading.Thread]:
     return server, thread
 
 
+HIDDEN = os.environ.get("REEL_LAUNCHER") == "hidden"      # started by start.bat with pythonw: there is no console
+
+
+def tell(message: str) -> None:
+    """Something the person must know. With a console it is printed; without one a message box is the only place it can go."""
+    print(message)
+    if HIDDEN and sys.platform == "win32":
+        try:
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(0, message, "Reel", 0x10)
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def log_to_file() -> None:
+    """pythonw has no stdout or stderr: send both to data/logs/reel.log so print() and the server's messages are not lost (or fatal)."""
+    if sys.stdout is not None and sys.stderr is not None:
+        return
+    config.LOGS_DIR.mkdir(parents=True, exist_ok=True)
+    path = config.LOGS_DIR / "reel.log"
+    if path.exists() and path.stat().st_size > 1_000_000:
+        path.replace(path.with_suffix(".old"))
+    stream = path.open("a", encoding="utf-8", buffering=1)
+    sys.stdout = sys.stdout or stream
+    sys.stderr = sys.stderr or stream
+
+
 def main() -> int:
+    log_to_file()
+    try:
+        return run()
+    except Exception:  # noqa: BLE001
+        import traceback
+        tell("Reel stopped because of an error:\n\n" + traceback.format_exc()[-1500:] + f"\nThe full log is {config.LOGS_DIR / 'reel.log'}")
+        return 1
+
+
+def run() -> int:
     mode = window_mode()
     running = _reel_is_running()
     if not running and not _port_free():
-        print(f"Port {PORT} is in use by another program. Set REEL_PORT to a free port and retry.")
+        tell(f"Port {PORT} is in use by another program. Set REEL_PORT to a free port and retry.")
         return 1
     server = thread = None
     if running:
         print(f"Reel is already running at {URL} - opening it.")
     else:
-        print(f"Reel is running at {URL}\nKeep this window open; close it to stop Reel.")
+        print(f"Reel is running at {URL}" + ("" if HIDDEN else "\nKeep this window open; close it to stop Reel."))
         server, thread = start_server()
 
     show_ui = os.environ.get("REEL_NO_BROWSER") != "1"

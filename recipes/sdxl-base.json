@@ -121,6 +121,24 @@
       }
     ]
   },
+  "native": {
+    "label": "1024×1024",
+    "resolutions": [
+      {
+        "w": 1024,
+        "h": 1024,
+        "label": "1024×1024 (trained size)"
+      }
+    ],
+    "source": "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0",
+    "note": "SDXL is trained around one megapixel; the other presets are common 1 MP aspect ratios."
+  },
+  "unlock": {
+    "max_width": 2048,
+    "max_height": 2048,
+    "known": false,
+    "note": "Reel's own ceiling, not a model limit: the pipeline accepts any multiple of 8, but quality drops well away from ~1 MP."
+  },
   "defaults": {
     "width": 1024,
     "height": 1024,
@@ -142,6 +160,24 @@
       "int8",
       "nf4"
     ],
-    "notes": "Quantization applies to the transformer/UNet and any T5-class text encoder."
+    "notes": "Quantization applies to the transformer/UNet and any T5-class text encoder.",
+    "estimate": {
+      "weights_gb": {
+        "unet": 5.1,
+        "text_encoder": 0.25,
+        "text_encoder_2": 1.4,
+        "vae": 0.2
+      },
+      "quantized": [
+        "unet"
+      ],
+      "denoiser": "unet",
+      "tokens": {
+        "spatial": 8
+      },
+      "hidden": 640,
+      "vae_mb_per_mpx_frame": 2600,
+      "vae_tile_mpx_frames": 0.5
+    }
   }
 }
