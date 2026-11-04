@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+**New**
+- **Capability tags** on every model in the Library and under the model picker on the Generate tab: what it makes from what (text to image or video), the longest clip, whether it's fast or slow by default, whether it understands a negative prompt, how heavy it is on VRAM, whether it's quantized by default, and that it takes a prompt only (no starting image) and has no sound. They're worked out from each model's own limits and defaults, so models added from Hugging Face get them too; a recipe can add its own with a `"tags"` list.
+
 **ComfyUI engine for MiniMax-H3**
 - **New model: MiniMax-H3 (ComfyUI).** The route for 16 GB of VRAM and 32 GB of RAM. Reel installs a pinned ComfyUI (v0.43.0) into the model's own folder and downloads the community-packaged files (pruned 8-bit transformer, 4-bit text encoder, decoders, turbo LoRA; about 65 GB), then runs ComfyUI in the background and sends it a workflow per clip. Video, Frames and Compose all work from one install. You never open ComfyUI. Not yet run on a GPU. The diffusers-based H3 models remain, for PCs with much more memory.
 - Reel checks the running ComfyUI for every node and input it needs before the first clip, and reports what is missing instead of failing mid-run. Cancel stops ComfyUI's current job; Pause is not available for this model.

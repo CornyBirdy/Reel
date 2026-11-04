@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 from . import config, fit, generation, hf, model_settings, recipes, system, verify, workers
 from .installer import InstallError, installs, installed_info, model_dir
+from .tags import capability_tags
 
 router = APIRouter(prefix="/api/models", tags=["models"])
 
@@ -77,6 +78,7 @@ def describe(recipe: dict, gpu: dict | None = None) -> dict:
         "hf_url": hf_url(recipe),
         "license": recipe.get("license"), "license_url": recipe.get("license_url"),
         "tasks": recipe.get("tasks", []),
+        "tags": capability_tags(recipe),
         "download_gb": recipe["download_gb"], "vram_gb": recipe["vram_gb"], "vram_note": recipe.get("vram_note"),
         "limits": recipe["limits"], "defaults": recipe["defaults"], "memory": recipe.get("memory", {}),
         "native": recipe.get("native"), "native_label": recipes.native_label(recipe), "unlock": recipes.unlock_limits(recipe),

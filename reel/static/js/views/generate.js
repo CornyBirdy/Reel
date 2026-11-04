@@ -1,4 +1,4 @@
-import { h, icon, clear, toast, fmtDuration, fmtDate, progressBar, statusBadge, viewLog, tip, menuButton, lazyVideo } from "../ui.js";
+import { h, icon, clear, toast, fmtDuration, fmtDate, progressBar, statusBadge, viewLog, tip, menuButton, lazyVideo, tagChips } from "../ui.js";
 import { api } from "../api.js";
 import { KEEPS_MEMORY, crashNotice, holdsText, holdsTitle, idleText, loadButton, loadingNote, logButton, stateChip, stateOf, watchWorker } from "../worker.js";
 import { ATTN_LABEL, OFFLOAD_HINT, OFFLOAD_LABEL, QUANT_LABEL, describeCeiling, dims, resolutionChoices, snapFrames } from "../limits.js";
@@ -153,6 +153,7 @@ export async function mount(root) {
         `${m.name} ${m.version || ""}`.trim() + (m.native_label ? ` · native ${m.native_label}` : ""))));
     f.prompt = h("textarea", { id: "g-prompt", class: "textarea", rows: 4, maxlength: 4000, oninput: persist,
       placeholder: PLACEHOLDER[mode] });
+    f.tags = h("div", { class: "model-tags-slot" });
     f.negative = h("textarea", { id: "g-neg", class: "textarea", rows: 2, oninput: persist });
     f.res = h("select", { id: "g-res", class: "select", onchange: () => { syncCustom(); persist(); validate(); refreshEstimate(); } });
     f.cw = h("input", { id: "g-cw", class: "input", type: "number", oninput: () => { persist(); validate(); refreshEstimate(); } });
@@ -185,6 +186,7 @@ export async function mount(root) {
     f.go.title = "Ctrl+Enter";
     formCard.append(
       field("Model", f.model, null, "g-model"),
+      f.tags,
       f.worker,
       f.inputs,
       h("div", { class: "field" },
@@ -301,6 +303,8 @@ export async function mount(root) {
 
   function applyModel(m, reset) {
     const lim = m.limits, d = m.defaults, mem = m.memory || {};
+    clear(f.tags);
+    f.tags.append(tagChips(m.tags, "tags model-tags"));
     const sv = m.settings || {};                     // what was saved in the model's settings; otherwise the recipe's own values
     fillResolutions();
     setSize(sv.width ?? d.width, sv.height ?? d.height);

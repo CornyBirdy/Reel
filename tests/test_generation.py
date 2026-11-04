@@ -121,3 +121,43 @@ class CrashRetry(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Tags(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        from reel.tags import capability_tags
+        cls.tags = staticmethod(capability_tags)
+        cls.all, _ = recipes.load_all()
+
+    def keys(self, rid):
+        return {t["key"] for t in self.tags(self.all[rid])}
+
+    def test_every_model_says_what_it_makes(self):
+        for rid, r in self.all.items():
+            tags = self.tags(r)
+            self.assertTrue(tags, rid)
+            self.assertTrue(all(t["label"] and t["hint"] for t in tags), rid)
+
+    def test_video_only_tags(self):
+        self.assertIn("length", self.keys("ltx-video"))
+        self.assertIn("silent", self.keys("ltx-video"))
+        # a model that makes its own sound isn't silent, and one that takes pictures isn't prompt-only
+        self.assertIn("audio", self.keys("minimax-h3"))
+        self.assertNotIn("silent", self.keys("minimax-h3"))
+        self.assertNotIn("prompt-only", self.keys("ltx-video"))
+        self.assertIn("prompt-only", self.keys("sdxl-base"))
+        self.assertIn("image-editing", self.keys("flux-kontext"))
+        self.assertIn("upscale", self.keys("realesrgan-x4plus"))
+        self.assertNotIn("negative", self.keys("realesrgan-x4plus"))
+        self.assertNotIn("length", self.keys("sdxl-base"))
+        self.assertNotIn("silent", self.keys("sdxl-base"))
+
+    def test_distilled_model_is_fast_and_ignores_negative_prompts(self):
+        k = self.keys("flux1-schnell")
+        self.assertTrue({"fast", "no-negative", "quantized"} <= k)
+        self.assertIn("negative", self.keys("sdxl-base"))
+
+    def test_recipes_can_add_their_own_tags(self):
+        r = dict(self.all["sdxl-base"], tags=["Photoreal", "  ", 5])
+        self.assertEqual([t["label"] for t in self.tags(r) if t["key"] == "custom"], ["Photoreal"])

@@ -107,6 +107,8 @@ Model storage folder, graphics card, how long an idle model stays loaded, the do
 
 Built in: SDXL 1.0 and FLUX.1 schnell (images); Qwen-Image-Edit 2509 and FLUX.1 Kontext dev (editing); Wan2.1 VACE 1.3B (replace a person); LTX-Video, LTX-2, Wan 2.2, CogVideoX, HunyuanVideo and HunyuanVideo 1.5 (video); MiniMax-H3, MiniMax-H3 Reference and MiniMax-H3 (ComfyUI) (video with sound); Real-ESRGAN x4+ (upscaler).
 
+Each model carries **capability tags** (on its Library card and under the model picker on Generate), worked out from its recipe: what it makes from what (text, image or frames to video, editing, compose, upscale), sound, longest clip, fast or slow by default, negative prompt or not, VRAM weight, quantized by default, prompt only. A recipe can add its own with `"tags": ["Photoreal"]`.
+
 Only LTX-Video has been run end to end on real hardware. Every other model, and anything you import, is marked **Unverified**. Sizes and memory figures come from the model cards and from the real tensor sizes in the weights.
 
 ### Sound
