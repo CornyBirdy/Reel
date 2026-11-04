@@ -1,4 +1,4 @@
-import { h, icon, clear, toast, confirmDialog, fmtBytes, fmtDuration, progressBar, statusBadge, kindBadge } from "../ui.js";
+import { h, icon, clear, toast, confirmDialog, fmtBytes, fmtDuration, progressBar, statusBadge, kindBadge, tagChips } from "../ui.js";
 import { api } from "../api.js";
 import { openAddFromHF } from "./hf_dialog.js";
 
@@ -58,6 +58,7 @@ function ModelCard(initial, ctx) {
           m0.license ? [" · ", m0.license_url ? h("a", { href: m0.license_url, target: "_blank", rel: "noopener" }, m0.license) : m0.license] : null)),
       badgeSlot),
     h("p", { class: "muted" }, m0.summary || ""),
+    tagChips(m0.tags, "tags model-tags"),
     h("div", { class: "stats" },
       stat("Download", `${m0.download_gb} GB`),
       stat("VRAM needed", `~${m0.vram_gb} GB`),

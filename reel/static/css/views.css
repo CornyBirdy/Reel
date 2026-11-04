@@ -82,6 +82,8 @@
 
 /* -- Library toolbar, badges, Add from Hugging Face --------------------------- */
 .badges { flex-wrap: wrap; justify-content: flex-start; gap: var(--sp-4); }
+/* Capability tags: what a model can do, as small wrapping chips. */
+.model-tags { flex-wrap: wrap; justify-content: flex-start; gap: var(--sp-4); }
 dialog.dialog.dialog-wide { width: min(780px, calc(100vw - var(--sp-32))); }
 .hf-body { min-height: calc(var(--sp-48) * 3); max-height: 52vh; overflow-y: auto; padding: var(--sp-4) 0; }
 .hf-results { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--sp-8); }

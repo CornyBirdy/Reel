@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException
 
 from . import config, hf, recipes, system
 from .installer import InstallError, installs, installed_info, model_dir
+from .tags import capability_tags
 
 router = APIRouter(prefix="/api/models", tags=["models"])
 
@@ -67,6 +68,7 @@ def describe(recipe: dict) -> dict:
         "verified": recipe.get("verified", True), "gated": bool(recipe.get("gated")), "hf_repo": recipe.get("hf_repo"),
         "license": recipe.get("license"), "license_url": recipe.get("license_url"),
         "tasks": recipe.get("tasks", []),
+        "tags": capability_tags(recipe),
         "download_gb": recipe["download_gb"], "vram_gb": recipe["vram_gb"], "vram_note": recipe.get("vram_note"),
         "limits": recipe["limits"], "defaults": recipe["defaults"], "memory": recipe.get("memory", {}),
         "state": state, "installed": state == "installed", "installed_info": info,

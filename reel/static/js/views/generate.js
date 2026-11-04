@@ -1,4 +1,4 @@
-import { h, icon, clear, toast, fmtDuration, fmtDate, progressBar, statusBadge } from "../ui.js";
+import { h, icon, clear, toast, fmtDuration, fmtDate, progressBar, statusBadge, tagChips } from "../ui.js";
 import { api } from "../api.js";
 
 const FORM_KEY = "reel.generate.form";
@@ -81,6 +81,7 @@ export async function mount(root) {
     f.prompt = h("textarea", { id: "g-prompt", class: "textarea", rows: 4, maxlength: 4000, oninput: persist,
       placeholder: kind === "image" ? "A watercolor fox in a misty pine forest, soft morning light, detailed fur…"
                                     : "A slow dolly shot through a rain-soaked neon alley at night, reflections on the wet street…" });
+    f.tags = h("div", { class: "model-tags-slot" });
     f.negative = h("textarea", { id: "g-neg", class: "textarea", rows: 2, oninput: persist });
     f.res = h("select", { id: "g-res", class: "select", onchange: () => { persist(); validate(); } });
     f.frames = h("input", { id: "g-frames", type: "range", oninput: () => { syncFrames(); persist(); validate(); } });
@@ -100,6 +101,7 @@ export async function mount(root) {
 
     formCard.append(
       field("Model", f.model, null, "g-model"),
+      f.tags,
       field("Prompt", f.prompt, "Describe subject, action, camera and lighting. Longer, concrete prompts work best.", "g-prompt"),
       field("Negative prompt", f.negative, null, "g-neg"),
       h("div", { class: kind === "video" ? "grid-2" : "" },
@@ -144,6 +146,8 @@ export async function mount(root) {
 
   function applyModel(m, reset) {
     const lim = m.limits, d = m.defaults, mem = m.memory || {};
+    clear(f.tags);
+    f.tags.append(tagChips(m.tags, "tags model-tags"));
     clear(f.res);
     for (const p of lim.presets) f.res.append(h("option", { value: `${p.w}x${p.h}` }, `${p.w} × ${p.h}`));
     f.res.value = `${d.width}x${d.height}`;

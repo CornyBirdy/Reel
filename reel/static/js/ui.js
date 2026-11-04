@@ -128,6 +128,12 @@ export function statusBadge(kind, text, iconName, title) {
   return h("span", { class: `badge badge-${kind}`, title }, icon(iconName || { success: "check", danger: "error", warning: "alert", info: "info", neutral: "box" }[kind] || "info"), text);
 }
 
+// The capability tags from the server (reel/tags.py): small text-only chips, each with a hover explanation.
+export function tagChips(tags, className = "tags") {
+  return h("div", { class: `row-8 ${className}` }, (tags || []).map((t) =>
+    h("span", { class: `badge badge-${t.tone || "neutral"}`, title: t.hint || "" }, t.label)));
+}
+
 export function kindBadge(kind) {
   return statusBadge("neutral", kind === "image" ? "Image" : "Video", kind === "image" ? "image" : "generate");
 }
