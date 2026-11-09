@@ -66,6 +66,8 @@ code, kbd, pre, .mono { font-family: var(--font-mono); font-size: var(--text-sm)
 .nav { display: flex; flex-direction: column; gap: var(--sp-4); }
 .sidebar-spacer { flex: 1; }
 .sidebar-foot { display: flex; flex-direction: column; gap: var(--sp-12); }
+.sidebar-foot .seg.seg-fill { flex-wrap: nowrap; }          /* the theme toggle is always one row */
+.sidebar-foot .seg.seg-fill button { padding: 0 var(--sp-4); }
 
 .main { min-width: 0; min-height: 0; overflow-y: auto; }
 .view {
