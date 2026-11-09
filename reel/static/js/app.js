@@ -3,6 +3,7 @@ import { getTheme, setTheme, applyTheme } from "./theme.js";
 import { api } from "./api.js";
 
 const ROUTES = {
+  chat:       { label: "Chat",     icon: "chat",     keep: true, load: () => import("./views/chat.js") },
   generate:   { label: "Generate", icon: "generate", keep: true, load: () => import("./views/generate.js") },
   library:    { label: "Library",  icon: "library",  keep: true, load: () => import("./views/library.js") },
   settings:   { label: "Settings", icon: "settings", load: () => import("./views/settings.js") },
@@ -67,6 +68,28 @@ function buildNav() {
     navEl.append(h("a", { class: "nav-item", href: `#/${name}`, "data-route": name }, icon(r.icon), h("span", { class: "label" }, r.label)));
   }
 }
+
+// The language model that is loaded right now (if any), with a way to eject it from any page.
+const llmChip = document.getElementById("llm-chip");
+let llmKey = "";
+function showLlm(s) {
+  const on = s && (s.state === "ready" || s.state === "loading");
+  const key = on ? `${s.state}|${s.model_id}` : "";
+  if (key === llmKey) return;
+  llmKey = key;
+  clear(llmChip);
+  llmChip.hidden = !on;
+  if (!on) return;
+  llmChip.append(icon("chat"), h("div", { class: "grow" }, h("strong", {}, s.model_name || s.model_id), s.state === "loading" ? "Loading…" : "Loaded in memory"),
+    h("button", { class: "btn btn-ghost btn-icon", type: "button", title: "Eject the model and free its memory", "aria-label": "Eject the model", onclick: async () => {
+      try { await api.post("/api/llm/unload"); } catch (e) { toast(e.message, "danger"); }
+      refreshLlm();
+    } }, icon("eject")));
+}
+async function refreshLlm() {
+  try { const r = await api.get("/api/llm/status"); showLlm(r.server); document.dispatchEvent(new CustomEvent("reel:llm-state", { detail: r.server })); } catch { /* server restarting */ }
+}
+document.addEventListener("reel:llm-state", (e) => showLlm(e.detail));
 
 function buildThemeToggle() {
   const host = document.getElementById("theme-toggle");
@@ -154,6 +177,7 @@ function wake() {
   body.style.display = "none"; void body.offsetHeight; body.style.display = "";
   document.dispatchEvent(new CustomEvent("reel:wake"));
   refreshGpuChip();
+  refreshLlm();
 }
 // A minimised window should not keep decoding video. Pause what is playing and carry on when it is back.
 document.addEventListener("visibilitychange", () => {
@@ -185,9 +209,11 @@ window.addEventListener("resize", () => { if (!document.hidden) document.dispatc
 applyTheme(getTheme());
 buildNav();
 buildThemeToggle();
-window.addEventListener("hashchange", () => { render(); refreshGpuChip(); });
+window.addEventListener("hashchange", () => { render(); refreshGpuChip(); refreshLlm(); });
 refreshGpuChip();
+refreshLlm();
 setInterval(refreshGpuChip, 15000);
+setInterval(() => { if (!document.hidden) refreshLlm(); }, 10000);
 checkForUpdate();
 setInterval(checkForUpdate, 30 * 60 * 1000);
 render();

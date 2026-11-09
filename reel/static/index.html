@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Reel</title>
-  <meta name="description" content="Local AI image and video generation.">
+  <meta name="description" content="Local AI: chat, image and video generation on your own PC.">
   <meta name="theme-color" content="">
   <link rel="icon" type="image/svg+xml" href="/static/icons/reel.svg">
   <link rel="icon" type="image/png" sizes="32x32" href="/static/icons/reel-32.png">
@@ -22,6 +22,7 @@
   <link rel="stylesheet" href="/static/css/base.css">
   <link rel="stylesheet" href="/static/css/components.css">
   <link rel="stylesheet" href="/static/css/views.css">
+  <link rel="stylesheet" href="/static/css/chat.css">
 </head>
 <body>
   <div class="app">
@@ -30,13 +31,14 @@
         <img src="/static/icons/reel.svg" width="32" height="32" alt="">
         <div class="brand-text">
           <div class="brand-name">Reel</div>
-          <div class="brand-tag">Image &amp; video, locally</div>
+          <div class="brand-tag">Local AI studio</div>
         </div>
       </div>
       <nav class="nav" id="nav" aria-label="Main"></nav>
       <div class="sidebar-spacer"></div>
       <div class="sidebar-foot">
-        <a class="update-pill" id="update-pill" href="#/settings" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19.5h14"/></svg><span>Update available</span></a>
+        <a class="update-pill" id="update-pill" href="#/settings?tab=app" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19.5h14"/></svg><span>Update available</span></a>
+        <div class="gpu-chip llm-chip" id="llm-chip" hidden></div>
         <div class="gpu-chip" id="gpu-chip"></div>
         <div class="seg seg-fill" id="theme-toggle" role="group" aria-label="Theme"></div>
         <button class="btn" id="quit-btn" type="button" hidden title="Stop Reel. It runs without a console window, so this is how to close it when it is open in a browser.">Quit Reel</button>

@@ -1,17 +1,36 @@
-import { h, icon, clear, toast, confirmDialog, fmtBytes, statusBadge, restartReel, tip } from "../ui.js";
+import { h, icon, clear, toast, confirmDialog, fmtBytes, statusBadge, restartReel, tip, pageHead, tabs, progressBar, copyText } from "../ui.js";
 import { api } from "../api.js";
 
+const TABS = [["models", "Models", "box"], ["hardware", "Hardware", "chip"], ["app", "App", "settings"]];
+
 export async function mount(root) {
+  const q = new URLSearchParams(location.hash.split("?")[1] || "");
+  let tab = TABS.some((t) => t[0] === q.get("tab")) ? q.get("tab") : "models";
+  let alive = true, engineTimer = null;
+  const tabHost = h("div");
   const body = h("div", { class: "stack-16" });
   root.append(h("div", { class: "view" },
-    h("div", { class: "page-head" }, h("h1", {}, "Settings")),
-    body));
+    pageHead("Settings", "Where models live, which graphics card they use, and how Reel starts and updates."),
+    tabHost, body));
+
+  function drawTabs() {
+    clear(tabHost);
+    tabHost.append(tabs(TABS, tab, (id) => {
+      tab = id;
+      history.replaceState(null, "", `#/settings?tab=${id}`);     // remembers the tab without re-rendering the page
+      drawTabs(); load();
+    }, "Settings sections"));
+  }
 
   async function load() {
-    const [s, stored] = await Promise.all([api.get("/api/settings"), api.get("/api/settings/stored-models")]);
+    const [s, stored, llm] = await Promise.all([api.get("/api/settings"), api.get("/api/settings/stored-models"), api.get("/api/llm")]);
+    if (!alive) return;
     clear(body);
-    body.append(updatesCard(s), changelogCard(), gpuCard(s), memoryCard(s), downloadsCard(s), windowCard(s), storageCard(s, stored), tokenCard(s), systemCard(s));
-    refreshUpdates(false);
+    if (tab === "models") body.append(languageCard(s, llm), memoryCard(s), downloadsCard(s), storageCard(s, stored), tokenCard(s));
+    else if (tab === "hardware") body.append(gpuCard(s), systemCard(s));
+    else { body.append(updatesCard(s), changelogCard(), windowCard(s)); refreshUpdates(false); }
+    clearTimeout(engineTimer);
+    if (llm.engine.job && llm.engine.job.status === "running") engineTimer = setTimeout(load, 1000);
   }
 
   // ---- Updates ----
@@ -140,6 +159,59 @@ export async function mount(root) {
       } catch (e) { slot.textContent = `Could not load it: ${e.message}`; }
     });
     return h("section", { class: "card stack-16" }, h("h3", {}, "Changelog"), details);
+  }
+
+  // ---- Language models ----
+  function languageCard(s, llm) {
+    const e = llm.engine, job = e.job, running = job && job.status === "running", inst = e.installed;
+    const gpuSel = h("select", { id: "llm-gpu", class: "select" },
+      h("option", { value: "" }, "Same card as images and video"),
+      llm.gpu.map((g) => h("option", { value: g.uuid }, `${g.name} · ${(g.vram_total_mb / 1024).toFixed(0)} GB`)),
+      llm.gpu.length > 1 ? h("option", { value: "all" }, "All graphics cards (split the model)") : null,
+      h("option", { value: "cpu" }, "CPU only"));
+    gpuSel.value = llm.settings.llm_gpu;
+    const idle = h("select", { id: "llm-idle", class: "select" },
+      [[0, "Never"], [5, "5 minutes"], [15, "15 minutes"], [30, "30 minutes"], [60, "1 hour"], [120, "2 hours"], [240, "4 hours"]]
+        .map(([v, t]) => h("option", { value: v }, t)));
+    idle.value = String(llm.settings.llm_idle_minutes);
+    if (idle.value !== String(llm.settings.llm_idle_minutes)) idle.append(h("option", { value: llm.settings.llm_idle_minutes, selected: true }, `${llm.settings.llm_idle_minutes} minutes`));
+    const api_url = `${location.origin}/v1`;
+    return h("section", { class: "card stack-16" },
+      h("div", { class: "row-between" }, h("h3", {}, "Language models"),
+        inst ? statusBadge("success", "Engine installed", "check") : statusBadge("warning", "Engine not installed", "alert")),
+      h("p", { class: "muted" }, "Chat with models from Hugging Face, fully offline. They run on llama.cpp, which Reel downloads once into its own folder."),
+      h("dl", { class: "kv" },
+        h("dt", {}, "Engine"), h("dd", {}, inst ? `llama.cpp ${inst.tag || ""} · ${inst.backend}` : "Not installed"),
+        h("dt", {}, "Models folder"), h("dd", { class: "mono" }, llm.models_dir)),
+      running ? h("div", { class: "stack-8" }, progressBar(job.progress, { indeterminate: !job.bytes_total, label: "Engine download" }),
+        h("div", { class: "progress-meta" }, h("span", {}, job.message), h("span", {}, job.bytes_total ? `${fmtBytes(job.bytes_done)} of ${fmtBytes(job.bytes_total)}` : ""))) : null,
+      job && job.status === "failed" ? h("div", { class: "notice notice-danger", role: "alert" }, icon("error"), job.error) : null,
+      h("div", { class: "row-8" },
+        h("button", { class: "btn btn-primary", type: "button", disabled: !!running, onclick: async () => {
+          if (inst && !(await confirmDialog({ title: "Update the chat engine?", body: "Reel downloads the latest llama.cpp and replaces the current one. Your models are not touched.", confirmLabel: "Update" }))) return;
+          try { await api.post("/api/llm/engine/install"); } catch (er) { toast(er.message, "danger", 9000); }
+          load();
+        } }, icon("download"), inst ? "Update engine" : "Install engine"),
+        running ? h("button", { class: "btn", type: "button", onclick: async () => { await api.post("/api/llm/engine/cancel"); load(); } }, icon("stop"), "Cancel") : null,
+        inst && !running ? h("button", { class: "btn btn-danger", type: "button", onclick: async () => {
+          if (!(await confirmDialog({ title: "Remove the chat engine?", body: "Language models stay downloaded but cannot run until you install the engine again.", confirmLabel: "Remove", danger: true }))) return;
+          try { await api.del("/api/llm/engine"); toast("Engine removed.", "success"); } catch (er) { toast(er.message, "danger"); }
+          load();
+        } }, icon("trash"), "Remove") : null),
+      h("div", { class: "grid-2" },
+        h("div", { class: "field" }, h("label", { for: "llm-gpu" }, "Run language models on"), gpuSel,
+          h("span", { class: "field-hint" }, "With two cards, a second one lets you chat while the main one generates images.")),
+        h("div", { class: "field" }, h("label", { for: "llm-idle" }, "Unload an idle model after"), idle,
+          h("span", { class: "field-hint" }, "Frees the memory for image generation. It reloads when you next send a message."))),
+      h("div", { class: "row-8" }, h("button", { class: "btn btn-primary", type: "button", onclick: async () => {
+        try { await api.put("/api/llm/settings", { llm_gpu: gpuSel.value, llm_idle_minutes: Number(idle.value) }); toast("Saved. The GPU choice applies the next time a model loads.", "success"); }
+        catch (er) { toast(er.message, "danger"); }
+      } }, "Save")),
+      h("div", { class: "stack-8 api-box" }, h("h4", {}, "Use it from other apps"),
+        h("p", { class: "muted" }, "Reel speaks the OpenAI API, so editors, notebooks and chat front-ends can use your local models. Models load on demand when a request names them."),
+        h("div", { class: "row-8" }, h("code", { class: "mono api-url" }, api_url),
+          h("button", { class: "btn", type: "button", onclick: () => copyText(api_url) }, icon("copy"), "Copy")),
+        h("p", { class: "field-hint" }, "No API key is needed (use any text if the app insists). It only listens on this PC unless you set REEL_HOST.")));
   }
 
   function gpuCard(s) {
@@ -271,5 +343,7 @@ export async function mount(root) {
         h("dt", {}, "Clips saved to"), h("dd", { class: "mono" }, s.outputs_dir)));
   }
 
+  drawTabs();
   await load();
+  return { unmount() { alive = false; clearTimeout(engineTimer); } };
 }

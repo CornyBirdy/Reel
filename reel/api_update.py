@@ -12,6 +12,9 @@ from fastapi import APIRouter, HTTPException
 from . import config, updater, workers
 from .generation import generation
 from .installer import installs
+from .llm_engine import engine as llm_engine
+from .llm_models import downloads as llm_downloads
+from .llm_server import llm
 
 router = APIRouter(prefix="/api/update", tags=["update"])
 
@@ -25,6 +28,10 @@ def _busy() -> str | None:
     cur = generation.current
     if cur and cur.status == "running":
         return "a generation is running"
+    if llm_downloads.active():
+        return f"{llm_downloads.active().model_id} is downloading"
+    if llm_engine.running():
+        return "the chat engine is installing"
     return None
 
 
@@ -55,7 +62,10 @@ def restart() -> dict:
         return {"restarting": relaunch_hidden()}
     auto = os.environ.get("REEL_LAUNCHER") == "bat"
     if auto:  # start.bat sees exit code 75, re-checks dependencies and starts Reel again
-        threading.Timer(0.6, lambda: os._exit(RESTART_EXIT_CODE)).start()
+        def _go() -> None:
+            llm.unload()          # os._exit skips shutdown hooks; do not leave a model process holding VRAM
+            os._exit(RESTART_EXIT_CODE)
+        threading.Timer(0.6, _go).start()
     return {"restarting": auto}
 
 

@@ -1,5 +1,6 @@
 // Dev-only page (#/styleguide): every component and state, for design and contrast audits.
-import { h, icon, toast, confirmDialog, progressBar, statusBadge } from "../ui.js";
+import { h, icon, toast, confirmDialog, progressBar, statusBadge, pageHead, tabs } from "../ui.js";
+import { renderMarkdown } from "../markdown.js";
 
 const swatch = (name) => h("div", { class: "sg-swatch" },
   h("div", { class: "sg-chip", style: { background: `var(--${name})` } }),
@@ -9,7 +10,7 @@ const section = (title, ...children) => h("section", { class: "card stack-16" },
 
 export function mount(el) {
   el.append(h("div", { class: "view" },
-    h("div", { class: "page-head" }, h("h1", {}, "Styleguide"), h("p", {}, "Rack Suite tokens and components, neutral accent.")),
+    pageHead("Styleguide", "Rack Suite tokens and components, neutral accent."),
 
     section("Typography",
       h("h1", {}, "Heading 1 - Segoe UI Variable"), h("h2", {}, "Heading 2"), h("h3", {}, "Heading 3"),
@@ -44,6 +45,15 @@ export function mount(el) {
           h("a", { class: "nav-item", href: "#/styleguide", "aria-current": "page" }, icon("generate"), h("span", {}, "Selected item"))),
         h("div", { class: "seg", role: "group", "aria-label": "Segmented demo" },
           h("button", { "aria-pressed": "false" }, "One"), h("button", { "aria-pressed": "true" }, "Two"), h("button", { "aria-pressed": "false" }, "Three")))),
+
+    section("Tabs and page header",
+      tabs([["a", "Models", "box"], ["b", "Hardware", "chip"], ["c", "App", "settings"]], "b", () => {}, "Demo tabs"),
+      pageHead("Page title", "One line that says what this page is for.", h("button", { class: "btn btn-primary" }, icon("plus"), "Action"))),
+
+    section("Chat message (Markdown)",
+      h("div", { class: "msg msg-assistant" }, h("div", { class: "msg-role" }, "Assistant"),
+        h("div", { class: "msg-body" }, renderMarkdown("Here is **bold**, *italic*, `inline code` and a [link](https://example.com).\n\n1. First\n2. Second\n\n```python\nprint('hello')\n```\n\n| Model | Size |\n|---|---|\n| 8B | 5 GB |")),
+        h("div", { class: "msg-meta muted" }, "42.1 tok/s · 312 tokens · 0.21 s to first token"))),
 
     section("Status",
       h("div", { class: "row-8" },

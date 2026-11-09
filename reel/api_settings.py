@@ -11,6 +11,8 @@ from pydantic import BaseModel
 
 from . import config, recipes, system, throttle, window
 from .installer import installs
+from .llm_models import downloads as llm_downloads
+from .llm_server import llm
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
@@ -64,6 +66,10 @@ def update_settings(body: SettingsUpdate) -> dict:
         busy = installs.active_job()
         if busy:
             raise HTTPException(409, f"Cannot change the storage folder while {busy.model_id} is installing.")
+        if llm_downloads.active():
+            raise HTTPException(409, f"Cannot change the storage folder while {llm_downloads.active().model_id} is downloading.")
+        if llm.is_running():
+            raise HTTPException(409, "Eject the language model before changing the storage folder.")
         new = (body.models_dir or "").strip()
         if new:
             path = Path(new).expanduser()

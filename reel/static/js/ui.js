@@ -24,7 +24,20 @@ export function append(el, children) {
   return el;
 }
 
+// Null-safe: native Element.append(null) would write the text "null".
+export const put = (el, ...items) => append(el, items);
+
 export function clear(el) { el.replaceChildren(); return el; }
+
+// Pages that re-poll the server every second must not rewrite identical DOM (it makes the page jump).
+// setText writes only when the text changed; once rebuilds a slot only when its key changed.
+export function setText(el, text) { if (el.textContent !== text) el.textContent = text; }
+export function once(slot, key, build) {
+  if (slot.__key === key) return;
+  slot.__key = key;
+  clear(slot);
+  build(slot);
+}
 
 // --- Icons: 24-unit grid, 1.75 outline, round caps and joins (suite icon style) ---
 const ICONS = {
@@ -68,6 +81,15 @@ const ICONS = {
   more: '<circle cx="5.5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="18.5" cy="12" r="1.2"/>',
   frame: '<path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16"/>',
   box: '<path d="M12 3 20.5 7.5v9L12 21l-8.5-4.5v-9z"/><path d="M3.5 7.5 12 12l8.5-4.5M12 12v9"/>',
+  chat: '<path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v7a2.5 2.5 0 0 1-2.5 2.5H11l-4.5 4v-4h0A2.5 2.5 0 0 1 4 13.5z"/>',
+  send: '<path d="M12 19V6M6.5 11.5 12 6l5.5 5.5"/>',
+  eject: '<path d="M12 5 4.5 14h15z"/><path d="M5 18.5h14"/>',
+  edit: '<path d="M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17z"/><path d="M14.5 7.5l3 3"/>',
+  sliders: '<path d="M5 4v16M12 4v16M19 4v16"/><circle cx="5" cy="14" r="2"/><circle cx="12" cy="8" r="2"/><circle cx="19" cy="15" r="2"/>',
+  list: '<path d="M4 6h16M4 12h16M4 18h10"/>',
+  language: '<path d="M4 5.5h16M4 10.5h10M4 15.5h16M4 20.5h7"/>',
+  brain: '<path d="M9 4.5a3 3 0 0 0-3 3v.2A3.2 3.2 0 0 0 4.5 11a3.2 3.2 0 0 0 1.3 2.6A3.3 3.3 0 0 0 9 19.5a2.5 2.5 0 0 0 3-1.5V6a2.5 2.5 0 0 0-3-1.5zM15 4.5a3 3 0 0 1 3 3v.2a3.2 3.2 0 0 1 1.5 3.3 3.2 3.2 0 0 1-1.3 2.6 3.3 3.3 0 0 1-3.2 5.9 2.5 2.5 0 0 1-3-1.5"/>',
+  link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
 };
 
 export function icon(name) {
@@ -108,6 +130,30 @@ export function menuButton(label, iconName, items, { iconOnly = false } = {}) {
   }
   document.addEventListener("click", (e) => { if (root.open && !root.contains(e.target)) root.open = false; });
   return root;
+}
+
+// --- Page header: every page starts the same way (title + one line, actions on the right) ---
+export function pageHead(title, subtitle, actions) {
+  return h("div", { class: "page-head-row" },
+    h("div", { class: "page-head" }, h("h1", {}, title), subtitle ? h("p", {}, subtitle) : null),
+    actions ? h("div", { class: "row-8" }, actions) : null);
+}
+
+// --- Tabs: a row of buttons that switch between sections of one page. Same selected-state rule as the nav. ---
+export function tabs(items, active, onSelect, label = "Sections") {
+  const el = h("div", { class: "tabs", role: "tablist", "aria-label": label });
+  for (const [id, text, ic] of items) {
+    el.append(h("button", { type: "button", role: "tab", id: `tab-${id}`, "aria-selected": String(id === active), tabindex: id === active ? 0 : -1,
+      onclick: () => onSelect(id) }, ic ? icon(ic) : null, text));
+  }
+  el.addEventListener("keydown", (e) => {
+    if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+    const ids = items.map((i) => i[0]);
+    const next = ids[(ids.indexOf(active) + (e.key === "ArrowRight" ? 1 : ids.length - 1)) % ids.length];
+    onSelect(next);
+    requestAnimationFrame(() => document.getElementById(`tab-${next}`)?.focus());
+  });
+  return el;
 }
 
 // --- Toasts ---
@@ -203,8 +249,30 @@ export function tagChips(tags, className = "tags") {
 }
 
 export function kindBadge(kind) {
-  if (kind === "upscale") return statusBadge("neutral", "Upscaler", "upscale");
-  return statusBadge("neutral", kind === "image" ? "Image" : "Video", kind === "image" ? "image" : "generate");
+  const [text, ic] = { image: ["Image", "image"], video: ["Video", "generate"], language: ["Language", "chat"], upscale: ["Upscaler", "upscale"] }[kind] || [kind, "box"];
+  return statusBadge("neutral", text, ic);
+}
+
+export function fmtTokens(n) {
+  return n >= 10000 ? `${(n / 1000).toFixed(0)}K` : n >= 1000 ? `${(n / 1000).toFixed(1)}K` : String(n);
+}
+
+export function fmtAgo(ts) {
+  const s = Math.max(0, Date.now() / 1000 - ts);
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)} min ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)} h ago`;
+  if (s < 86400 * 7) return `${Math.floor(s / 86400)} d ago`;
+  return new Date(ts * 1000).toLocaleDateString(undefined, { dateStyle: "medium" });
+}
+
+export function copyText(text) {
+  const done = () => toast("Copied.", "success", 1500);
+  if (navigator.clipboard && window.isSecureContext) { navigator.clipboard.writeText(text).then(done, () => toast("Could not copy.", "danger")); return; }
+  const ta = h("textarea", { style: { position: "fixed", opacity: "0" } }); ta.value = text;
+  document.body.append(ta); ta.select();
+  try { document.execCommand("copy"); done(); } catch { toast("Could not copy.", "danger"); }
+  ta.remove();
 }
 
 export function fmtCount(n) {

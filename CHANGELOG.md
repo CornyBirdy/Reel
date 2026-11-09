@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+**Chat (new)**
+- Chat with local language models, in the spirit of LM Studio. Find GGUF models on Hugging Face from the Library (search or paste a link; file sizes and "fits your GPU" shown, a 4-bit file recommended), download with resume, and chat with saved conversations.
+- The chat engine (llama.cpp) installs with one click, picking the right build for your graphics card (CUDA 13 / 12 or Vulkan).
+- Load dialog with context length, GPU layers, which card to use and a memory estimate. Models load on demand and unload after an idle time; Eject is always one click away in the sidebar.
+- Markdown replies with code blocks, tables, a collapsible thought process for reasoning models, tokens per second, system prompt and sampling controls, edit / regenerate / delete.
+- An OpenAI-compatible API at `/v1` so other apps can use your local models.
+
+**Interface (Chat update)**
+- Library and Add model cover language, image and video models together, with a Language filter.
+- Generate notes when a language model is loaded in memory, with an Eject button, since both hold VRAM.
+- Settings is split into Models, Hardware and App tabs instead of one long column.
+- Every page now starts with the same header; phone-width layouts no longer overflow the bottom bar.
+
 **New**
 - **Capability tags** on every model in the Library and under the model picker on the Generate tab: what it makes from what (text to image or video), the longest clip, whether it's fast or slow by default, whether it understands a negative prompt, how heavy it is on VRAM, whether it's quantized by default, and that it takes a prompt only (no starting image) and has no sound. They're worked out from each model's own limits and defaults, so models added from Hugging Face get them too; a recipe can add its own with a `"tags"` list.
 

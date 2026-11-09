@@ -1,6 +1,6 @@
 # Reel
 
-Reel generates images and video on your own PC. You choose a model from a library (or add one from Hugging Face), write a prompt, and get a PNG or an MP4. Models, clips and settings all live in one folder, and nothing is sent anywhere except the downloads from Hugging Face.
+Reel is local AI on your own PC: it chats with language models, and generates images and video. You choose a model from a library (or add one from Hugging Face), then talk to it, or write a prompt and get a PNG or an MP4. Models, chats, clips and settings all live in one folder, and nothing is sent anywhere except the downloads from Hugging Face (and GitHub for the chat engine and updates).
 
 Reel is part of the Rack Suite (Rack, MC Hoster, Shelf) and shares its design system.
 
@@ -9,7 +9,7 @@ Reel is part of the Rack Suite (Rack, MC Hoster, Shelf) and shares its design sy
 - Windows 11
 - Python 3.10 to 3.13 (`start.bat` offers to install it)
 - An NVIDIA GPU with driver 570 or newer (RTX 50-series needs this for CUDA 12.8)
-- Free disk space: 15 to 40 GB per model, much more for the largest ones
+- Free disk space: 15 to 40 GB per image or video model, much more for the largest ones; 2 to 20 GB per language model
 
 Reel itself needs only FastAPI and uvicorn. PyTorch and the model libraries are installed separately for each model, inside that model's folder.
 
@@ -19,6 +19,7 @@ Reel itself needs only FastAPI and uvicorn. PyTorch and the model libraries are 
 2. Run `start.bat`. The first start creates a virtual environment and installs the app's dependencies, which takes a few minutes.
 3. In the Library, press **Install** on a model. SDXL 1.0 (images) and LTX-Video (video) are good first choices.
 4. In Generate, choose a mode, write a prompt and press **Generate**.
+5. To chat, open the Chat tab, press **Find a model**, pick a language model (a 4B to 8B one in Q4 is a good first try) and install the chat engine when asked. See [Chat](#chat).
 
 Reel opens in its own window using the WebView2 runtime that ships with Windows 11. If that is unavailable it falls back to an app-style window from Edge, Chrome, Brave or Vivaldi, then to your default browser. The choice is under **Settings > Window**, or set `REEL_WINDOW` to `native`, `app` or `browser`. `start-in-browser.bat` always uses the browser. If WebView2 was removed, `winget install -e --id Microsoft.EdgeWebView2Runtime` restores it.
 
@@ -55,9 +56,24 @@ Reel runs without a console window: only its own window is on screen, and closin
 
 ## Using Reel
 
+### Chat
+
+Reel works like LM Studio for text models. Language models are single GGUF files run by [llama.cpp](https://github.com/ggml-org/llama.cpp).
+
+1. **Library > Add model > Language** searches Hugging Face (most downloaded first) or takes a link. Reel lists the GGUF files in the repository with their size and whether each fits your graphics card, and recommends a 4-bit one. Downloads resume after an interruption.
+2. **Install chat engine** (once, from the Chat tab, the Library or **Settings > Models**) downloads the right llama.cpp build for your PC from its official releases into `data/engine/`: CUDA 13 or 12 for NVIDIA cards (no CUDA toolkit needed), Vulkan otherwise. Nothing is installed system-wide.
+3. **Chat** with a model. The first message loads it, or use **Load...** to choose the context length, how many layers go on the GPU and which card to use, with a memory estimate. Replies stream in with Markdown, code blocks with copy buttons, a collapsible thought process for reasoning models, and tokens per second. Conversations are saved on this PC. Edit, regenerate or delete from any message; the side panel sets a system prompt and sampling.
+4. **Eject** frees the memory (the sidebar has a button on every page). An idle model unloads after an hour (**Settings > Models > Language models**) and loads again on your next message.
+
+With two graphics cards, language models can run on one while images generate on the other (Settings > Models > Language models > Run language models on). A loaded language model and a loaded image model both hold memory; Generate shows a notice with an Eject button while one is loaded.
+
+**Other apps.** Reel serves the OpenAI API at `http://127.0.0.1:8765/v1` (`/v1/models`, `/v1/chat/completions`, `/v1/completions`, streaming included). Point an editor extension, notebook or chat front-end at it and use any text as the API key. A request that names a downloaded model loads it on demand. There is no authentication, so it is as private as `REEL_HOST` (localhost by default). Vision models load as text only for now (their image files are skipped).
+
+Language models are stored in `<storage folder>/_language/<model>/`, the engine in `data/engine/`, and conversations in `data/chats.db`.
+
 ### Library
 
-One card per model, showing the download size, VRAM need and whether it suits your card. **Install** creates an isolated environment for that model, installs PyTorch (CUDA 12.8) and the model libraries, then downloads the weights. **Uninstall** removes only that model's folder. Cancelling, closing Reel or losing the connection keeps everything downloaded so far, including the part of a file in progress, and **Install** continues from the same byte.
+One card per model (language, image, video or upscaler), showing the download size, VRAM need and whether it suits your card. **Install** creates an isolated environment for that model, installs PyTorch (CUDA 12.8) and the model libraries, then downloads the weights. **Uninstall** removes only that model's folder. Cancelling, closing Reel or losing the connection keeps everything downloaded so far, including the part of a file in progress, and **Install** continues from the same byte.
 
 **Add from Hugging Face** imports a diffusers-format model from a link or `org/name` (see [Importing models](#importing-models)).
 
@@ -90,7 +106,7 @@ Install **Real-ESRGAN x4+**, then use **Upscale 2×** or **4×** from the **More
 
 ### Settings
 
-Model storage folder, graphics card, how long an idle model stays loaded, the download speed limit, the window mode, Hugging Face and GitHub tokens, and updates.
+Three tabs. **Models:** the chat engine and language-model defaults, how long an idle model stays loaded, the download speed limit, the storage folder and the Hugging Face token. **Hardware:** the graphics card and what Reel found on this PC. **App:** updates, the changelog, the window mode and the GitHub token.
 
 **Downloads** has one switch, *Slow down while Reel is busy*, on by default. On, downloads run at full speed and drop to about 10 MB/s while a model is loading or generating, so they do not compete with it for the disk. Off, they always run at full speed. An optional maximum speed (MB/s) is a ceiling in either case, and with the switch off it acts as a fixed limit. The limit also caps how fast files are written, and changes apply to a download that is already running.
 
@@ -190,10 +206,12 @@ Reel/
   start.bat  recipes/  adapters/  reel/  tools/  tests/
   data/                      created on first run, ignored by git
     models/<model-id>/       venv/  weights/  install.json  install.log
+    models/_language/<id>/   downloaded GGUF language models
+    engine/llama.cpp/        the chat engine (llama-server)
     outputs/                 finished PNGs and MP4s
     logs/                    output of each model process (newest 40 kept)
     recipes/                 models imported from Hugging Face
-    history.db  settings.json
+    history.db  chats.db  settings.json
 ```
 
 The storage folder in Settings can move `models/` to another drive. Python environments cannot be relocated, so existing installs stay where they are.
@@ -210,7 +228,7 @@ A recipe can name an `"engine"` (a pinned release ZIP that is unpacked into the 
 
 ### Tests
 
-`python -m unittest discover tests` runs offline, with no GPU and no PyTorch. The tests start the real worker process with a stand-in adapter (`tests/fake_adapter.py`). To check a real model on your PC, start Reel and run `python tools/worker_smoke.py <model-id>`, which prints what the model holds and what the PC has free before loading, after each run and after unloading.
+`python -m unittest discover tests` runs offline, with no GPU and no PyTorch. The language-model tests run the real server against a stand-in `llama-server` (`tests/fake_llama_server.py`). The tests start the real worker process with a stand-in adapter (`tests/fake_adapter.py`). To check a real model on your PC, start Reel and run `python tools/worker_smoke.py <model-id>`, which prints what the model holds and what the PC has free before loading, after each run and after unloading.
 
 ### Interface
 

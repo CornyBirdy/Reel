@@ -1,12 +1,14 @@
-import { h, icon, clear, toast, confirmDialog, fmtBytes, fmtDuration, progressBar, statusBadge, kindBadge, tip, tagChips } from "../ui.js";
+import { h, icon, clear, toast, confirmDialog, fmtBytes, fmtDuration, progressBar, statusBadge, kindBadge, tip, tagChips, pageHead, setText, once } from "../ui.js";
 import { api } from "../api.js";
 import { openAddFromHF } from "./hf_dialog.js";
+import { LlmCard, EngineBanner } from "./library_llm.js";
 import { openVerify } from "../verify.js";
 import { openModelSettings } from "../model_settings.js";
 import { KEEPS_MEMORY, crashNotice, holdsText, holdsTitle, idleText, loadButton, loadingKey, loadingNote, logButton, stateChip, stateOf } from "../worker.js";
 
 const FILTER_KEY = "reel.library.filter";
-const loadFilter = () => { try { return localStorage.getItem(FILTER_KEY) || "all"; } catch { return "all"; } };
+const FILTERS = ["all", "language", "image", "video", "upscale"];
+const loadFilter = () => { try { const v = localStorage.getItem(FILTER_KEY); return FILTERS.includes(v) ? v : "all"; } catch { return "all"; } };
 
 const STATE_BADGE = {
   installed:    ["success", "Installed", "check"],
@@ -15,17 +17,6 @@ const STATE_BADGE = {
   partial:      ["warning", "Incomplete", "alert"],
   not_installed: ["neutral", "Not installed", "box"],
 };
-
-// The Library is re-polled every second while installing. Writing the same DOM again each time makes the
-// page jump (it can briefly collapse and clamp the scroll position), so every section only writes when its
-// content actually changed.
-function setText(el, text) { if (el.textContent !== text) el.textContent = text; }
-function once(slot, key, build) {
-  if (slot.__key === key) return;
-  slot.__key = key;
-  clear(slot);
-  build(slot);
-}
 
 function stat(label, value) {
   return h("div", { class: "stat" }, h("span", { class: "stat-label" }, label), h("span", { class: "stat-value" }, value));
@@ -59,7 +50,7 @@ function ModelCard(initial, ctx) {
     h("div", { class: "stack-8" },
       h("div", {},
         h("h3", {}, m0.name, " ", h("span", { class: "muted model-version" }, m0.version || "")),
-        h("div", { class: "muted", style: { fontSize: "var(--text-sm)" } }, m0.family || "",
+        h("div", { class: "muted text-sm" }, m0.family || "",
           m0.license ? [" · ", m0.license_url ? h("a", { href: m0.license_url, target: "_blank", rel: "noopener" }, m0.license) : m0.license] : null,
           m0.hf_url ? [" · ", h("a", { href: m0.hf_url, target: "_blank", rel: "noopener", title: "Open this model's page on Hugging Face" }, "Hugging Face ↗")] : null)),
       badgeSlot),
@@ -90,7 +81,7 @@ function ModelCard(initial, ctx) {
     clear(actions);
     if (m.status === "placeholder") {
       actions.append(h("button", { class: "btn", disabled: true, title: m.blocked_reason }, icon("download"), "Install"),
-        h("span", { class: "muted", style: { fontSize: "var(--text-sm)" } }, "Adapter not written yet"));
+        h("span", { class: "muted text-sm" }, "Adapter not written yet"));
       return;
     }
     const install = (label) => h("button", {
@@ -105,7 +96,7 @@ function ModelCard(initial, ctx) {
       },
     }, icon("download"), label);
     const blockedNote = () => m.blocked_reason
-      ? h("span", { class: "muted", style: { fontSize: "var(--text-sm)" } }, m.blocked_reason) : null;
+      ? h("span", { class: "muted text-sm" }, m.blocked_reason) : null;
     const remove = (label, body) => h("button", {
       class: "btn btn-danger", onclick: async () => {
         const ok = await confirmDialog({
@@ -246,7 +237,7 @@ function ModelCard(initial, ctx) {
       if (m.vram_note) fitSlot.append(tip(m.vram_note));
     });
     once(fitNote, JSON.stringify([fit.level, fit.detail]), () => {
-      if (["low_memory", "too_big"].includes(fit.level)) fitNote.append(h("div", { class: "muted", style: { fontSize: "var(--text-sm)" } }, fit.detail));
+      if (["low_memory", "too_big"].includes(fit.level)) fitNote.append(h("div", { class: "muted text-sm" }, fit.detail));
     });
 
     diskSlot.hidden = m.disk.total === 0;
@@ -265,62 +256,79 @@ function ModelCard(initial, ctx) {
 
 export async function mount(root) {
   const grid = h("div", { class: "model-grid" });
-  const summary = h("p", {});
+  const q = new URLSearchParams(location.hash.split("?")[1] || "");
+  const summary = h("span");
   const notices = h("div", { class: "stack-8" });
-  const empty = h("div", { class: "empty", hidden: true }, icon("box"), h("div", {}, "No models of this type yet. Use Add from Hugging Face to get one."));
-  let filter = loadFilter();
+  const empty = h("div", { class: "empty", hidden: true });
+  let filter = FILTERS.includes(q.get("filter")) ? q.get("filter") : loadFilter();
   const filterSeg = h("div", { class: "seg", role: "group", "aria-label": "Show models" });
-  const addBtn = h("button", { class: "btn btn-primary", type: "button", onclick: () => openAddFromHF({ onAdded: () => refresh() }) },
-    icon("plus"), "Add from Hugging Face");
-  root.append(h("div", { class: "view" },
-    h("div", { class: "row-between" },
-      h("div", { class: "page-head" }, h("h1", {}, "Library"), summary),
-      h("div", { class: "row-8" }, filterSeg, addBtn)),
-    notices, grid, empty));
+  const addBtn = h("button", { class: "btn btn-primary", type: "button", onclick: () => openAdd() }, icon("plus"), "Add model");
+  const banner = EngineBanner({ needed: () => (filter === "all" || filter === "language") && (lastLlm?.models.length || filter === "language"), refresh: () => refresh() });
+  const head = pageHead("Library", summary, addBtn);
+  root.append(h("div", { class: "view" }, head, filterSeg, notices, banner.el, grid, empty));
 
   const cards = new Map();
   let timer = null;
   let alive = true;
-  let lastData = null;
-  const ctx = { gpu: null, hfTokenSet: false, worker: null, refresh };
+  let lastData = null, lastLlm = null;
+  const ctx = { gpu: null, hfTokenSet: false, worker: null, refresh, engineReady: false, overview: null };
+
+  function openAdd() {
+    openAddFromHF({ mode: filter === "language" || filter === "all" ? "language" : "diffusers", onAdded: () => refresh() });
+  }
 
   function drawFilter() {
     clear(filterSeg);
-    for (const [v, label, ic] of [["all", "All", null], ["image", "Image", "image"], ["video", "Video", "generate"], ["upscale", "Upscale", "upscale"]]) {
+    for (const [v, label, ic] of [["all", "All", null], ["language", "Language", "chat"], ["image", "Image", "image"], ["video", "Video", "generate"], ["upscale", "Upscale", "upscale"]]) {
       filterSeg.append(h("button", { type: "button", "aria-pressed": String(filter === v), onclick: () => {
         filter = v; try { localStorage.setItem(FILTER_KEY, v); } catch { /* ignore */ }
-        drawFilter(); applyFilter();
+        drawFilter(); applyFilter(); banner.update(lastLlm?.engine || { installed: true });
       } }, ic ? icon(ic) : null, label));
     }
   }
 
+  const kindOf = (id) => {
+    if (id.startsWith("lm:")) return "language";
+    const m = lastData && lastData.models.find((x) => x.id === id);
+    return m ? m.kind : null;
+  };
+
   function applyFilter() {
     let shown = 0;
     for (const [id, c] of cards) {
-      const m = lastData && lastData.models.find((x) => x.id === id);
-      const visible = !m || filter === "all" || m.kind === filter;
+      const visible = filter === "all" || kindOf(id) === filter;
       c.el.hidden = !visible;
       if (visible) shown++;
     }
     empty.hidden = shown > 0 || !lastData;
+    if (!empty.hidden) {
+      clear(empty);
+      empty.append(icon(filter === "language" ? "chat" : "box"),
+        h("div", {}, filter === "language" ? "No language models yet. Add one from Hugging Face and chat with it here."
+          : "No models of this type yet. Use Add model to get one from Hugging Face."),
+        filter === "language" || filter === "all" ? h("button", { class: "btn btn-primary", type: "button", onclick: () => openAdd() }, icon("plus"), "Add model") : null);
+    }
   }
 
   async function refresh() {
     if (document.hidden) { schedule(2000); return; }   // minimised: don't poll or redraw; the wake event refreshes
-    let data, sys, settings;
-    try { [data, sys, settings] = await Promise.all([api.get("/api/models"), api.get("/api/system"), api.get("/api/settings")]); }
+    let data, sys, settings, llm;
+    try { [data, sys, settings, llm] = await Promise.all([api.get("/api/models"), api.get("/api/system"), api.get("/api/settings"), api.get("/api/llm")]); }
     catch (e) { clear(notices); notices.append(h("div", { class: "notice notice-danger" }, icon("error"), `Cannot reach Reel: ${e.message}`)); schedule(5000); return; }
     if (!alive) return;
-    lastData = data;
+    lastData = data; lastLlm = llm;
+    ctx.engineReady = !!llm.engine.installed;
+    ctx.overview = llm;
     ctx.gpu = sys.gpu.selected_gpu || null;
     ctx.hfTokenSet = settings.hf_token_set;
     ctx.worker = data.worker;
     const installed = data.models.filter((m) => m.state === "installed");
-    const used = data.models.reduce((a, m) => a + m.disk.total, 0);
-    if (data.storage_warning && !summary.parentElement.querySelector(".storage-warning")) {
-      summary.after(h("div", { class: "notice notice-warning storage-warning" }, icon("alert"), data.storage_warning));
+    const lmReady = llm.models.filter((m) => m.state === "ready");
+    const used = data.models.reduce((a, m) => a + m.disk.total, 0) + llm.models.reduce((a, m) => a + m.bytes_on_disk, 0);
+    if (data.storage_warning && !root.querySelector(".storage-warning")) {
+      head.after(h("div", { class: "notice notice-warning storage-warning" }, icon("alert"), data.storage_warning));
     }
-    setText(summary, `${installed.length} of ${data.models.length} installed · ${fmtBytes(used)} used · ${fmtBytes(data.disk_free)} free in ${data.models_dir}`);
+    setText(summary, `${installed.length + lmReady.length} of ${data.models.length + llm.models.length} ready · ${fmtBytes(used)} used · ${fmtBytes(data.disk_free)} free in ${data.models_dir}`);
     once(notices, JSON.stringify([sys.gpu.cuda_12_8_ok, sys.gpu.driver, data.recipe_problems, data.worker.last_crash]), () => {
       const crash = crashNotice(data.worker, refresh);
       if (crash) notices.append(crash);
@@ -332,23 +340,27 @@ export async function mount(root) {
         notices.append(h("div", { class: "notice notice-danger" }, icon("error"), `Recipe ${file} was skipped: ${errs.join("; ")}`));
       }
     });
+    banner.update(llm.engine);
     // Drop cards for models that no longer exist (e.g. an imported model that was removed).
-    const ids = new Set(data.models.map((m) => m.id));
+    const ids = new Set([...data.models.map((m) => m.id), ...llm.models.map((m) => `lm:${m.id}`)]);
     for (const [id, c] of cards) if (!ids.has(id)) { c.el.remove(); cards.delete(id); }
-    // Order: placeholders last; then built-in before imported; otherwise as listed.
+    // Order: language models, then built-in before imported image/video models, placeholders last.
     const rank = (m) => (m.status === "placeholder" ? 2 : m.source === "user" ? 1 : 0);
-    const ordered = [...data.models].sort((a, b) => rank(a) - rank(b));
-    for (const m of ordered) {
-      let c = cards.get(m.id);
-      if (!c) { c = ModelCard(m, ctx); cards.set(m.id, c); }
+    const entries = [...llm.models.map((m) => ({ key: `lm:${m.id}`, m, lm: true })),
+      ...[...data.models].sort((a, b) => rank(a) - rank(b)).map((m) => ({ key: m.id, m }))];
+    for (const { key, m, lm } of entries) {
+      let c = cards.get(key);
+      if (!c) { c = lm ? LlmCard(m, ctx) : ModelCard(m, ctx); cards.set(key, c); }
       c.update(m);
     }
     // Only touch the DOM order if it actually differs (moving every card each poll makes the page jump).
-    const want = ordered.map((m) => cards.get(m.id).el);
+    const want = entries.map((e) => cards.get(e.key).el);
     if (want.some((el, i) => grid.children[i] !== el) || grid.children.length !== want.length) grid.append(...want);
     applyFilter();
     const moving = ["loading", "generating", "unloading"].includes(data.worker.state);
-    schedule(moving || data.models.some((m) => m.state === "installing" || m.state === "uninstalling") ? 1000 : 5000);
+    const busy = moving || data.models.some((m) => m.state === "installing" || m.state === "uninstalling") || llm.models.some((m) => m.state === "downloading")
+      || (llm.engine.job && llm.engine.job.status === "running") || llm.server.state === "loading";
+    schedule(busy ? 1000 : 5000);
   }
 
   function schedule(ms) { clearTimeout(timer); if (alive) timer = setTimeout(refresh, ms); }
@@ -356,5 +368,6 @@ export async function mount(root) {
   document.addEventListener("reel:wake", onWake);
   drawFilter();
   await refresh();
+  if (q.get("add") === "1") openAdd();
   return { unmount() { alive = false; clearTimeout(timer); document.removeEventListener("reel:wake", onWake); } };
 }

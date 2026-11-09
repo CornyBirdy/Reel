@@ -19,6 +19,7 @@ LOGS_DIR = DATA_DIR / "logs"       # one log per model process: data/logs/<times
 SETTINGS_FILE = DATA_DIR / "settings.json"
 MODEL_SETTINGS_FILE = DATA_DIR / "model_settings.json"   # per-model load and generation defaults (Library > Settings)
 DEFAULT_MODELS_DIR = DATA_DIR / "models"
+ENGINE_DIR = DATA_DIR / "engine" / "llama.cpp"  # the language-model runtime (llama-server), downloaded on demand
 
 _lock = threading.Lock()
 
@@ -31,6 +32,8 @@ DEFAULTS = {
     "idle_unload_minutes": 30,   # unload the loaded model after this long without use; 0 = never
     "download_limit_mode": "auto",   # auto (slow down while the PC is busy) | manual | off
     "download_limit_mbps": 0,        # megabytes per second; a ceiling in auto, the limit in manual; 0 = none
+    "llm_gpu": None,       # language models: None = same card as images | "all" | "cpu" | an NVIDIA GPU uuid
+    "llm_idle_minutes": 60,  # unload an idle language model after this many minutes (0 = never)
 }
 
 
@@ -58,6 +61,12 @@ def save_settings(**changes) -> dict:
 def models_root() -> Path:
     custom = load_settings().get("models_dir")
     return Path(custom) if custom else DEFAULT_MODELS_DIR
+
+
+def llm_root() -> Path:
+    """Language models live beside the image/video models. The leading underscore keeps this folder
+    from ever being mistaken for a model id (ids start with a letter or digit)."""
+    return models_root() / "_language"
 
 
 def ensure_dirs() -> None:

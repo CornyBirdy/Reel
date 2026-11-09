@@ -82,12 +82,16 @@ def _query_gpus() -> dict:
     return {"gpus": gpus, "driver": driver, "cuda_12_8_ok": ok}
 
 
-def gpu_env() -> dict:
-    """Environment that pins a model process to the chosen GPU (it then sees exactly one, as cuda:0)."""
-    chosen = gpu_info().get("selected_gpu")
-    if not chosen:
+def gpu_env(uuid: str | None = None) -> dict:
+    """Environment that pins a model process to one GPU (it then sees exactly one, as cuda:0).
+
+    Without `uuid` that is the GPU chosen in Settings (or the one with the most VRAM)."""
+    if uuid is None:
+        chosen = gpu_info().get("selected_gpu")
+        uuid = chosen["uuid"] if chosen else None
+    if not uuid:
         return {}
-    return {"CUDA_VISIBLE_DEVICES": chosen["uuid"], "CUDA_DEVICE_ORDER": "PCI_BUS_ID"}
+    return {"CUDA_VISIBLE_DEVICES": uuid, "CUDA_DEVICE_ORDER": "PCI_BUS_ID"}
 
 
 def ram_info() -> dict:

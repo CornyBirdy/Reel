@@ -13,7 +13,8 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import __version__, api_generate, api_hf, api_models, api_settings, api_update, api_worker, config, generation, system, workers  # noqa: F401
+from . import __version__, api_generate, api_hf, api_llm, api_models, api_settings, api_update, api_worker, config, generation, system, workers  # noqa: F401
+from .llm_server import llm
 
 
 @asynccontextmanager
@@ -22,6 +23,7 @@ async def lifespan(_: FastAPI):
     workers.manager.start_background()
     yield
     workers.manager.shutdown()      # a loaded model never outlives Reel
+    llm.unload()     # never leave a model process holding VRAM behind
 
 
 app = FastAPI(title="Reel", version=__version__, lifespan=lifespan)
@@ -31,6 +33,9 @@ app.include_router(api_generate.router)
 app.include_router(api_worker.router)
 app.include_router(api_hf.router)
 app.include_router(api_update.router)
+app.include_router(api_llm.router)
+app.include_router(api_llm.chat_router)
+app.include_router(api_llm.openai_router)
 
 
 @app.get("/api/health")

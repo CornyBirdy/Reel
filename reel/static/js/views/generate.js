@@ -1,4 +1,4 @@
-import { h, icon, clear, toast, fmtDuration, fmtDate, progressBar, statusBadge, viewLog, tip, menuButton, lazyVideo, tagChips } from "../ui.js";
+import { h, icon, clear, toast, fmtDuration, fmtDate, progressBar, statusBadge, viewLog, tip, menuButton, lazyVideo, tagChips, pageHead } from "../ui.js";
 import { api } from "../api.js";
 import { KEEPS_MEMORY, crashNotice, holdsText, holdsTitle, idleText, loadButton, loadingNote, logButton, stateChip, stateOf, watchWorker } from "../worker.js";
 import { ATTN_LABEL, OFFLOAD_HINT, OFFLOAD_LABEL, QUANT_LABEL, describeCeiling, dims, resolutionChoices, snapFrames } from "../limits.js";
@@ -93,7 +93,7 @@ export async function mount(root) {
   const outputCard = h("section", { class: "card stack-16 gen-output" }, progressEl, viewerEl);
   const historyEl = h("section", { class: "stack-16" });
   root.append(h("div", { class: "view" },
-    h("div", { class: "page-head" }, h("h1", {}, "Generate")),
+    pageHead("Generate", "Describe what you want, pick an installed model, and render it on this PC."),
     h("div", { class: "gen-layout" }, formCard, outputCard), historyEl));
 
   // ---- data ----
@@ -147,6 +147,7 @@ export async function mount(root) {
     model = list.find((m) => m.id === wantedModel) || list[0];
 
     f.worker = h("div", { class: "stack-8 worker-row" });
+    f.llmNote = h("div", { class: "stack-8" });
     f.inputs = h("div", { class: "stack-12 input-section", hidden: true });
     f.model = h("select", { id: "g-model", class: "select", onchange: () => { model = modelById(f.model.value); applyModel(model, true); buildInputs(); persist(); renderWorker(); } },
       list.map((m) => h("option", { value: m.id, selected: m.id === model.id },
@@ -188,6 +189,7 @@ export async function mount(root) {
       field("Model", f.model, null, "g-model"),
       f.tags,
       f.worker,
+      f.llmNote,
       f.inputs,
       h("div", { class: "field" },
         h("div", { class: "label-row" }, h("label", { for: "g-prompt" }, "Prompt"),
@@ -253,6 +255,18 @@ export async function mount(root) {
       else if (k === "count") fillCount(v);
     }
     syncCustom(); syncFrames(); validate(); refreshEstimate(); renderWorker();
+    checkLlm();
+  }
+
+  // A loaded language model keeps its memory until it is ejected, which can starve image generation.
+  async function checkLlm() {
+    if (!f.llmNote || !alive) return;
+    let st; try { st = (await api.get("/api/llm/status")).server; } catch { return; }
+    clear(f.llmNote);
+    if (st.state !== "ready") return;
+    f.llmNote.append(h("div", { class: "notice notice-info" }, icon("info"),
+      h("div", { class: "row-between grow" }, h("span", {}, `${st.model_name} (chat) is loaded in memory. If generation runs out of VRAM, eject it first.`),
+        h("button", { class: "btn", type: "button", onclick: async () => { await api.post("/api/llm/unload").catch(() => {}); document.dispatchEvent(new CustomEvent("reel:llm-state", { detail: { state: "idle" } })); checkLlm(); } }, icon("eject"), "Eject"))));
   }
 
   // The loaded model: state chip, what it holds, Load / Unload, and a heads-up when the form's memory options would force a reload.
@@ -961,7 +975,7 @@ export async function mount(root) {
   if (activeRunning()) poll();
   const onKey = (e) => { if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && alive && f.go && !f.go.hidden && !f.go.disabled) { e.preventDefault(); start(); } };
   document.addEventListener("keydown", onKey);
-  const onWake = () => { if (alive && activeRunning()) poll(); else if (alive) renderOutput(); };
+  const onWake = () => { if (alive && activeRunning()) poll(); else if (alive) renderOutput(); if (alive) checkLlm(); };
   document.addEventListener("reel:wake", onWake);
   return { unmount() { alive = false; clearTimeout(timer); clearTimeout(estTimer); if (watcher) watcher.stop(); document.removeEventListener("reel:wake", onWake); document.removeEventListener("keydown", onKey); } };
 }

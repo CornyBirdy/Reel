@@ -99,6 +99,21 @@ input[type="range"] { width: 100%; accent-color: var(--accent); min-height: var(
   background: var(--accent);
 }
 
+/* Tabs: sections of one page. Selected = accent-soft + accent-text + 2px indicator + heavier weight. */
+.tabs { display: flex; gap: var(--sp-4); border-bottom: var(--border-w) solid var(--hairline); overflow-x: auto; }
+.tabs button {
+  position: relative; display: inline-flex; align-items: center; gap: var(--sp-8);
+  height: calc(var(--control-h) + var(--sp-8)); padding: 0 var(--sp-16);
+  border: 0; border-radius: var(--radius-sm) var(--radius-sm) 0 0; background: transparent; color: var(--ink);
+  font: inherit; font-weight: var(--weight-medium); white-space: nowrap; cursor: pointer;
+}
+.tabs button:hover { background: var(--hover-bg); }
+.tabs button[aria-selected="true"] { background: var(--accent-soft); color: var(--accent-text); font-weight: var(--weight-semibold); }
+.tabs button[aria-selected="true"]::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: calc(var(--border-w) * -1); height: var(--indicator-w); background: var(--accent);
+}
+.tabs svg { width: var(--sp-16); height: var(--sp-16); flex: none; }
+
 /* Segmented control (theme toggle, option groups) */
 .seg {
   display: inline-flex;

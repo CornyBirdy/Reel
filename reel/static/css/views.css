@@ -13,6 +13,9 @@
 }
 .gpu-chip svg { width: var(--sp-16); height: var(--sp-16); flex: none; margin-top: 1px; }
 .gpu-chip strong { display: block; color: var(--ink); font-weight: var(--weight-semibold); }
+.llm-chip { align-items: center; }
+.llm-chip strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.llm-chip .grow { min-width: 0; }
 
 .sg-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: var(--sp-12); }
 .sg-swatch { display: flex; flex-direction: column; gap: var(--sp-4); font-size: var(--text-xs); }
@@ -55,10 +58,12 @@
 
 /* -- Generate --------------------------------------------------------------- */
 .gen-layout { display: grid; grid-template-columns: minmax(340px, 5fr) minmax(0, 6fr); gap: var(--sp-16); align-items: start; }
+@media (min-width: 1001px) { .gen-output { position: sticky; top: var(--sp-16); } }
 @media (max-width: 1000px) { .gen-layout { grid-template-columns: minmax(0, 1fr); } }
 .grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-12); }
 .grid-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--sp-12); }
 @media (max-width: 520px) { .grid-2, .grid-3 { grid-template-columns: minmax(0, 1fr); } }
+
 .memory { border-top: var(--border-w) solid var(--hairline); padding-top: var(--sp-8); }
 
 .player { width: 100%; display: block; border-radius: var(--radius-md); background: var(--surface-sunken); max-height: 60vh; }
@@ -211,3 +216,18 @@ button.batch-thumb:hover { background: var(--hover-bg); }
 .est-more > summary { font-weight: var(--weight-regular); color: var(--ink-muted); font-size: var(--text-sm); min-height: calc(var(--control-h) - var(--sp-8)); }
 .mem-est { padding: var(--sp-8) var(--sp-12); }
 .clamp-3 { display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+
+/* -- Add model: file picker for GGUF repos ---------------------------------------- */
+.hf-files { display: grid; gap: var(--sp-8); }
+.hf-file {
+  display: flex; align-items: center; gap: var(--sp-12); width: 100%; text-align: left; cursor: pointer;
+  padding: var(--sp-8) var(--sp-12); font: inherit; color: var(--ink);
+}
+.hf-file:disabled { opacity: 0.6; cursor: not-allowed; }
+.hf-file-main { display: flex; flex-direction: column; min-width: 0; }
+.hf-size { font-variant-numeric: tabular-nums; min-width: 4.5em; text-align: right; }
+.engine-banner .progress { width: 100%; }
+.api-box { padding-top: var(--sp-16); border-top: var(--border-w) solid var(--hairline); }
+.api-url { padding: var(--sp-8) var(--sp-12); border-radius: var(--radius-sm); background: var(--surface-sunken); border: var(--border-w) solid var(--hairline); overflow-wrap: anywhere; }
+
+.view > .seg { align-self: flex-start; }
