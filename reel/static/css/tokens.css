@@ -1,96 +1,261 @@
-/* ==========================================================================
-   Rack Suite design tokens - Reel
-   --------------------------------------------------------------------------
-   This is the ONLY file that may contain raw colour values. Every other
-   stylesheet and script styles through the variables defined here.
+/* Rack Glass tokens. Every colour, radius, space and type size the app uses comes from here.
+   Theme: dark by default, light when the OS asks for it, or when <html data-theme="light|dark"> forces one.
+   Look: soft colour ground, frosted window and cards, big round shapes, one accent used as a gentle gradient on filled
+   controls only. Settings chosen by the owner: glass 100%, background gradient 50%, button gradient 15%, no solid blocks. */
 
-   Theming: `color-scheme: light dark` follows the OS. The manual toggle sets
-   data-theme="light" | "dark" on <html> (absent = follow OS). Each colour is a
-   single light-dark(<light>, <dark>) declaration, so there is one source of
-   truth per token.
-   ========================================================================== */
+@font-face { font-family: "Plus Jakarta Sans"; font-style: normal; font-weight: 200 800; font-display: swap;
+  src: url("../fonts/plus-jakarta-sans-latin-wght-normal.woff2") format("woff2"); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: "Plus Jakarta Sans"; font-style: normal; font-weight: 200 800; font-display: swap;
+  src: url("../fonts/plus-jakarta-sans-latin-ext-wght-normal.woff2") format("woff2"); unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+@font-face { font-family: "JetBrains Mono"; font-style: normal; font-weight: 400; font-display: swap;
+  src: url("../fonts/jetbrains-mono-latin-400-normal.woff2") format("woff2"); }
+@font-face { font-family: "JetBrains Mono"; font-style: normal; font-weight: 500; font-display: swap;
+  src: url("../fonts/jetbrains-mono-latin-500-normal.woff2") format("woff2"); }
 
-:root { color-scheme: light dark; }
-:root[data-theme="light"] { color-scheme: light; }
-:root[data-theme="dark"] { color-scheme: dark; }
+/* ---- identity: the only per-app value (accent hue) */
+:root { --h: 265; }
 
-/* -- Neutrals ------------------------------------------------------------ */
+/* ---- shape, space, type, motion (same in both themes) */
 :root {
-  --ground:          light-dark(#f6f8fc, #202124);
-  --surface-sunken:  light-dark(#eef1f7, #1b1c1f);
-  --surface:         light-dark(#ffffff, #292a2d);
-  --surface-raised:  light-dark(#f1f4f9, #303134);
-  --surface-track:   light-dark(#e1e5ec, #3c4043);
-  --hairline:        light-dark(#e1e4ea, #3c4043);
-  --border-control:  light-dark(#7a8088, #9aa0a6);
-  --ink:             light-dark(#1f2329, #e8eaed);
-  --ink-muted:       light-dark(#5f6368, #a9aeb4);
+  --r-xs: 6px;
+  --r-sm: 12px;
+  --r-md: 18px;
+  --r-lg: 26px;
+  --r-xl: 36px;
+  --r-pill: 999px;
+
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 20px;
+  --s-6: 24px;
+  --s-7: 32px;
+  --s-8: 48px;
+
+  --control-h: 36px;
+
+  --font: "Plus Jakarta Sans", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", "Cascadia Mono", Consolas, monospace;
+
+  --blur: 22px;
+  --dur-1: 120ms; /* hover, press, colour changes */
+  --dur-2: 200ms; /* things appearing: views, sections, notes */
+  --dur-3: 260ms; /* sheets and rows moving */
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+@media (pointer: coarse) {
+  :root { --control-h: 44px; }
 }
 
-/* -- Status: shared across the whole suite, never changes with the accent -- */
+/* ---- dark (default) */
 :root {
-  --success:       light-dark(#137333, #81c995);
-  --success-soft:  light-dark(rgba(19, 115, 51, 0.10),  rgba(129, 201, 149, 0.14));
-  --warning:       light-dark(#8f5800, #fdd663);
-  --warning-soft:  light-dark(rgba(143, 88, 0, 0.10),   rgba(253, 214, 99, 0.14));
-  --danger:        light-dark(#c5221f, #f28b82);
-  --danger-soft:   light-dark(rgba(197, 34, 31, 0.10),  rgba(242, 139, 130, 0.14));
-  --info:          light-dark(#1967d2, #8ab4f8);
-  --info-soft:     light-dark(rgba(25, 103, 210, 0.10), rgba(138, 180, 248, 0.14));
+  color-scheme: dark;
+  --ground-base: oklch(0.15 0.035 var(--h));
+  --ground-1: oklch(0.235 0.065 var(--h));
+  --ground-2: oklch(0.205 0.06 calc(var(--h) + 30));
+  --ground-3: oklch(0.205 0.06 calc(var(--h) - 25));
+  --ink: oklch(0.96 0.03 var(--h));
+  --ink-muted: oklch(0.76 0.03 var(--h));
+  --hair: oklch(0.96 0.03 var(--h) / 0.1);
+  --glass: oklch(0.24 0.02 var(--h) / 0.5);   /* the window / big panels */
+  --card: oklch(0.24 0.015 var(--h) / 0.62);  /* cards and panels */
+  --field: oklch(0.24 0.02 var(--h) / 0.4);   /* inputs, secondary buttons, raised bits */
+  --float: oklch(0.2 0.02 var(--h) / 0.72);   /* bars that float over content */
+  --solid: oklch(0.22 0.025 var(--h));        /* menus, dialogs, sheets: never see-through */
+  --sunken: oklch(0.12 0.03 var(--h) / 0.45);
+  --edge: oklch(1 0 0 / 0.12);
+  --a: oklch(0.92 0.01 var(--h));
+  --a-2: oklch(0.92 0.01 var(--h));
+  --on-a: oklch(0.2 0.03 270);
+  --accent-text-c: oklch(0.92 0.01 var(--h));
+  --shadow-c: oklch(0 0 0 / 0.5);
+  --good: oklch(0.74 0.15 150); --good-ink: oklch(0.84 0.14 150);
+  --warn: oklch(0.8 0.14 80);   --warn-ink: oklch(0.86 0.12 80);
+  --bad: oklch(0.7 0.19 25);    --bad-ink: oklch(0.82 0.13 25);
+  --info-ink: oklch(0.8 0.12 258);
+  --red: oklch(0.7 0.19 25);    --blue: oklch(0.7 0.16 258);
+  --track: oklch(0.96 0.03 var(--h) / 0.14);
+  --border-ctl: oklch(0.7 0.03 var(--h));
 }
 
-/* ==========================================================================
-   ACCENT - neutral (all-rounder apps: Rack, MC Hoster, Shelf, Reel)
-   To brand an app, replace ONLY the values in this block. Nothing else in the
-   suite references a specific accent colour.
-   ========================================================================== */
-:root {
-  --accent:        light-dark(#1f2329, #e8eaed);
-  --on-accent:     light-dark(#ffffff, #202124);
-  --accent-text:   light-dark(#1f2329, #e8eaed);
-  --accent-soft:   light-dark(rgba(31, 35, 41, 0.08), rgba(232, 234, 237, 0.12));
-  --accent-2:      light-dark(#5f6368, #9aa0a6);
-  --accent-3:      light-dark(#8a9098, #6b7075);
+/* ---- light */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
+    --ground-base: oklch(0.95 0.035 var(--h));
+    --ground-1: oklch(0.915 0.05 var(--h));
+    --ground-2: oklch(0.895 0.055 calc(var(--h) + 30));
+    --ground-3: oklch(0.895 0.055 calc(var(--h) - 25));
+    --ink: oklch(0.22 0.03 var(--h));
+    --ink-muted: oklch(0.46 0.03 var(--h));
+    --hair: oklch(0.22 0.03 var(--h) / 0.1);
+    --glass: oklch(1 0.02 var(--h) / 0.58);
+    --card: oklch(1 0.015 var(--h) / 0.78);
+    --field: oklch(1 0.02 var(--h) / 0.5);
+    --float: oklch(1 0.02 var(--h) / 0.72);
+    --solid: oklch(0.995 0.008 var(--h));
+    --sunken: oklch(0.22 0.03 var(--h) / 0.06);
+    --edge: oklch(1 0 0 / 0.85);
+    --a: oklch(0.28 0.02 var(--h));
+    --a-2: oklch(0.28 0.02 var(--h));
+    --on-a: oklch(1 0 0);
+    --accent-text-c: oklch(0.28 0.02 var(--h));
+    --shadow-c: oklch(0.3 0.08 265 / 0.16);
+    --good: oklch(0.6 0.15 150);  --good-ink: oklch(0.4 0.12 150);
+    --warn: oklch(0.72 0.15 75);  --warn-ink: oklch(0.44 0.1 70);
+    --bad: oklch(0.6 0.2 25);     --bad-ink: oklch(0.46 0.17 25);
+    --info-ink: oklch(0.48 0.17 258);
+    --red: oklch(0.58 0.21 25);   --blue: oklch(0.52 0.2 258);
+    --track: oklch(0.22 0.03 var(--h) / 0.12);
+    --border-ctl: oklch(0.5 0.03 var(--h));
+  }
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+  --ground-base: oklch(0.95 0.035 var(--h));
+  --ground-1: oklch(0.915 0.05 var(--h));
+  --ground-2: oklch(0.895 0.055 calc(var(--h) + 30));
+  --ground-3: oklch(0.895 0.055 calc(var(--h) - 25));
+  --ink: oklch(0.22 0.03 var(--h));
+  --ink-muted: oklch(0.46 0.03 var(--h));
+  --hair: oklch(0.22 0.03 var(--h) / 0.1);
+  --glass: oklch(1 0.02 var(--h) / 0.58);
+  --card: oklch(1 0.015 var(--h) / 0.78);
+  --field: oklch(1 0.02 var(--h) / 0.5);
+  --float: oklch(1 0.02 var(--h) / 0.72);
+  --solid: oklch(0.995 0.008 var(--h));
+  --sunken: oklch(0.22 0.03 var(--h) / 0.06);
+  --edge: oklch(1 0 0 / 0.85);
+  --a: oklch(0.28 0.02 var(--h));
+  --a-2: oklch(0.28 0.02 var(--h));
+  --on-a: oklch(1 0 0);
+  --accent-text-c: oklch(0.28 0.02 var(--h));
+  --shadow-c: oklch(0.3 0.08 265 / 0.16);
+  --good: oklch(0.6 0.15 150);  --good-ink: oklch(0.4 0.12 150);
+  --warn: oklch(0.72 0.15 75);  --warn-ink: oklch(0.44 0.1 70);
+  --bad: oklch(0.6 0.2 25);     --bad-ink: oklch(0.46 0.17 25);
+  --info-ink: oklch(0.48 0.17 258);
+  --red: oklch(0.58 0.21 25);   --blue: oklch(0.52 0.2 258);
+  --track: oklch(0.22 0.03 var(--h) / 0.12);
+  --border-ctl: oklch(0.5 0.03 var(--h));
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ground-base: oklch(0.15 0.035 var(--h));
+  --ground-1: oklch(0.235 0.065 var(--h));
+  --ground-2: oklch(0.205 0.06 calc(var(--h) + 30));
+  --ground-3: oklch(0.205 0.06 calc(var(--h) - 25));
+  --ink: oklch(0.96 0.03 var(--h));
+  --ink-muted: oklch(0.76 0.03 var(--h));
+  --hair: oklch(0.96 0.03 var(--h) / 0.1);
+  --glass: oklch(0.24 0.02 var(--h) / 0.5);
+  --card: oklch(0.24 0.015 var(--h) / 0.62);
+  --field: oklch(0.24 0.02 var(--h) / 0.4);
+  --float: oklch(0.2 0.02 var(--h) / 0.72);
+  --solid: oklch(0.22 0.025 var(--h));
+  --sunken: oklch(0.12 0.03 var(--h) / 0.45);
+  --edge: oklch(1 0 0 / 0.12);
+  --a: oklch(0.92 0.01 var(--h));
+  --a-2: oklch(0.92 0.01 var(--h));
+  --on-a: oklch(0.2 0.03 270);
+  --accent-text-c: oklch(0.92 0.01 var(--h));
+  --shadow-c: oklch(0 0 0 / 0.5);
+  --good: oklch(0.74 0.15 150); --good-ink: oklch(0.84 0.14 150);
+  --warn: oklch(0.8 0.14 80);   --warn-ink: oklch(0.86 0.12 80);
+  --bad: oklch(0.7 0.19 25);    --bad-ink: oklch(0.82 0.13 25);
+  --info-ink: oklch(0.8 0.12 258);
+  --red: oklch(0.7 0.19 25);    --blue: oklch(0.7 0.16 258);
+  --track: oklch(0.96 0.03 var(--h) / 0.14);
+  --border-ctl: oklch(0.7 0.03 var(--h));
+}
 
-  /* Primary button states: subtle tints of the accent toward the ground. */
+/* ---- derived (same in both themes) */
+:root {
+  --ground-mesh:
+    radial-gradient(60% 70% at 8% 0%, var(--ground-1) 0%, transparent 70%),
+    radial-gradient(55% 60% at 100% 20%, var(--ground-2) 0%, transparent 70%),
+    radial-gradient(60% 60% at 60% 110%, var(--ground-3) 0%, transparent 70%),
+    var(--ground-base);
+  --accent-fill: linear-gradient(135deg, var(--a), var(--a-2));
+  --a-soft: color-mix(in oklch, var(--a) 16%, transparent);
+  --glow: 0 10px 24px -10px color-mix(in oklch, var(--a) 15%, transparent);
+  --glow-lg: 0 16px 36px -16px color-mix(in oklch, var(--a) 15%, transparent);
+  --shadow-window: 0 18px 50px -14px var(--shadow-c), 0 2px 6px -2px var(--shadow-c);
+  --shadow-card: 0 6px 24px -12px var(--shadow-c);
+  --shadow-pop: 0 18px 44px -12px var(--shadow-c), 0 2px 8px -2px var(--shadow-c);
+}
+
+/* ---- the Rack Suite names the app's CSS already uses, now backed by the glass tokens */
+:root {
+  --ground: var(--ground-base);
+  --surface: var(--card);
+  --surface-raised: var(--field);
+  --surface-sunken: var(--sunken);
+  --surface-track: var(--track);
+  --hairline: var(--hair);
+  --border-control: var(--border-ctl);
+  --accent: var(--a);
+  --on-accent: var(--on-a);
+  --accent-text: var(--accent-text-c);
+  --accent-soft: var(--a-soft);
+  --success: var(--good-ink);
+  --warning: var(--warn-ink);
+  --danger: var(--bad-ink);
+  --info: var(--info-ink);
+  --success-soft: color-mix(in oklch, var(--good) 20%, transparent);
+  --warning-soft: color-mix(in oklch, var(--warn) 24%, transparent);
+  --danger-soft: color-mix(in oklch, var(--bad) 18%, transparent);
+  --info-soft: color-mix(in oklch, var(--info-ink) 18%, transparent);
+  --soft-a: 18%;
+  --tint-hover: 8%;
+  --tint-press: 14%;
+}
+
+/* ---- people who ask for less transparency, or browsers without blur, get solid surfaces */
+@media (prefers-reduced-transparency: reduce) {
+  :root { --blur: 0px; --glass: var(--solid); --card: var(--solid); --field: var(--solid); --float: var(--solid); }
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  :root { --glass: var(--solid); --card: var(--solid); --field: var(--solid); --float: var(--solid); }
+}
+
+/* ---- Reel: secondary accents (neutral greys) */
+:root { --accent-2: #9aa0a6; --accent-3: #6b7075; }
+@media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) { --accent-2: #5f6368; --accent-3: #8a9098; } }
+:root[data-theme="light"] { --accent-2: #5f6368; --accent-3: #8a9098; }
+
+/* ---- the names Reel's own CSS uses, now backed by the glass tokens */
+:root {
+  /* primary button states: subtle tints of the accent toward the ground */
   --accent-hover:  color-mix(in srgb, var(--accent) 88%, var(--ground));
   --accent-active: color-mix(in srgb, var(--accent) 76%, var(--ground));
-}
 
-/* -- Derived interaction tints (neutral, accent-independent) -------------- */
-:root {
+  /* derived interaction tints (neutral, accent-independent) */
   --hover-bg:             var(--surface-raised);
   --btn-secondary-hover:  color-mix(in srgb, var(--surface-raised) 92%, var(--ink));
   --btn-secondary-active: color-mix(in srgb, var(--surface-raised) 84%, var(--ink));
-  --danger-soft-hover:    color-mix(in srgb, var(--danger) 18%, transparent);
-  --danger-soft-active:   color-mix(in srgb, var(--danger) 26%, transparent);
+  --danger-soft-hover:    color-mix(in srgb, var(--bad) 18%, transparent);
+  --danger-soft-active:   color-mix(in srgb, var(--bad) 26%, transparent);
   --focus-ring:           var(--accent);
-  --scrim:                light-dark(rgba(31, 35, 41, 0.40), rgba(0, 0, 0, 0.60));
-  --shadow-pop:           0 4px 16px light-dark(rgba(31, 35, 41, 0.12), rgba(0, 0, 0, 0.40));
-}
+  --scrim:                oklch(0.1 0.03 var(--h) / 0.55);
 
-/* -- Typography ----------------------------------------------------------- */
-:root {
-  --font-sans: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
-  --font-mono: "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
-
+  /* typography */
+  --font-sans: var(--font);
+  --font-mono: var(--mono);
   --text-xs:  12px;
   --text-sm:  13px;
   --text-md:  14px;
   --text-lg:  16px;
   --text-xl:  20px;
   --text-2xl: 28px;
-
   --weight-regular:  400;
   --weight-medium:   500;
   --weight-semibold: 600;
-
   --leading-tight: 1.25;
   --leading-body:  1.5;
-}
 
-/* -- Spacing, shape, sizing ---------------------------------------------- */
-:root {
+  /* spacing, shape, sizing */
   --sp-4:  4px;
   --sp-8:  8px;
   --sp-12: 12px;
@@ -99,25 +264,15 @@
   --sp-24: 24px;
   --sp-32: 32px;
   --sp-48: 48px;
-
-  --radius-xs: 3px;
-  --radius-sm: 6px;
-  --radius-md: 10px;
-  --radius-lg: 16px;
-
-  --control-h:       32px;
+  --radius-xs: var(--r-xs);
+  --radius-sm: var(--r-sm);
+  --radius-md: var(--r-md);
+  --radius-lg: var(--r-lg);
   --control-h-touch: 44px;
-
   --border-w:    1px;
   --indicator-w: 2px;
   --sidebar-w:   232px;
   --content-max: 1180px;
-
   --dur-fast: 120ms;
-  --ease: cubic-bezier(0.2, 0, 0, 1);
 }
-
-/* Touch devices get the 44px control height automatically. */
-@media (pointer: coarse) {
-  :root { --control-h: var(--control-h-touch); }
-}
+@media (pointer: coarse) { :root { --control-h: var(--control-h-touch); } }

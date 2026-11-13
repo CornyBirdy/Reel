@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+**New look: Rack Glass**
+- Reel now sits on a soft blue-grey colour background with a frosted sidebar and cards, much rounder corners and pill-shaped buttons. The main button keeps Reel's neutral black-and-white accent, with a soft glow. Text is now Plus Jakarta Sans (code and numbers stay in a code font), and both fonts ship with Reel so it needs no internet to look right. Light, dark and Auto all follow the same style, and dialogs, menus and notifications stay solid so they are always easy to read.
+
 **Chat (new)**
 - Chat with local language models, in the spirit of LM Studio. Find GGUF models on Hugging Face from the Library (search or paste a link; file sizes and "fits your GPU" shown, a 4-bit file recommended), download with resume, and chat with saved conversations.
 - The chat engine (llama.cpp) installs with one click, picking the right build for your graphics card (CUDA 13 / 12 or Vulkan).

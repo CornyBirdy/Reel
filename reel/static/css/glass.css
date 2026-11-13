@@ -1,0 +1,29 @@
+/* Rack Glass layer: ground, frosted sidebar and cards, pill buttons. Colours, radii and blur come from tokens.css. */
+body { background: var(--ground-base); }
+body::before { content: ""; position: fixed; inset: 0; z-index: -1; background: var(--ground-mesh); pointer-events: none; }
+
+.sidebar {
+  background: var(--glass); border-right: var(--border-w) solid var(--edge);
+  backdrop-filter: blur(var(--blur)) saturate(1.4); -webkit-backdrop-filter: blur(var(--blur)) saturate(1.4);
+}
+.card {
+  background: var(--card); border-color: var(--edge); border-radius: var(--r-lg); box-shadow: var(--shadow-card);
+  backdrop-filter: blur(var(--blur)) saturate(1.4); -webkit-backdrop-filter: blur(var(--blur)) saturate(1.4);
+}
+.nav-item { border-radius: var(--r-pill); }
+
+/* buttons are pills; the one main action uses the accent gradient */
+.btn { border-radius: var(--r-pill); background: var(--field); border-color: var(--hair); }
+.btn:hover:not(:disabled) { background: var(--card); }
+.btn-ghost { background: transparent; border-color: transparent; }
+.btn-ghost:hover:not(:disabled) { background: var(--field); }
+.btn-primary { background: var(--accent-fill); border-color: transparent; box-shadow: var(--glow); }
+.btn-primary:hover:not(:disabled), .btn-primary:active:not(:disabled) { background: var(--accent-fill); border-color: transparent; filter: brightness(1.07); }
+.btn-danger { background: var(--danger-soft); }
+.tabs button { border-radius: var(--r-pill); }
+
+/* menus, dialogs and toasts are never see-through */
+.menu-list { background: var(--solid); border: 1px solid var(--edge); border-radius: var(--r-md); box-shadow: var(--shadow-pop); }
+.dialog { background: var(--solid); border: 1px solid var(--edge); border-radius: var(--r-xl); box-shadow: var(--shadow-pop); }
+dialog::backdrop { backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+.toast { background: var(--solid); border-radius: var(--r-md); box-shadow: var(--shadow-pop); }
