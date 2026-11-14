@@ -30,24 +30,24 @@ dialog::backdrop { backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px
 
 /* ================= Redesign: headings, raised selection, prompt as the hero, chat bubbles ================= */
 h1 { font-size: 30px; letter-spacing: -0.025em; }
-.nav-item[aria-current="page"] { background: var(--card); color: var(--ink); box-shadow: 0 6px 18px -10px var(--shadow-c); }
+.nav-item[aria-current="page"] { background: var(--card); color: var(--ink); box-shadow: 0 0 0 1px var(--hair); }
 .nav-item[aria-current="page"]::before { display: none; }
 
 /* segmented control and tabs: the selected item is raised, there is no underline */
 .seg { padding: 4px; gap: 2px; border: 1px solid var(--hair); border-radius: var(--r-md); background: var(--float); overflow: visible; }
 .seg button { height: calc(var(--control-h) - 4px); border-radius: var(--r-sm); }
 .seg button + button { border-left: 0; }
-.seg button[aria-pressed="true"] { background: var(--card); color: var(--ink); box-shadow: 0 4px 14px -6px var(--shadow-c); }
+.seg button[aria-pressed="true"] { background: var(--card); color: var(--ink); box-shadow: 0 0 0 1px var(--hair); }
 .seg button[aria-pressed="true"]::after { display: none; }
 .tabs { border-bottom: 0; padding: 4px; gap: 2px; width: fit-content; max-width: 100%; background: var(--float); border: 1px solid var(--hair); border-radius: var(--r-md); }
 .tabs button { height: calc(var(--control-h) + 2px); border-radius: var(--r-sm); }
-.tabs button[aria-selected="true"] { background: var(--card); color: var(--ink); box-shadow: 0 4px 14px -6px var(--shadow-c); }
+.tabs button[aria-selected="true"] { background: var(--card); color: var(--ink); box-shadow: 0 0 0 1px var(--hair); }
 .tabs button[aria-selected="true"]::after { display: none; }
 
 /* Generate: the form is the hero, with a big prompt box */
 .gen-form {
-  border-radius: var(--r-xl); border-color: color-mix(in oklch, var(--a) 22%, var(--edge));
-  background: radial-gradient(90% 120% at 100% 0%, color-mix(in oklch, var(--a) 16%, transparent), transparent 62%), linear-gradient(150deg, color-mix(in oklch, var(--a) 7%, var(--card)), var(--card));
+  border-radius: var(--r-xl); border-color: var(--edge);
+  background: var(--card);
 }
 .gen-output { border-radius: var(--r-xl); }
 #g-prompt { font-size: 17px; line-height: 1.5; min-height: 132px; }
@@ -75,5 +75,10 @@ h1 { font-size: 30px; letter-spacing: -0.025em; }
 .dialog { animation: popS .42s var(--spring); }
 .toast { animation: popS .36s var(--spring); }
 .card { transition: border-color .15s, transform .2s var(--spring), box-shadow .2s; }
-.model-grid .card:hover { transform: translateY(-3px); box-shadow: var(--shadow-window); }
+.model-grid .card:hover { box-shadow: var(--shadow-window); }
 @media (prefers-reduced-motion: reduce) { .route.route-fwd, .route.route-back, .route .card, .dialog, .toast { animation: none !important; } .model-grid .card:hover { transform: none; } }
+
+/* ================= Flat: quiet chrome, one accent, no glass, glows or colour washes (unslop method) ================= */
+:root { --spring: cubic-bezier(0.2, 0.7, 0.2, 1); } /* one easing curve: nothing overshoots */
+*, *::before, *::after { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
+.model-grid .card:hover { transform: none; border-color: var(--border-ctl); } .nav-item[aria-current="page"] svg { transform: none; }

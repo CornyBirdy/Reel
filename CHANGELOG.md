@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **A flatter, quieter look.** The frosted glass, colour glows and gradients are gone. Surfaces are plain neutral greys (dark) or soft whites (light) in steps with thin outlines, the accent colour is used only for the main action and the current selection, buttons are a solid accent, and nothing bounces or lifts on hover any more. Layout, text and what each button does are unchanged.
 **Animations**
 - Pages now slide the way you are going: to a page further down the menu from the right, to one above from the left, and the cards on it arrive one after another. Buttons, tabs and menu items spring when pressed, model cards lift on hover, and dialogs and notifications spring in. Everything is off if your device asks for reduced motion.
 
