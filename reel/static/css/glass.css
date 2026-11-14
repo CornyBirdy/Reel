@@ -82,3 +82,16 @@ h1 { font-size: 30px; letter-spacing: -0.025em; }
 :root { --spring: cubic-bezier(0.2, 0.7, 0.2, 1); } /* one easing curve: nothing overshoots */
 *, *::before, *::after { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
 .model-grid .card:hover { transform: none; border-color: var(--border-ctl); } .nav-item[aria-current="page"] svg { transform: none; }
+
+/* ================= Flatkey look: near-black ground, sheened surfaces with no outlines, light type, pill controls ================= */
+:root { --sheen: linear-gradient(180deg, color-mix(in oklch, var(--ink) 4%, var(--card)), var(--card)); }
+body { font-feature-settings: "tnum" 1, "cv11" 1; }
+.card, .gen-form, .gen-output, .chat-composer, .dialog, .empty { background: var(--sheen); border-color: transparent; box-shadow: var(--shadow-card); }
+.btn, .sidebar, .menu-list, .toast { border-color: transparent; }
+input, select, textarea { background: var(--sunken); border-color: transparent; border-radius: var(--r-md); }
+.seg, .tabs { border-radius: 28px; background: var(--sunken); border-color: transparent; box-shadow: inset 0 1px 3px oklch(0 0 0 / .28); }
+.seg button, .tabs button { border-radius: 999px; }
+.seg button[aria-pressed="true"], .tabs button[aria-selected="true"] { background: var(--field); box-shadow: inset 0 1px 0 oklch(1 0 0 / .07), 0 1px 3px oklch(0 0 0 / .35); color: var(--ink); }
+.sidebar { border-color: transparent; }
+.nav-item[aria-current="page"] { background: var(--field); }
+.seg, .tabs { padding: 4px; gap: 2px; }
