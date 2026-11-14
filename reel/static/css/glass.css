@@ -10,20 +10,49 @@ body::before { content: ""; position: fixed; inset: 0; z-index: -1; background: 
   background: var(--card); border-color: var(--edge); border-radius: var(--r-lg); box-shadow: var(--shadow-card);
   backdrop-filter: blur(var(--blur)) saturate(1.4); -webkit-backdrop-filter: blur(var(--blur)) saturate(1.4);
 }
-.nav-item { border-radius: var(--r-pill); }
+.nav-item { border-radius: var(--r-md); }
 
 /* buttons are pills; the one main action uses the accent gradient */
-.btn { border-radius: var(--r-pill); background: var(--field); border-color: var(--hair); }
+.btn { border-radius: var(--r-btn); background: var(--field); border-color: var(--hair); }
 .btn:hover:not(:disabled) { background: var(--card); }
 .btn-ghost { background: transparent; border-color: transparent; }
 .btn-ghost:hover:not(:disabled) { background: var(--field); }
 .btn-primary { background: var(--accent-fill); border-color: transparent; box-shadow: var(--glow); }
 .btn-primary:hover:not(:disabled), .btn-primary:active:not(:disabled) { background: var(--accent-fill); border-color: transparent; filter: brightness(1.07); }
 .btn-danger { background: var(--danger-soft); }
-.tabs button { border-radius: var(--r-pill); }
+.tabs button { border-radius: var(--r-sm); }
 
 /* menus, dialogs and toasts are never see-through */
 .menu-list { background: var(--solid); border: 1px solid var(--edge); border-radius: var(--r-md); box-shadow: var(--shadow-pop); }
 .dialog { background: var(--solid); border: 1px solid var(--edge); border-radius: var(--r-xl); box-shadow: var(--shadow-pop); }
 dialog::backdrop { backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
 .toast { background: var(--solid); border-radius: var(--r-md); box-shadow: var(--shadow-pop); }
+
+/* ================= Redesign: headings, raised selection, prompt as the hero, chat bubbles ================= */
+h1 { font-size: 30px; letter-spacing: -0.025em; }
+.nav-item[aria-current="page"] { background: var(--card); color: var(--ink); box-shadow: 0 6px 18px -10px var(--shadow-c); }
+.nav-item[aria-current="page"]::before { display: none; }
+
+/* segmented control and tabs: the selected item is raised, there is no underline */
+.seg { padding: 4px; gap: 2px; border: 1px solid var(--hair); border-radius: var(--r-md); background: var(--float); overflow: visible; }
+.seg button { height: calc(var(--control-h) - 4px); border-radius: var(--r-sm); }
+.seg button + button { border-left: 0; }
+.seg button[aria-pressed="true"] { background: var(--card); color: var(--ink); box-shadow: 0 4px 14px -6px var(--shadow-c); }
+.seg button[aria-pressed="true"]::after { display: none; }
+.tabs { border-bottom: 0; padding: 4px; gap: 2px; width: fit-content; max-width: 100%; background: var(--float); border: 1px solid var(--hair); border-radius: var(--r-md); }
+.tabs button { height: calc(var(--control-h) + 2px); border-radius: var(--r-sm); }
+.tabs button[aria-selected="true"] { background: var(--card); color: var(--ink); box-shadow: 0 4px 14px -6px var(--shadow-c); }
+.tabs button[aria-selected="true"]::after { display: none; }
+
+/* Generate: the form is the hero, with a big prompt box */
+.gen-form {
+  border-radius: var(--r-xl); border-color: color-mix(in oklch, var(--a) 22%, var(--edge));
+  background: radial-gradient(90% 120% at 100% 0%, color-mix(in oklch, var(--a) 16%, transparent), transparent 62%), linear-gradient(150deg, color-mix(in oklch, var(--a) 7%, var(--card)), var(--card));
+}
+.gen-output { border-radius: var(--r-xl); }
+#g-prompt { font-size: 17px; line-height: 1.5; min-height: 132px; }
+.empty { border-radius: var(--r-lg); }
+
+/* chat: your messages are bubbles on the right, the composer floats */
+.msg-user .msg-body { align-self: flex-end; max-width: min(640px, 100%); background: var(--a-soft); border-radius: var(--r-lg) var(--r-lg) 3px var(--r-lg); }
+.chat-composer { border-radius: var(--r-lg); background: var(--field); border-color: var(--hair); box-shadow: var(--shadow-card); }

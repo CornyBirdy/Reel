@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+**Redesign**
+- Reel's pages have a new layout on top of the Rack Glass look. The tabs and option switches (Image, Video, Edit; Models, Hardware, App) are a row of buttons with a raised selected one instead of an underline. On Generate, the form is a large tinted card with a bigger prompt box. In Chat, your messages are bubbles on the right and the message box floats. Corners are softer everywhere: cards are less round and buttons are rounded rectangles instead of pills. Everything works the same as before.
+
 **New look: Rack Glass**
 - Reel now sits on a soft blue-grey colour background with a frosted sidebar and cards, much rounder corners and pill-shaped buttons. The main button keeps Reel's neutral black-and-white accent, with a soft glow. Text is now Plus Jakarta Sans (code and numbers stay in a code font), and both fonts ship with Reel so it needs no internet to look right. Light, dark and Auto all follow the same style, and dialogs, menus and notifications stay solid so they are always easy to read.
 
