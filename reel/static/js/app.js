@@ -24,8 +24,18 @@ function routeFromHash() {
 // A view that is kept alive is only hidden when you go elsewhere, so switching tabs does not rebuild the page and wait for the
 // server again (that wait was the blank screen). It is told to refresh when it comes back. A link with a query (for example
 // #/generate?model=...) mounts it afresh, because the view reads those at start-up.
+// A page slides in the way you are going: to a page further down the menu from the right, to one above from the left.
+let lastRoute = null;
+function playRoute(el, dir) {
+  if (!dir || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  el.classList.remove("route-fwd", "route-back"); void el.offsetWidth; el.classList.add("route-" + dir);
+  setTimeout(() => el.classList.remove("route-fwd", "route-back"), 600);
+}
 async function render() {
   const name = routeFromHash();
+  const order = [...navEl.querySelectorAll("a")].map((a) => a.dataset.route);
+  const dir = lastRoute && lastRoute !== name ? (order.indexOf(name) > order.indexOf(lastRoute) ? "fwd" : "back") : "";
+  lastRoute = name;
   const route = ROUTES[name];
   const hasQuery = location.hash.includes("?");
   if (current) {
@@ -41,6 +51,7 @@ async function render() {
   const again = kept.get(name);
   if (again && !hasQuery) {
     again.el.hidden = false;
+    playRoute(again.el, dir);
     current = again;
     viewEl.scrollTop = again.scroll || 0;
     document.dispatchEvent(new CustomEvent("reel:wake"));       // refresh what may have changed while it was hidden
@@ -49,6 +60,7 @@ async function render() {
   if (again) { again.el.remove(); kept.delete(name); }
   const el = h("div", { class: "route", "data-route": name });
   viewEl.append(el);
+  playRoute(el, dir);
   viewEl.scrollTop = 0;
   const entry = { el, name, view: null, keep: !!route.keep, scroll: 0 };
   current = entry;
