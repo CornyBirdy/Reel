@@ -277,3 +277,29 @@
   --dur-fast: 120ms;
 }
 @media (pointer: coarse) { :root { --control-h: var(--control-h-touch); } }
+
+/* ---- glass controls: buttons, pills and floating bars get a translucent sheen, a lit top edge and a soft blur */
+:root {
+  --blur-ctl: 16px;
+  --g-fill: linear-gradient(150deg, oklch(1 0 0 / 0.11), oklch(1 0 0 / 0.03) 55%, oklch(1 0 0 / 0.06));
+  --g-edge: inset 0 1px 0 oklch(1 0 0 / 0.17), inset 0 0 0 1px oklch(1 0 0 / 0.05);
+  --g-drop: 0 8px 20px -10px oklch(0 0 0 / 0.65);
+  --g-bar: color-mix(in oklch, var(--float) 58%, transparent);
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --g-fill: linear-gradient(150deg, oklch(1 0 0 / 0.95), oklch(1 0 0 / 0.5) 60%, oklch(1 0 0 / 0.75));
+    --g-edge: inset 0 1px 0 oklch(1 0 0 / 1), inset 0 0 0 1px oklch(0.22 0.008 var(--h) / 0.07);
+    --g-drop: 0 8px 18px -10px oklch(0.25 0.005 var(--h) / 0.3);
+  }
+}
+:root[data-theme="light"] {
+  --g-fill: linear-gradient(150deg, oklch(1 0 0 / 0.95), oklch(1 0 0 / 0.5) 60%, oklch(1 0 0 / 0.75));
+  --g-edge: inset 0 1px 0 oklch(1 0 0 / 1), inset 0 0 0 1px oklch(0.22 0.008 var(--h) / 0.07);
+  --g-drop: 0 8px 18px -10px oklch(0.25 0.005 var(--h) / 0.3);
+}
+:root[data-theme="dark"] {
+  --g-fill: linear-gradient(150deg, oklch(1 0 0 / 0.11), oklch(1 0 0 / 0.03) 55%, oklch(1 0 0 / 0.06));
+  --g-edge: inset 0 1px 0 oklch(1 0 0 / 0.17), inset 0 0 0 1px oklch(1 0 0 / 0.05);
+  --g-drop: 0 8px 20px -10px oklch(0 0 0 / 0.65);
+}
