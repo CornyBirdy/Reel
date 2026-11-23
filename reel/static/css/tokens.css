@@ -56,19 +56,19 @@
 /* ---- dark (default) */
 :root {
   color-scheme: dark;
-  --ground-base: oklch(0.13 0.004 var(--h));
+  --ground-base: oklch(0.235 0.006 var(--h));
   --ground-1: oklch(0.235 0.065 var(--h));
   --ground-2: oklch(0.205 0.06 calc(var(--h) + 30));
   --ground-3: oklch(0.205 0.06 calc(var(--h) - 25));
-  --ink: oklch(0.96 0.005 var(--h));
-  --ink-muted: oklch(0.72 0.012 var(--h));
-  --hair: oklch(0.96 0.005 var(--h) / 0.09);
-  --glass: oklch(0.16 0.005 var(--h));   /* the window / big panels */
-  --card: oklch(0.18 0.005 var(--h));  /* cards and panels */
-  --field: oklch(0.215 0.006 var(--h));   /* inputs, secondary buttons, raised bits */
-  --float: oklch(0.2 0.006 var(--h));   /* bars that float over content */
-  --solid: oklch(0.22 0.006 var(--h));        /* menus, dialogs, sheets: never see-through */
-  --sunken: oklch(0.105 0.004 var(--h));
+  --ink: oklch(0.93 0.006 var(--h));
+  --ink-muted: oklch(0.76 0.012 var(--h));
+  --hair: oklch(0.93 0.006 var(--h) / 0.09);
+  --glass: oklch(0.26 0.006 var(--h));   /* the window / big panels */
+  --card: oklch(0.285 0.006 var(--h));  /* cards and panels */
+  --field: oklch(0.32 0.007 var(--h));   /* inputs, secondary buttons, raised bits */
+  --float: oklch(0.30 0.007 var(--h));   /* bars that float over content */
+  --solid: oklch(0.31 0.007 var(--h));        /* menus, dialogs, sheets: never see-through */
+  --sunken: oklch(0.20 0.005 var(--h));
   --edge: oklch(1 0 0 / 0.09);
   --a: oklch(0.92 0.01 var(--h));
   --a-2: oklch(0.92 0.01 var(--h));
@@ -147,19 +147,19 @@
 }
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --ground-base: oklch(0.13 0.004 var(--h));
+  --ground-base: oklch(0.235 0.006 var(--h));
   --ground-1: oklch(0.235 0.065 var(--h));
   --ground-2: oklch(0.205 0.06 calc(var(--h) + 30));
   --ground-3: oklch(0.205 0.06 calc(var(--h) - 25));
-  --ink: oklch(0.96 0.005 var(--h));
-  --ink-muted: oklch(0.72 0.012 var(--h));
-  --hair: oklch(0.96 0.005 var(--h) / 0.09);
-  --glass: oklch(0.16 0.005 var(--h));
-  --card: oklch(0.18 0.005 var(--h));
-  --field: oklch(0.215 0.006 var(--h));
-  --float: oklch(0.2 0.006 var(--h));
-  --solid: oklch(0.22 0.006 var(--h));
-  --sunken: oklch(0.105 0.004 var(--h));
+  --ink: oklch(0.93 0.006 var(--h));
+  --ink-muted: oklch(0.76 0.012 var(--h));
+  --hair: oklch(0.93 0.006 var(--h) / 0.09);
+  --glass: oklch(0.26 0.006 var(--h));
+  --card: oklch(0.285 0.006 var(--h));
+  --field: oklch(0.32 0.007 var(--h));
+  --float: oklch(0.30 0.007 var(--h));
+  --solid: oklch(0.31 0.007 var(--h));
+  --sunken: oklch(0.20 0.005 var(--h));
   --edge: oklch(1 0 0 / 0.09);
   --a: oklch(0.92 0.01 var(--h));
   --a-2: oklch(0.92 0.01 var(--h));
@@ -284,7 +284,7 @@
   --g-fill: linear-gradient(150deg, oklch(1 0 0 / 0.11), oklch(1 0 0 / 0.03) 55%, oklch(1 0 0 / 0.06));
   --g-edge: inset 0 1px 0 oklch(1 0 0 / 0.17), inset 0 0 0 1px oklch(1 0 0 / 0.05);
   --g-drop: 0 8px 20px -10px oklch(0 0 0 / 0.65);
-  --g-bar: color-mix(in oklch, var(--float) 58%, transparent);
+  --g-bar: var(--float);
 }
 @media (prefers-color-scheme: light) {
   :root:not([data-theme="dark"]) {

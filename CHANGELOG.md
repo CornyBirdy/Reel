@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Softer dark theme, and lighter on the GPU.** The dark background is a soft charcoal instead of near-black, the surfaces step up from it, and text is slightly less bright, so the contrast is easier on the eyes (it still passes the 4.5:1 minimum for text). Floating bars are solid, and the blur behind buttons and bars is gone: it did nothing visible on solid surfaces and slowed drawing.
 - **Glassy controls.** Buttons, pills, round icon buttons, the chosen item in switches and tabs, and floating bars now look like frosted acrylic: a translucent sheen, a lit top edge and a soft blur over whatever is behind them, in both dark and light. The main action is a glassy accent button.
 - **A new look, modelled on a fleet-dashboard design.** Near-black surfaces with a soft sheen, no outlines (shapes are told apart by fills), much bigger corners, light-weight Inter type with big thin numbers, and pill-shaped switches and tabs where the chosen item is a lighter pill. Layout and what each button does are unchanged.
 - **A flatter, quieter look.** The frosted glass, colour glows and gradients are gone. Surfaces are plain neutral greys (dark) or soft whites (light) in steps with thin outlines, the accent colour is used only for the main action and the current selection, buttons are a solid accent, and nothing bounces or lifts on hover any more. Layout, text and what each button does are unchanged.
